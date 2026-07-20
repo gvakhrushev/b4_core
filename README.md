@@ -35,38 +35,180 @@ Each product is the previous one plus one more interior move at the two cycle pi
 | Pro | `1` | `−1/φ` | a hedge (short in the fall regime) |
 | Pro Max | `φ` | `−φ` | leveraged expression of the same signs |
 
-A signed target `n` decomposes once, for every product:
-
-```
-spot = clamp(n, 0, 1)     // directional spot exposure
-perp = n − spot           // residual exposure spot cannot express
-```
-
 How much accepted holding risk to keep is the user's dial — the protocol takes no
 directional view on their behalf.
 
-## How it fits together
+### One exposure equation for every product
 
-```text
-HalvingProver  (Citrea)   proves the Bitcoin halving fact from an 80-byte header
-        │ LayerZero
-HalvingOracle             holds the proven fact; timeSinceHalving() drives the calendar
-        │
-B4Factory                 permissionless createPool / createVault; validates descriptors
-        │
-B4Vault (clone)           isolated custody + accounting + async intent engine
-        │                 (B4VaultStorage / B4VaultEngine / B4VaultOps)
-        ├── HyperCore     one isolated execution identity per vault (spot + perp)
-        └── B4Pool        shared in-kind penalty pool, reward weights, claims
+A signed target `n` decomposes exactly once. Spot carries what spot can express; the
+perpetual carries only the residual.
 
-Keeper                    permissionless crank for every step — no privilege
-IStrategy                 stateless `pure` (growth, fall) policy — no authority over funds
+```mermaid
+flowchart LR
+    N["<b>signed target n</b><br/>|n| ≤ φ"]
+    S["<b>spot</b> = clamp(n, 0, 1)<br/><i>directional spot on HyperCore</i>"]
+    P["<b>perp</b> = n − spot<br/><i>residual perpetual only</i>"]
+    N --> S
+    N --> P
 ```
 
-**Execution is asynchronous.** Emitting a CoreWriter action is not evidence it executed; the
-effect must be proven by a later Core state read. Accounting measures **actual received
-balance deltas**, never requested amounts — donations and favorable overfills stay
-unaccounted and separately recoverable.
+| Target `n` | → spot | → perp | Meaning | Where it occurs |
+|---:|---:|---:|---|---|
+| `1` | `1` | `0` | plain hold, no perp | Mini (both regimes), B4/Pro growth |
+| `0` | `0` | `0` | fully rotated into USDC | B4 fall |
+| `−1/φ` | `0` | `−1/φ` | net short, spot sold | Pro fall |
+| `φ` | `1` | `φ − 1` | levered long | Pro Max growth |
+| `−φ` | `0` | `−φ` | levered short | Pro Max fall |
+
+### The deterministic calendar
+
+`t` is time since the latest accepted halving fact — a pure function of block time. Nobody
+chooses the regime: not the owner, not a keeper, not an operator. The nominal cycle is
+`1460 d`, with pivots at `P = cycle/φ² ≈ 557.7 d` and `T = cycle/φ ≈ 902.3 d`, two `20 d`
+transitions (`W`), and their halves `H = 10 d`.
+
+```mermaid
+flowchart LR
+    G["<b>Growth</b><br/>0 – 537.7 d<br/><i>target = growth</i>"]
+    CG["<b>Closing growth</b><br/>537.7 – 547.7 d<br/><i>growth → 0</i>"]
+    S1{{"⚑ <b>Settlement</b><br/>P−H = 547.7 d"}}
+    OF["<b>Opening fall</b><br/>547.7 – 557.7 d<br/><i>0 → fall</i><br/>⛔ deposits closed"]
+    F["<b>Fall</b><br/>557.7 – 902.3 d<br/><i>target = fall</i>"]
+    CF["<b>Closing fall</b><br/>902.3 – 912.3 d<br/><i>fall → 0</i>"]
+    S2{{"⚑ <b>Settlement</b><br/>T+H = 912.3 d"}}
+    OG["<b>Opening growth</b><br/>912.3 – 922.3 d<br/><i>0 → growth</i><br/>⛔ deposits closed"]
+    TG["<b>Terminal growth</b><br/>922.3 d → next accepted fact"]
+
+    G --> CG --> S1 --> OF --> F --> CF --> S2 --> OG --> TG
+    TG -. "next halving accepted<br/>⇒ t resets to 0" .-> G
+```
+
+Two things the picture encodes:
+
+- **A sign change always passes through a verified zero.** When the two targets differ in sign
+  (or one is zero), the transition is split at the settlement point, so the previous regime's
+  exposure fully unwinds before the opposite one opens. Strictly same-sign pairs — Mini's
+  `(1, 1)` — interpolate directly and never visit a synthetic zero, so Mini never trades; its
+  interval profit is still fee'd.
+- **Settlement points are fixed and product-independent** (`P−H` and `T+H`). An interval runs
+  from one point to the next; the one beginning at `T+H` crosses the epoch boundary.
+
+The calendar rests in terminal growth until the *next real halving fact* is accepted — no
+wall-clock window ever gates acceptance, and nothing depends on the realized interval matching
+the nominal 1460 days.
+
+## How it fits together
+
+```mermaid
+flowchart TB
+    BTC["Bitcoin<br/>halving block"]
+
+    subgraph CIT ["Citrea"]
+        PROVER["HalvingProver<br/><i>re-verifies the 80-byte header</i>"]
+    end
+
+    subgraph HE ["HyperEVM"]
+        ORACLE["HalvingOracle<br/><i>timeSinceHalving() drives the calendar</i>"]
+        FACTORY["B4Factory<br/><i>permissionless createPool / createVault</i>"]
+        VAULT["B4Vault clone<br/><i>custody + accounting + async intent engine</i>"]
+        POOL["B4Pool<br/><i>penalty inventory, weights, in-kind claims</i>"]
+    end
+
+    CORE[("HyperCore<br/>one execution identity per vault<br/>spot + perp")]
+    OWNER(["Vault owner"])
+    KEEPER(["Keeper — anyone"])
+    STRAT["IStrategy<br/><i>pure (growth, fall)</i>"]
+
+    BTC --> PROVER
+    PROVER -- "LayerZero<br/>authenticated channel" --> ORACLE
+    ORACLE -- "the one external fact" --> VAULT
+    FACTORY -. clones .-> VAULT
+    FACTORY -. deploys .-> POOL
+    STRAT -. "read once at selection<br/>no authority over funds" .-> VAULT
+    VAULT -- "emits async actions" --> CORE
+    CORE -- "later state reads<br/><i>prove what actually executed</i>" --> VAULT
+    VAULT -- "early-exit penalty, in kind" --> POOL
+    POOL -- "claims, in kind, pro rata" --> OWNER
+    OWNER -- "deposit / selectPolicy / exit" --> VAULT
+    KEEPER -. "crank — no privilege" .-> VAULT
+    KEEPER -. crank .-> POOL
+```
+
+### Execution is asynchronous — and that is the hard part
+
+Emitting a CoreWriter action is **not** evidence it executed. Every effect must be proven by a
+later Core state read, and accounting only ever credits the **actual measured balance delta** —
+never the requested amount. Donations and favorable overfills stay unaccounted and separately
+recoverable.
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor K as Keeper — anyone
+    participant V as B4Vault
+    participant C as HyperCore
+
+    K->>V: crank()
+    V->>V: plan a step, snapshot own balances
+    V->>C: emit CoreWriter action
+    Note over V,C: emitting ≠ executed — nothing is credited yet
+
+    K->>V: crank() (a later block)
+    V->>C: read Core state
+    C-->>V: actual balances
+
+    alt a self-moved balance proves the effect
+        V->>V: credit the MEASURED delta, clear the intent
+    else nothing moved, and the resend timeout passed
+        V->>C: resend the exact complement (never a double-spend)
+    else moved, but the EVM receipt is still pending
+        V->>V: keep waiting — never resend after a debit
+    end
+```
+
+Worst case of any stalled step is **delayed liveness, never loss** — every step stays
+independently callable by anyone.
+
+## Where value flows
+
+Two moments move value: a **settlement checkpoint** (performance fee on interval profit) and
+an **exit**. In both, the operator payment is carved *out of* the amount — never added on top —
+and the referral is carved out of the operator's share in turn.
+
+**At settlement** — `f ≈ 4.5084971874737120%` of profit over the entry ledger:
+
+```mermaid
+flowchart LR
+    NAV["interval profit<br/>NAV − entry ledger"] --> VF["virtual fee<br/>= f × profit"]
+    VF --> OC["<b>operator cut</b><br/>= operatorBps × virtual fee<br/><i>paid in kind from the EVM basket</i>"]
+    VF --> CS["<b>client share</b><br/>= virtual fee − operator cut<br/><i>becomes pool reward weight</i>"]
+    OC --> REF["referrer<br/><i>carved out of the operator cut</i>"]
+    OC --> OP["operator"]
+    CS --> W["B4Pool weight → in-kind claims"]
+```
+
+Settlement **reverts** (`FeeNotRepatriated`) unless the EVM basket can cover the operator cut,
+so a Core-heavy vault must repatriate before it can settle — it cannot dodge the fee while
+still reporting full reward weight.
+
+**At exit** — a free window costs no penalty; outside one, a single in-kind penalty
+`q ≈ 11.8033988749894848%` of the exiting gross applies:
+
+```mermaid
+flowchart TB
+    G["gross exiting value<br/>= NAV × exit share x"] --> Q{"in a free-exit<br/>window?"}
+
+    Q -- "yes" --> FO["owner: gross − operator cut"]
+    Q -- "yes" --> FP["operator: operator cut<br/><i>pool receives nothing</i>"]
+
+    Q -- "no" --> PEN["penalty = q × gross"]
+    Q -- "no" --> PO["owner: gross − penalty"]
+    PEN --> POP["operator: min(operator cut, penalty)<br/><i>carved out of the penalty</i>"]
+    PEN --> PPOOL["<b>B4Pool</b>: the residual<br/><i>in kind — funds other participants' claims</i>"]
+```
+
+In both branches `owner + operator + pool = gross` exactly. Free windows are the two `20 d`
+transitions plus `20 d` after each newly accepted halving fact.
 
 ## Documentation
 
