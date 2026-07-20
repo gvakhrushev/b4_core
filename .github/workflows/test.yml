@@ -1,0 +1,105 @@
+name: CI
+
+permissions: {}
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+  schedule:
+    # Nightly deep invariant campaign (V3-CI-1: the deep profile previously ran only on
+    # push/PR/dispatch, so the 512×256 campaign was never exercised on a schedule).
+    - cron: "0 3 * * *"
+
+jobs:
+  check:
+    name: Foundry project
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      # Supply-chain: these actions SHOULD be pinned to full commit SHAs before
+      # production (a moved tag runs attacker code with checkout read access). Left as
+      # version tags here for readability; pin at release. (RAW-COV12-SUPPLY-001)
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+          submodules: recursive
+
+      - name: Install Foundry
+        uses: foundry-rs/foundry-toolchain@v1
+        with:
+          # `stable` is more reproducible than the mutable nightly (RAW-COV12-SUPPLY-002),
+          # but it is still a MOVING channel: a new stable release can change fuzz/invariant
+          # scheduling or a lint. For a fully reproducible gate before production, pin a
+          # concrete release (e.g. version: "1.0.0") here and in the slither job (V3-CI-1).
+          version: stable
+
+      - name: Show Forge version
+        run: forge --version
+
+      - name: Run Forge fmt
+        run: forge fmt --check
+
+      - name: Run Forge build
+        run: forge build --sizes
+
+      - name: Run Forge tests
+        run: forge test -vvv
+
+  slither:
+    name: Static analysis (Slither)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+          submodules: recursive
+
+      - name: Install Foundry
+        uses: foundry-rs/foundry-toolchain@v1
+        with:
+          version: stable
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install Slither
+        # Pin the analyzer version (V3-CI-1): the triage in SLITHER.md /
+        # slither.config.json is calibrated to 0.11.4, and a new release can add/rename a
+        # detector and move the `--fail-high` gate under us. Bump deliberately + re-triage.
+        run: pip install slither-analyzer==0.11.4
+
+      # Enforce the SECURITY_MODEL §5 static-analysis gate on every push/PR: reject any
+      # NEW high-severity finding. The triaged, documented false positives (SLITHER.md)
+      # are excluded via slither.config.json; run WITHOUT that config periodically and
+      # re-triage. (RAW-COV12: missing static-analysis gate)
+      - name: Slither (reject high-severity)
+        run: slither . --fail-high
+
+  deep-invariant:
+    name: Deep invariant campaign (nightly)
+    # Only on the nightly schedule or a manual dispatch — the 512×256 profile is far too
+    # slow for every push/PR (V3-CI-1: the deep profile had no scheduler before).
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+          submodules: recursive
+
+      - name: Install Foundry
+        uses: foundry-rs/foundry-toolchain@v1
+        with:
+          version: stable
+
+      - name: Run deep invariant campaign
+        env:
+          FOUNDRY_PROFILE: deep
+        run: forge test --match-path 'test/invariant/*' -vvv
