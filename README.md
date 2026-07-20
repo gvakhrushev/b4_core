@@ -63,21 +63,31 @@ flowchart LR
 ### The deterministic calendar
 
 `t` is time since the latest accepted halving fact — a pure function of block time. Nobody
-chooses the regime: not the owner, not a keeper, not an operator. The nominal cycle is
-`1460 d`, with pivots at `P = cycle/φ² ≈ 557.7 d` and `T = cycle/φ ≈ 902.3 d`, two `20 d`
-transitions (`W`), and their halves `H = 10 d`.
+chooses the regime: not the owner, not a keeper, not an operator.
+
+The two pivots are **not fitted to price history** — they are the golden-ratio self-division
+of the interval, which is why the model has **zero tuned parameters**:
+
+| Pivot | Formula | Share of cycle | Nominal day |
+|---|---|---:|---:|
+| `P` growth → fall | `cycle/φ²` = `1/φ² × cycle` | **38.20 %** | ≈ 557.7 d |
+| `T` fall → growth | `cycle/φ` = `1/φ × cycle` | **61.80 %** | ≈ 902.3 d |
+
+Any other boundary would have to be calibrated against the handful of completed cycles —
+i.e. overfitting. These two are the only division where `whole / larger = larger / smaller`.
+Transitions are `W = 20 d` wide with halves `H = 10 d`; the nominal cycle is `1460 d`.
 
 ```mermaid
 flowchart LR
-    G["<b>Growth</b><br/>0 – 537.7 d<br/><i>target = growth</i>"]
-    CG["<b>Closing growth</b><br/>537.7 – 547.7 d<br/><i>growth → 0</i>"]
+    G["<b>Growth</b> — 1.47 y<br/>0 – 537.7 d<br/><i>target = growth</i>"]
+    CG["<b>Closing growth</b> — 10 d<br/>537.7 – 547.7 d<br/><i>growth → 0</i><br/>✅ free exit"]
     S1{{"⚑ <b>Settlement</b><br/>P−H = 547.7 d"}}
-    OF["<b>Opening fall</b><br/>547.7 – 557.7 d<br/><i>0 → fall</i><br/>⛔ deposits closed"]
-    F["<b>Fall</b><br/>557.7 – 902.3 d<br/><i>target = fall</i>"]
-    CF["<b>Closing fall</b><br/>902.3 – 912.3 d<br/><i>fall → 0</i>"]
+    OF["<b>Opening fall</b> — 10 d<br/>547.7 – 557.7 d<br/><i>0 → fall</i><br/>✅ free exit · ⛔ deposits closed"]
+    F["<b>Fall</b> — 0.94 y<br/>557.7 – 902.3 d<br/><i>target = fall</i>"]
+    CF["<b>Closing fall</b> — 10 d<br/>902.3 – 912.3 d<br/><i>fall → 0</i><br/>✅ free exit"]
     S2{{"⚑ <b>Settlement</b><br/>T+H = 912.3 d"}}
-    OG["<b>Opening growth</b><br/>912.3 – 922.3 d<br/><i>0 → growth</i><br/>⛔ deposits closed"]
-    TG["<b>Terminal growth</b><br/>922.3 d → next accepted fact"]
+    OG["<b>Opening growth</b> — 10 d<br/>912.3 – 922.3 d<br/><i>0 → growth</i><br/>✅ free exit · ⛔ deposits closed"]
+    TG["<b>Terminal growth</b> — 1.47 y<br/>922.3 d → next accepted fact"]
 
     G --> CG --> S1 --> OF --> F --> CF --> S2 --> OG --> TG
     TG -. "next halving accepted<br/>⇒ t resets to 0" .-> G
@@ -169,6 +179,28 @@ sequenceDiagram
 Worst case of any stalled step is **delayed liveness, never loss** — every step stays
 independently callable by anyone.
 
+## Versioning: there is no upgrade path, by design
+
+Every contract is immutable. There is no proxy, no `pause`, and no admin who can intervene —
+the same model as Bitcoin and Uniswap V1/V2/V3. Safety comes from *correctness by
+construction plus the owner's exit right*, not from a multisig that can reach into a live
+vault.
+
+The consequence is explicit: **a fix is a new deployment, not a patch.**
+
+- A defect found in `v1` is addressed by deploying `v2` — re-audited — alongside it. `v1`
+  keeps running exactly as written; nothing about it silently changes under its users.
+- Existing vaults are EIP-1167 clones bound to their implementation. **They do not migrate
+  automatically.** A user moves by exiting their `v1` vault and entering a `v2` one.
+- Exiting inside a **free window** costs no penalty (`✅` above — the two 20-day transitions
+  plus 20 days after each accepted halving fact). Outside one, the ordinary `q` penalty
+  applies — that penalty *is* the protocol's core mechanic, not a migration toll.
+
+So the natural migration moment is a transition window, which is also when a
+calendar-driven strategy is flat or rotating anyway. Expecting a protocol to be refined
+indefinitely before it ever ships is not a safety model; shipping immutable versions that
+users can leave on their own terms is.
+
 ## Where value flows
 
 Two moments move value: a **settlement checkpoint** (performance fee on interval profit) and
@@ -225,6 +257,8 @@ transitions plus `20 d` after each newly accepted halving fact.
 | [06 Deployment](docs/06-deployment.md) | Runbook + the funded release-gate checklist |
 | [07 Fees & pool](docs/07-fee-routing.md) | Performance fee, fee route, exit penalty, claims |
 | [08 Keeper](docs/08-keeper.md) | Running the permissionless crank |
+| [09 Roles](docs/09-roles.md) | Owner / operator / referrer / keeper — flows, earnings, limits |
+| [10 Off-chain](docs/10-offchain-architecture.md) | API, automation, UI — what may be served vs. must be direct |
 
 **Normative specification** (`spec/`) — what the implementation is judged against:
 

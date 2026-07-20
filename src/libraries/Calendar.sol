@@ -40,8 +40,29 @@ library Calendar {
     /// requires "a fixed window"; we use the transition width W).
     uint256 internal constant POST_FACT_FREE_EXIT = W;
 
-    /// One-hour checkpoint-price snapshot window at each settlement point (SPEC §6/§8).
-    uint256 internal constant SNAPSHOT_WINDOW = 1 hours;
+    /// Checkpoint-price snapshot window at each settlement point (SPEC §6/§8): the
+    /// **settlement day** — the first 24h of the opening half-transition, which separates
+    /// the closing leg `[P−W, P−H)` from the opening leg `[P−H, P)`. Locking the price is
+    /// permissionless and may happen anywhere in this window.
+    ///
+    /// Width is a liveness/discretion trade-off, decided deliberately. Wider = more
+    /// discretion over WHICH price in the window becomes canonical, and the locked price
+    /// drives NAV → profit → the performance fee, so a late caller could favour a higher
+    /// price. Two things bound that: the harmed party (the vault owner, who wants a LOWER
+    /// price and therefore a smaller fee) can simply call `lockPrices` at `pointTime` and
+    /// remove all discretion; and every participant in the pool benefits from the same
+    /// single lock, so the number of independent parties able to close the window grows
+    /// with participation. Against that, a one-hour window recurring roughly once every
+    /// 1–1.5 years leaves no room for a human to react to a failed cron, an unfunded gas
+    /// wallet or an RPC outage — infrastructure rot over that gap is the dominant real
+    /// risk, not price gaming. 24h buys a full working day of manual recovery.
+    ///
+    /// Missing the window entirely is NOT catastrophic: `opsSettle` may skip an interval
+    /// (`intervalId + 1 > lastSettledPlusOne`), `entryLedgerWad` only advances on settle,
+    /// and `rewardBaseWad` accumulates — so the fee and the weight are measured over the
+    /// combined span at the next checkpoint, and unclaimed pool inventory sweeps forward.
+    /// The cost is deferral (~0.94–1.5 years), never destruction.
+    uint256 internal constant SNAPSHOT_WINDOW = 24 hours;
     /// Report window after the settlement point (design decision; liveness-only).
     uint256 internal constant REPORT_WINDOW = 2 days;
 

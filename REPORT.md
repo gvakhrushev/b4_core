@@ -71,10 +71,21 @@ two Medium reentrancy detectors were cleared with checks-effects-interactions or
 per-detector triage in `SLITHER.md`. The static-analysis gate (SECURITY_MODEL §5) is
 satisfied for this internal run.
 
-## NOT proven locally — funded release gates (SECURITY_MODEL §5, TEST_PLAN §5)
+## Deployment gates — funded venue confirmation (SECURITY_MODEL §5, TEST_PLAN §5)
 
-Every item below is asserted against the public HyperCore ABI/encoding in mocks only and
-MUST be proven with funded transactions on the target network before any mainnet use:
+**Status: `mainnet-gate` — planned deployment steps, not open defects.** Each item below is
+already *implemented* against the venue's published ABI/encoding and is exercised locally
+against an exact-ABI adversarial mock. What cannot be done off-chain is *confirming the live
+venue behaves as its documentation says* — no mock can prove that, for any protocol.
+
+So this is a **deployment runbook**, not a list of things that are broken or unknown: each
+line is expected to hold (it is derived from the published semantics the implementation was
+built on) and is checked once with funded transactions on the target network. A line that
+failed would be a venue-semantics surprise, and each is written so the failure is visible
+immediately rather than silently mispriced.
+
+Nothing here may be skipped: mainnet MUST NOT proceed until these are recorded and
+independently reviewed.
 
 1. Canonical USDC identity, decimals (EVM 6 / core wei 8 assumed), both class-transfer
    directions.

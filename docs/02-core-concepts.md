@@ -70,7 +70,7 @@ function nextSettlementPoint(uint256 halvingTs, uint256 after_) internal pure re
 
 Two fixed, product-independent instants per epoch: `t = P−H` and `t = T+H`. For opposite-sign / zero-endpoint pairs these coincide with the target's zero-crossing, so "profit measured against entry" and the still-wrong-sign perp rejection at settlement are exact. Same-sign pairs settle at the same instants with their (right-sign) exposure legitimately open. An interval runs point to point; the interval beginning at `T+H` crosses the epoch boundary and ends at the next epoch's `P−H`.
 
-Around each point: a one-hour price snapshot window (`SNAPSHOT_WINDOW`), then a report window (`REPORT_WINDOW = 2 days`), then distribution, then expiry.
+Around each point: a settlement-day price snapshot window (`SNAPSHOT_WINDOW = 24 hours`), then a report window (`REPORT_WINDOW = 2 days`), then distribution, then expiry.
 
 ### Free-exit windows
 

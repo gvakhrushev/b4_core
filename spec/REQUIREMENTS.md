@@ -84,7 +84,7 @@ Reference products at scale `1` (core derives `spot = clamp(target,0,1)`, `perp 
    in one asynchronous step at a time (rotate spot, allocate/return margin, open/reduce perp,
    harvest). Keepers call again after each step verifies.
 5. **Settle** — at each interval settlement point, checkpoint prices are locked (permissionless,
-   within a one-hour window), realized profit is measured against entry, the performance fee
+   within the settlement-day window), realized profit is measured against entry, the performance fee
    is split, and reward weight is reported to the Pool.
 6. **Distribute** — permissionless; profitable participants receive Pool inventory pro rata,
    in kind, paid to the fixed owner.
@@ -100,7 +100,7 @@ Reference products at scale `1` (core derives `spot = clamp(target,0,1)`, `perp 
   sub-windows.
 - Free exits (no penalty) cover all four transition zones and a fixed window after each
   accepted halving fact.
-- Checkpoint prices MUST be locked within a one-hour snapshot window at each settlement
+- Checkpoint prices MUST be locked within a settlement-day (24h) snapshot window at each settlement
   boundary; missing it makes the interval unreportable (liveness, not custody loss).
 
 ## 7. Interface obligations
