@@ -258,6 +258,7 @@ transitions plus `20 d` after each newly accepted halving fact.
 | [07 Fees & pool](docs/07-fee-routing.md) | Performance fee, fee route, exit penalty, claims |
 | [08 Keeper](docs/08-keeper.md) | Running the permissionless crank |
 | [09 Roles](docs/09-roles.md) | Owner / operator / referrer / keeper — flows, earnings, limits |
+| [10 Off-chain](docs/10-offchain-architecture.md) | API, automation, UI — what may be served vs. must be direct |
 
 **Normative specification** (`spec/`) — what the implementation is judged against:
 
