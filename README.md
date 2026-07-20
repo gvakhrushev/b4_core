@@ -146,10 +146,10 @@ Return by cycle, each starting at `1.0x` (max drawdown in brackets):
 
 | Cycle | Mini | B4 | Pro | Pro Max | HODL |
 |---|---:|---:|---:|---:|---:|
-| 2012→2016 | 49.6x (85%) | 122.7x (74%) | 171.3x (74%) | 374.4x (**97%**) | 51.9x (84%) |
-| 2016→2020 | 12.9x (84%) | 52.8x (64%) | 72.8x (64%) | 292.1x (86%) | 13.5x (83%) |
-| 2020→2024 | 7.1x (77%) | 27.1x (53%) | 41.4x (53%) | 226.5x (74%) | 7.4x (76%) |
-| 2024→now* | 0.99x (54%) | 1.68x (28%) | 2.06x (28%) | 2.76x (46%) | 1.00x (53%) |
+| 2012→2016 | 51.0x (85%) | 126.3x (74%) | 176.3x (74%) | 385.4x (**97%**) | 51.9x (84%) |
+| 2016→2020 | 13.3x (84%) | 54.3x (64%) | 75.0x (64%) | 300.7x (86%) | 13.5x (83%) |
+| 2020→2024 | 7.3x (77%) | 27.9x (53%) | 42.6x (53%) | 233.1x (74%) | 7.4x (76%) |
+| 2024→now* | 1.00x (53%) | 1.70x (28%) | 2.09x (28%) | 2.80x (46%) | 1.00x (53%) |
 
 <sub>\* cycle in progress, one settlement so far</sub>
 
@@ -157,10 +157,15 @@ Return by cycle, each starting at `1.0x` (max drawdown in brackets):
 > **Illustration of the mechanism — not evidence of edge, and not a forecast.** Three
 > completed cycles is not a statistical sample and never can be: only ~32 halvings will ever
 > occur. Pro Max's 97 % drawdown is a liquidation, not a return — the model has no
-> liquidation engine. Perps did not exist in liquid form before ~2016, so Pro/Pro Max in the
-> early cycles are counterfactual. Mini sits *below* HODL by construction (it never trades
-> but still pays the fee); its actual return is Pool inventory, which the model does not
-> credit.
+> liquidation engine. Pool income rests on a **behavioural assumption** (20 % of a cohort
+> exits penalised per cycle), not on protocol mechanics.
+
+**Where the drawdowns actually happen matters.** For every rotating product the worst
+drawdown falls *inside* a regime, never in a 20-day transition — Pro Max's cycle-1 figure is
+the April-2013 crash (BTC −70.4 %) at φ leverage, 319 days before the pivot. The calendar
+rotates **at** the pivots; it does not protect against a drawdown **inside** a regime. That is
+a property of the products, not a rotation-timing artefact.
+
 
 Method, assumptions and every omitted cost: [Backtest](docs/11-backtest.md).
 

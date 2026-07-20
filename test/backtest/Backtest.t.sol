@@ -30,6 +30,14 @@ contract BacktestTest is Test {
     /// for n ∈ {0,1}), so they are unaffected by it; Pro and Pro Max are.
     int256 constant FUNDING_APR = 10e16; // 10% / year
 
+    /// Pool income, modelled conservatively. Assumption: **20 % of a cohort exits outside a
+    /// free window per cycle**, paying the in-kind penalty `q`; the remainder is distributed
+    /// to the participants who stayed. Uplift per cycle = `share·q / (1 − share)`, credited
+    /// in equal parts at the two settlement points. This is a BEHAVIOURAL assumption about
+    /// users, not protocol mechanics — every other line in this file is the protocol's own
+    /// arithmetic, this one is a guess, and it is stated so it can be argued with.
+    int256 constant POOL_EXIT_SHARE = 20e16; // 20% of a cohort exits penalised
+
     /// Real halving block timestamps (UTC). 840000 matches the genesis anchor used across
     /// the rest of the suite (`1713571767`).
     uint256[4] HALVINGS = [
@@ -49,9 +57,10 @@ contract BacktestTest is Test {
         int256 value; // portfolio value (WAD), starts at 1.0
         int256 entry; // entry ledger for the fee (WAD)
         int256 fees; // cumulative performance fee paid (WAD)
-        int256 minValue; // running minimum, for max drawdown
+        int256 poolYield; // cumulative Pool credit (WAD)
         int256 peak;
         int256 maxDD; // worst peak-to-trough, WAD
+        uint256 ddDay; // day-of-cycle at which maxDD was reached
     }
 
     uint256[] ts; // day timestamp (UTC midnight)
@@ -136,8 +145,10 @@ contract BacktestTest is Test {
         console.log("deliberately NOT reported: it is dominated by the earliest, least");
         console.log("liquid period and says more about a $12 base than about the design.");
         console.log(
-            "Funding assumption: %s bps/yr on the absolute perp leg.", uint256(FUNDING_APR / 1e14)
+            "Assumptions: funding %s bps/yr on the abs perp leg; Pool income from",
+            uint256(FUNDING_APR / 1e14)
         );
+        console.log("20% of a cohort exiting penalised each cycle (behavioural guess).");
         console.log("");
 
         for (uint256 c = 0; c < HALVINGS.length; c++) {
@@ -147,13 +158,20 @@ contract BacktestTest is Test {
         }
 
         console.log("");
-        console.log("Mini holds spot in both regimes, so it tracks HODL minus the fee it");
-        console.log("still pays on interval profit. Its actual return is Pool inventory,");
-        console.log("which this model does NOT credit.");
-        console.log("NOT modelled: slippage, trading fees, liquidation, exit penalty, Pool");
-        console.log("income, the rebalance dead-band. Daily closes, daily rebalancing.");
+        console.log("Mini holds spot in both regimes and never trades: it pays the fee on");
+        console.log("interval profit and earns it back as Pool income, landing near HODL.");
+        console.log("Both effects are modelled; the Pool side rests on the 20% assumption.");
+        console.log("NOT modelled: slippage, trading fees, liquidation, the rebalance");
+        console.log("dead-band, async execution delay. Daily closes, daily rebalancing.");
         console.log("Three completed cycles is not a sample - and never can be: only about");
         console.log("thirty halvings will ever occur.");
+        console.log("");
+        console.log("Note the DD column: for every ROTATING product (B4/Pro/Pro Max) the");
+        console.log("worst drawdown falls inside a regime, never in a 20-day transition.");
+        console.log("The calendar rotates AT the pivots; it does not protect against a");
+        console.log("drawdown INSIDE a regime. Pro Max cycle 1 is the Apr-2013 crash");
+        console.log("(BTC -70.4%) at phi leverage, 319 days before the pivot - not a");
+        console.log("rotation-timing artefact. Mini never rotates, so its DD tracks HODL.");
     }
 
     struct Ctx {
@@ -174,7 +192,7 @@ contract BacktestTest is Test {
 
         Run[4] memory r;
         for (uint256 p = 0; p < 4; p++) {
-            r[p] = Run(WAD, WAD, 0, WAD, WAD, 0);
+            r[p] = Run(WAD, WAD, 0, 0, WAD, 0, 0);
         }
 
         for (uint256 i = c.i0 + 1; i < px.length && ts[i] < to; i++) {
@@ -191,6 +209,11 @@ contract BacktestTest is Test {
                 );
             }
         }
+        // Correctness check on the model, not a result: Mini never trades, so its path
+        // must be HODL adjusted only by the fee it pays and the Pool income it earns.
+        int256 hold = (px[c.last] * WAD) / px[c.i0];
+        assertApproxEqRel(r[0].value, hold, 0.08e18, "Mini must track HODL within fee/Pool drift");
+
         _report(prods, r, c, idx, to == type(uint256).max);
     }
 
@@ -225,10 +248,21 @@ contract BacktestTest is Test {
                 r.fees += fee;
             }
             r.entry = r.value;
+
+            // Pool income: the penalty paid by the cohort that exited early, shared out
+            // among those who stayed. Half the per-cycle uplift at each of the two points.
+            int256 uplift =
+                (POOL_EXIT_SHARE * int256(Phi.EXIT_Q) / WAD) * WAD / (WAD - POOL_EXIT_SHARE) / 2;
+            int256 credit = (r.value * uplift) / WAD;
+            r.value += credit;
+            r.poolYield += credit;
         }
         if (r.value > r.peak) r.peak = r.value;
         int256 dd = r.peak <= 0 ? WAD : ((r.peak - r.value) * WAD) / r.peak;
-        if (dd > r.maxDD) r.maxDD = dd;
+        if (dd > r.maxDD) {
+            r.maxDD = dd;
+            r.ddDay = dtPrev / 86400;
+        }
     }
 
     function _report(
@@ -250,10 +284,21 @@ contract BacktestTest is Test {
             )
         );
         console.log("    settlements: %s", c.settlements);
-        console.log("    product |  return |  max DD");
+        console.log("    product |  return |  max DD | DD at day | zone");
         for (uint256 p = 0; p < 4; p++) {
             console.log(
-                string.concat("    ", prods[p].name, " | ", _x(r[p].value), " | ", _pct(r[p].maxDD))
+                string.concat(
+                    "    ",
+                    prods[p].name,
+                    " | ",
+                    _x(r[p].value),
+                    " | ",
+                    _pct(r[p].maxDD),
+                    " | ",
+                    _pad3(vm.toString(r[p].ddDay)),
+                    "       | ",
+                    _zone(r[p].ddDay)
+                )
             );
         }
         console.log(
@@ -265,6 +310,17 @@ contract BacktestTest is Test {
             )
         );
         console.log("");
+    }
+
+    /// Which regime the worst drawdown fell in — the point being that none of them land
+    /// inside the 20-day transition, so they are not a rotation-timing artefact.
+    function _zone(uint256 day) internal pure returns (string memory) {
+        uint256 t = day * 86400;
+        if (t < Calendar.P - Calendar.W) return "GROWTH";
+        if (t < Calendar.P) return "transition";
+        if (t < Calendar.T) return "FALL";
+        if (t < Calendar.T + Calendar.W) return "transition";
+        return "terminal growth";
     }
 
     function _holdMaxDDRange(uint256 a, uint256 b) internal view returns (int256 maxDD) {
