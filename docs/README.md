@@ -21,6 +21,7 @@ when you need the authoritative `MUST`/`MUST NOT` statements.
 | 6 | [Deployment](06-deployment.md) | Runbook and the funded release-gate checklist |
 | 7 | [Fees, penalty and the pool](07-fee-routing.md) | Performance fee, fee route, exit penalty, claims |
 | 8 | [Keeper operations](08-keeper.md) | Running the permissionless crank |
+| 9 | [Roles](09-roles.md) | Owner / operator / referrer / keeper — flows, earnings, hard limits |
 
 **Integrating?** 1 → 2 → 4. **Auditing?** 2 → 3 → 5, then
 [`../spec/HAZARDS.md`](../spec/HAZARDS.md) and [`../INVARIANTS.md`](../INVARIANTS.md).
