@@ -99,7 +99,7 @@ Timing constants live in `src/libraries/Calendar.sol`:
 | `CYCLE` | `1460 days` | Nominal cycle length (geometry only — the realized halving interval need not match it; the epoch is anchored on the accepted fact from `HalvingOracle`) |
 | `W` | `20 days` | Transition width |
 | `H` | `10 days` | Half-transition. Fixes the zone boundaries and the two settlement points (`t = P−H`, `t = T+H`) for **all** pairs; it is additionally the split-at-zero midpoint only on the piecewise (opposite-sign / zero-endpoint) interpolation path |
-| `SNAPSHOT_WINDOW` | `1 hours` | Window after a point in which `lockPrices` is accepted |
+| `SNAPSHOT_WINDOW` | `24 hours` | The **settlement day** — the window after a point in which `lockPrices` is accepted (the first 24h of the opening half-transition) |
 | `REPORT_WINDOW` | `2 days` | Window after the snapshot window in which vaults may report weight |
 | `POST_FACT_FREE_EXIT` | `W` | Free-exit window following the proven fact |
 
@@ -107,7 +107,7 @@ Recommended operating pattern:
 
 - **Baseline:** run `crank` on a routine schedule (minutes-level) whenever any pool has live vaults. Idle cranks are cheap — `advance()` returns `false`, vault cranks return `false`, everything else reverts into a `catch`.
 - **Around transitions:** during a 20-day transition window — which `H` always divides into two 10-day halves, and which an opposite-sign or zero-endpoint pair additionally crosses zero at — the calendar target moves continuously, so vaults are actively re-syncing. Minutes-level cadence here keeps each async leg verified promptly and keeps rebalances near their target.
-- **At and immediately after a settlement point:** `lockPrices` is only accepted within `SNAPSHOT_WINDOW = 1 hour` of the point. Missing it makes that interval unreportable — a liveness loss, never a custody loss. Crank aggressively in that hour.
+- **At and immediately after a settlement point:** `lockPrices` is accepted only within `SNAPSHOT_WINDOW = 24 hours` of the point — the settlement day. Lock **early**, ideally at `pointTime`: the window's width is deliberate slack for recovering from a dead cron, not licence to shop for a price, and locking early is in the vault owner's own interest (a lower locked price means a smaller fee). Missing the day entirely is not catastrophic — see below.
 - **Through the report window:** `settle` requires an idle engine, and it must land before `reportDeadline(id) = pointTime + SNAPSHOT_WINDOW + REPORT_WINDOW`. An in-flight leg completes within `RESEND_TIMEOUT ≈ 1 hour`, comfortably inside a >2-day window, so steady cranking through the window is enough.
 - **After the report window closes:** claims open (`claimFor` reverts with `ReportWindowOpen` until then). Keep cranking so distribution happens before the interval expires and is swept.
 

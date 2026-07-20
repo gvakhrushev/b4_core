@@ -91,7 +91,7 @@ unreportable interval whose inventory sweeps forward — delayed liveness, never
 
 | Constant | Value | Source |
 |---|---|---|
-| Snapshot window | 1 hour | SPEC §6 (given) |
+| Snapshot window | 24 hours (the settlement day) | chosen; SPEC §6 requires a fixed window. Width is a liveness/discretion trade-off: it recurs only once every ~1–1.5 years, so an hour leaves no room to recover from a dead cron, while a wider window gives a late caller more choice over which price becomes canonical. Bounded because the fee-paying owner can lock at `pointTime` themselves. Missing it defers settlement, never destroys it (`SnapshotWindow.t.sol`) |
 | Report window | 2 days after snapshot | chosen; liveness-only |
 | Distribution window | until the next interval materializes; then single sweep | chosen (D4) |
 | Post-halving free-exit window | 20 days (= W) | chosen ("a fixed window", SPEC §4) |
@@ -126,7 +126,8 @@ so claiming `count−2` is a no-op — V3-VENUE-5), and `retryDeferred()`. Each 
 wrapped in `try this.crankVault/settleVault/retryDeferred` so a malformed or **codeless**
 `vaults[]` entry is isolated and never rolls back the pool steps or other vaults (V4-VENUE-1).
 Run it on a schedule (minutes-level during transitions, and always promptly after each
-settlement point to hit the 1-hour snapshot window). Every call is permissionless; a stalled
+settlement point to hit the 24h snapshot window — lock early, at `pointTime` where possible).
+Every call is permissionless; a stalled
 step never blocks the others.
 
 ## Payout liveness and settlement valuation (hardening, 2026-07-18)

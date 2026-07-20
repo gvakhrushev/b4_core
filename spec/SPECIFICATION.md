@@ -123,7 +123,7 @@ subject to `HAZARDS.md`. Economic rationale is non-normative (`WHITEPAPER.md`).
 
 ## 8. Checkpoints, fees, reward weight
 
-- Each settlement point: a one-hour price snapshot, a report window, a distribution window,
+- Each settlement point: a settlement-day price snapshot, a report window, a distribution window,
   then expiry. Price locking is permissionless and MUST commit **only after all assets price**
   (a transient zero on one asset MUST NOT poison the interval — see `HAZARDS.md` D1). Missing
   the snapshot window makes the interval unreportable (liveness, not custody).

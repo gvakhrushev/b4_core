@@ -157,13 +157,13 @@ function claimDeferred(address recipient, address token) external; // nonReentra
 
 ```solidity
 function advance() external returns (bool materialized);  // materialize one passed settlement point
-function lockPrices(uint256 id) external;                 // within Calendar.SNAPSHOT_WINDOW (1 hour)
+function lockPrices(uint256 id) external;                 // within Calendar.SNAPSHOT_WINDOW (24 hours)
 function claimFor(uint256 id, address vault) external;    // pays the vault's fixed owner, in kind
 function sweep(uint256 id) external;                      // roll an expired interval's inventory forward
 function capture() external;                              // account any balance above liability
 ```
 
-`lockPrices` is **all-or-nothing**: it commits only if every directional asset prices non-zero, otherwise reverts (`ZeroPrice()`) so a later call inside the window retries. Weights are reported by vaults themselves via `reportWeight(uint256 id, uint256 weight)` — external callers cannot report. Claims open only after `reportDeadline(id)` (= `pointTime + SNAPSHOT_WINDOW + REPORT_WINDOW`, i.e. 1 hour + 2 days) and pay pro rata in kind, with no internal swap — and they close when the interval is swept: `sweep(id)` is permissionless and callable as soon as a later interval exists, after which `claimFor` reverts `NothingToClaim()` and the unclaimed inventory has rolled forward into the next basket. Claim promptly after `reportDeadline(id)`.
+`lockPrices` is **all-or-nothing**: it commits only if every directional asset prices non-zero, otherwise reverts (`ZeroPrice()`) so a later call inside the window retries. Weights are reported by vaults themselves via `reportWeight(uint256 id, uint256 weight)` — external callers cannot report. Claims open only after `reportDeadline(id)` (= `pointTime + SNAPSHOT_WINDOW + REPORT_WINDOW`, i.e. 24 hours + 2 days) and pay pro rata in kind, with no internal swap — and they close when the interval is swept: `sweep(id)` is permissionless and callable as soon as a later interval exists, after which `claimFor` reverts `NothingToClaim()` and the unclaimed inventory has rolled forward into the next basket. Claim promptly after `reportDeadline(id)`.
 
 ### Keeper
 
@@ -325,7 +325,7 @@ while (B4Vault(vault).crank()) {}
 // 5. At a checkpoint: pool side first, then settle the vault.
 B4Pool(pool).advance();
 uint256 id = B4Pool(pool).intervalCount() - 1;   // the just-materialized interval
-B4Pool(pool).lockPrices(id);                     // within Calendar.SNAPSHOT_WINDOW (1 hour)
+B4Pool(pool).lockPrices(id);                     // within Calendar.SNAPSHOT_WINDOW (24 hours)
 (bool ok, uint256 rid) = B4Pool(pool).currentReportable();  // only true once prices are locked
 while (B4Vault(vault).crank()) {}      // reach an idle engine before settling
 if (ok) B4Vault(vault).settle(rid);

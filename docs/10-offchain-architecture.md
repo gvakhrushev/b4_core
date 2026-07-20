@@ -122,18 +122,32 @@ an answer is.
 Permissionless means *anyone may call* — not that the call happens by itself. Somebody has to
 send the transaction and pay gas. That is the only reason an operator runs a key at all.
 
-**The sharp case: `lockPrices` has a one-hour window.**
+**The one real deadline: `lockPrices` is accepted only on the settlement day.**
 
 ```solidity
 if (block.timestamp < it.pointTime
-    || block.timestamp > it.pointTime + Calendar.SNAPSHOT_WINDOW)   // 1 hour
+    || block.timestamp > it.pointTime + Calendar.SNAPSHOT_WINDOW)   // 24 hours
     revert OutsideSnapshotWindow();
 ```
 
-Miss it and the interval is **never** priced: `currentReportable()` stays false, nobody in that
-pool can `settle`, the operator loses that interval's fee and every vault loses its reward
-weight for it. Since settlement points fall at `P−H` and `T+H`, that window recurs roughly once
-a year and a half. Expecting a human to hit it manually is not an operating plan.
+Miss it and the interval is never priced: `currentReportable()` stays false and nobody in that
+pool can settle *that* interval. Since settlement points fall at `P−H` and `T+H`, the window
+recurs roughly once every 1–1.5 years — long enough for a cron written today to have quietly
+rotted by the time it is needed, which is exactly why the window is a full day rather than an
+hour.
+
+**What a miss actually costs: deferral, not destruction.** `opsSettle` may skip an interval
+(`intervalId + 1 > lastSettledPlusOne`), `entryLedgerWad` only advances on a settle, and
+`rewardBaseWad` accumulates — so at the next checkpoint the fee and the reward weight are
+measured over the *combined* span, and unclaimed pool inventory sweeps forward. Nothing is
+burned; the cost is that everyone waits until the next settlement point. Pinned by
+`test/unit/SnapshotWindow.t.sol`.
+
+**Lock early anyway.** The width is slack for recovery, not room to shop for a price: the
+locked price drives NAV → profit → fee, so a late caller has some choice over which price
+becomes canonical. That discretion is bounded — the party who pays the fee (the owner) wants a
+*lower* price and can call `lockPrices` at `pointTime` themselves, and every vault in the pool
+is served by the same single lock — but the healthy default is simply to lock at the point.
 
 **Also impractical to leave to the user:** completing their own async intents (a deposit's
 funding is create → prove → complete across several blocks — asking the user to sign each step
@@ -182,7 +196,7 @@ step remains delayed liveness, never loss of funds.
 - [ ] Serve live vault state via `eth_call`; never cache `navWad` / `currentTarget` as truth.
 - [ ] Compute zone, `freeExit` and `depositOpen` **client-side** from `HalvingOracle.latest()`.
 - [ ] Run automation from a funded, authority-free gas wallet; alert on low balance.
-- [ ] Alert on the two settlement points specifically — the 1-hour lock window is the only unforgiving deadline in the system.
+- [ ] Alert on the two settlement points specifically — the 24h lock window is the only hard deadline in the system, and it recurs only once every 1–1.5 years, so test the alarm long before you need it.
 - [ ] Verify the UI's read and exit paths still work with the backend switched off.
 
 ## Further reading

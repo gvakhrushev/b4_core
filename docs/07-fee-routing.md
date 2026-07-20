@@ -181,7 +181,7 @@ function reportWeight(uint256 id, uint256 weight) external {
 }
 ```
 
-Only a factory-registered vault can report; one report per vault per interval; the window is `pointTime + SNAPSHOT_WINDOW (1 hour) + REPORT_WINDOW (2 days)`. Weight is a **claim on the pool basket**, not a token and not a transferable share.
+Only a factory-registered vault can report; one report per vault per interval; the window is `pointTime + SNAPSHOT_WINDOW (24 hours) + REPORT_WINDOW (2 days)`. Weight is a **claim on the pool basket**, not a token and not a transferable share.
 
 ---
 
@@ -283,8 +283,8 @@ The `try/catch` is deliberate: a griefing co-asset in the pool must never be abl
 | --- | --- | --- | --- |
 | Inventory in | `capture()` | anyone | any balance above `liability[token]` becomes `accruing[i]`, and `liability[token] = bal`. Measured receipt only (D2): a donation becomes inventory, never vault profit. |
 | New interval | `advance()` | anyone | materializes the next passed settlement point; the whole `accruing` basket becomes that interval's fixed `bucket[i]` / `remaining[i]`. |
-| Price lock | `lockPrices(id)` | anyone | within `SNAPSHOT_WINDOW = 1 hour` of `pointTime`; index 0 is fixed at `Phi.WAD` (USDC = 1 USD, decision C3), every directional index must price non-zero or the call reverts — all-or-nothing (D1). |
-| Weights | `reportWeight(id, w)` | the vault, from `settle` | one report per vault per interval, until `reportDeadline = pointTime + 1 hour + 2 days`. |
+| Price lock | `lockPrices(id)` | anyone | within `SNAPSHOT_WINDOW = 24 hours` of `pointTime` (the settlement day); index 0 is fixed at `Phi.WAD` (USDC = 1 USD, decision C3), every directional index must price non-zero or the call reverts — all-or-nothing (D1). |
+| Weights | `reportWeight(id, w)` | the vault, from `settle` | one report per vault per interval, until `reportDeadline = pointTime + 24 hours + 2 days`. |
 | Claim | `claimFor(id, vault)` | anyone | pays the vault's `owner()` in kind, pro rata over every basket asset. |
 | Expiry | `sweep(id)` | anyone | once the next interval exists, unclaimed `remaining` folds back into `accruing`; liability unchanged (D4). |
 
