@@ -21,7 +21,7 @@ venue (HyperEVM + HyperCore), one accounting model, no admin.
 | **Integrating** | [Integration](docs/04-integration.md) · [Contract map](docs/03-contracts.md) |
 | **Auditing** | [Security model](docs/05-security.md) · [`spec/HAZARDS.md`](spec/HAZARDS.md) · [`INVARIANTS.md`](INVARIANTS.md) |
 | **Operating** | [Deployment](docs/06-deployment.md) · [Keeper](docs/08-keeper.md) · [Roles](docs/09-roles.md) · [Off-chain stack](docs/10-offchain-architecture.md) |
-| **Economics** | [Fees, penalty and the pool](docs/07-fee-routing.md) · [`spec/WHITEPAPER.md`](spec/WHITEPAPER.md) |
+| **Economics** | [Fees, penalty and the pool](docs/07-fee-routing.md) · [Backtest](docs/11-backtest.md) · [`spec/WHITEPAPER.md`](spec/WHITEPAPER.md) |
 
 Full index: [`docs/README.md`](docs/README.md). The normative specification the
 implementation is judged against lives in [`spec/`](spec/) — citations of the form
@@ -132,6 +132,38 @@ never trades, yet is still fee'd on interval profit.
 
 Details: [Core concepts](docs/02-core-concepts.md).
 
+## Historical demo
+
+The four products' exposure path run over real BTC daily closes — through the **protocol's
+own `Calendar` library**, so the demo tracks the deployed arithmetic rather than a
+re-implementation that could drift from it.
+
+```bash
+forge test --match-path 'test/backtest/*' -vv
+```
+
+Return by cycle, each starting at `1.0x` (max drawdown in brackets):
+
+| Cycle | Mini | B4 | Pro | Pro Max | HODL |
+|---|---:|---:|---:|---:|---:|
+| 2012→2016 | 49.6x (85%) | 122.7x (74%) | 171.3x (74%) | 374.4x (**97%**) | 51.9x (84%) |
+| 2016→2020 | 12.9x (84%) | 52.8x (64%) | 72.8x (64%) | 292.1x (86%) | 13.5x (83%) |
+| 2020→2024 | 7.1x (77%) | 27.1x (53%) | 41.4x (53%) | 226.5x (74%) | 7.4x (76%) |
+| 2024→now* | 0.99x (54%) | 1.68x (28%) | 2.06x (28%) | 2.76x (46%) | 1.00x (53%) |
+
+<sub>\* cycle in progress, one settlement so far</sub>
+
+> [!IMPORTANT]
+> **Illustration of the mechanism — not evidence of edge, and not a forecast.** Three
+> completed cycles is not a statistical sample and never can be: only ~32 halvings will ever
+> occur. Pro Max's 97 % drawdown is a liquidation, not a return — the model has no
+> liquidation engine. Perps did not exist in liquid form before ~2016, so Pro/Pro Max in the
+> early cycles are counterfactual. Mini sits *below* HODL by construction (it never trades
+> but still pays the fee); its actual return is Pool inventory, which the model does not
+> credit.
+
+Method, assumptions and every omitted cost: [Backtest](docs/11-backtest.md).
+
 ## Versioning: no upgrade path, by design
 
 Every contract is immutable — no proxy, no pause, no admin who can reach into a live vault.
@@ -168,6 +200,7 @@ src/
   citrea/     HalvingProver (source-chain publisher)
 test/         unit · integration · invariant campaigns · adversarial HyperCore mock
 script/       deployment wiring
+data/         BTC daily closes used by the historical demo
 spec/         the normative specification package
 docs/         guides
 ```
