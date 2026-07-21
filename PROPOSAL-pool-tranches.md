@@ -102,7 +102,10 @@ margin    = notional / L_tranche  ⇒ venue liquidation sits at s
 ### Minimum tranche
 
 The venue minimum is already enforced protocol-wide: `MIN_ORDER_USD_WAD = 10e18` — a perp
-target below $10 notional zeroes out (`B4VaultEngine` L802). For the tranche to open at all:
+target below $10 notional zeroes out (`B4VaultEngine` L802). **Empirically confirmed by the
+owner on the live venue (2026-07-21): a sub-$10 BTC-perp order on Hyperliquid is rejected
+with a "$10 minimum" error** — the constant matches production behavior, not just docs.
+For the tranche to open at all:
 
 - Pro Max fall `−φ`: notional = φ·margin ⇒ margin ≥ ~$6.2 for a $10 notional.
 - Pro fall `−1/φ`: notional = 0.618·margin ⇒ margin ≥ ~$16.2.
