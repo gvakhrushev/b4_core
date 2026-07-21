@@ -37,69 +37,113 @@ data: [`data/btcusd_daily.csv`](../data/btcusd_daily.csv)
 
 Only the portfolio bookkeeping (funding, fee, Pool credit, drawdown) lives in the test.
 
+## Leaderboard — 3 complete cycles, compounded (2012-11-28 → 2024-04-20)
+
+Re-deposited each cycle. More return **and** less drawdown than holding.
+
+| Strategy | Total return | Worst drawdown | Worst vs deposit | Pool income |
+|---|---:|---:|---:|---:|
+| `HODL` buy & hold | 5,214x | 84.2 % | −13.2 % | — |
+| Mini | 5,415x | 84.5 % | −13.2 % | ×1.09 |
+| **B4** | **125,149x** | **73.9 %** | −13.2 % | ×1.09 |
+| **Pro** | **300,473x** | **73.9 %** | −13.2 % | ×1.09 |
+| Pro Max | 14,893,463x | 75.5 % | −33.6 % | ×1.09 |
+
 ## Results, per cycle
 
 Each cycle restarts at `1.0x`, deposit assumed at the halving. `HODL` is raw buy-and-hold —
-no pool, no protocol, the benchmark to beat. `max DD` is peak-to-trough; **`DD-HODL`** is how
-much *less* (negative) the product drew down than holding; `vs dep` is the worst the equity
-ever fell **below the deposit** — the number that actually matters. Returns include the Pool
-income (see below); `entry L` is the structural leverage at the cycle's first long.
+no pool, no protocol, the benchmark to beat, shown as the first row. `max DD` is peak-to-trough
+and **`zone`** is the calendar phase that drawdown landed in (`GROWTH` `[0,P]` / `FALL` `[P,T]`
+/ `RECOV` `[T,end]`); `vs dep` is the worst the equity ever fell **below the deposit** — the
+number that actually matters. `pool` is how much of that strategy's profit came from the
+penalised leavers. `entry L` is the structural leverage at the cycle's first long.
 
-**Cycle 1 — 2012 → 2016** · *HODL 52.3x, 84.2 % max DD*
+**Cycle 1 — 2012-11-28 → 2016-07-09**
 
-| | Return | max DD | DD-HODL | vs dep | entry L |
-|---|---:|---:|---:|---:|---:|
-| Mini | 52.9x | 84.5 % | +0.2 pp | −0.3 % | 1.0× |
-| B4 | 145.1x | 73.9 % | **−10.3 pp** | −0.3 % | 1.0× |
-| Pro | 193.1x | 73.9 % | **−10.3 pp** | −0.3 % | 1.0× |
-| Pro Max | 471.0x | 75.5 % | −8.7 pp | −0.6 % | 1.6× |
+| | Return | max DD | worst DD on | zone | vs dep | pool | entry L |
+|---|---:|---:|---|---|---:|---:|---:|
+| `HODL` | 52.3x | 84.2 % | 2015-01-14 | `FALL` | −0.3 % | — | — |
+| Mini | 52.9x | 84.5 % | 2015-01-14 | `FALL` | −0.3 % | 2.9 % | 1.0× |
+| **B4** | **145.1x** | **73.9 %** | 2013-04-11 | `GROWTH` | −0.3 % | 2.8 % | 1.0× |
+| **Pro** | **193.1x** | **73.9 %** | 2013-04-11 | `GROWTH` | −0.3 % | 2.8 % | 1.0× |
+| Pro Max | 471.0x | 75.5 % | 2013-04-11 | `GROWTH` | −0.6 % | 2.8 % | 1.6× |
 
-**Cycle 2 — 2016 → 2020** · *HODL 13.6x, 83.2 % max DD*
+**Cycle 2 — 2016-07-09 → 2020-05-11**
 
-| | Return | max DD | DD-HODL | vs dep | entry L |
-|---|---:|---:|---:|---:|---:|
-| Mini | 13.8x | 83.4 % | +0.2 pp | −13.2 % | 1.0× |
-| B4 | 40.3x | 64.2 % | **−18.9 pp** | −13.2 % | 1.0× |
-| Pro | 54.2x | 64.2 % | **−18.9 pp** | −13.2 % | 1.0× |
-| Pro Max | 209.9x | 67.9 % | −15.2 pp | **−33.6 %** | 2.5× |
+| | Return | max DD | worst DD on | zone | vs dep | pool | entry L |
+|---|---:|---:|---|---|---:|---:|---:|
+| `HODL` | 13.6x | 83.2 % | 2018-12-15 | `FALL` | −13.2 % | — | — |
+| Mini | 13.8x | 83.4 % | 2018-12-15 | `FALL` | −13.2 % | 3.0 % | 1.0× |
+| **B4** | **40.3x** | **64.2 %** | 2020-03-16 | `RECOV` | −13.2 % | 2.9 % | 1.0× |
+| **Pro** | **54.2x** | **64.2 %** | 2020-03-16 | `RECOV` | −13.2 % | 2.9 % | 1.0× |
+| Pro Max | 209.9x | 67.9 % | 2020-03-16 | `RECOV` | **−33.6 %** | 2.8 % | 2.5× |
 
-**Cycle 3 — 2020 → 2024** · *HODL 7.3x, 76.5 % max DD*
+**Cycle 3 — 2020-05-11 → 2024-04-20**
 
-| | Return | max DD | DD-HODL | vs dep | entry L |
-|---|---:|---:|---:|---:|---:|
-| Mini | 7.4x | 76.8 % | +0.3 pp | −0.1 % | 1.0× |
-| B4 | 21.4x | 53.1 % | **−23.4 pp** | −0.1 % | 1.0× |
-| Pro | 28.7x | 53.1 % | **−23.4 pp** | −0.1 % | 1.0× |
-| Pro Max | 150.6x | 58.9 % | −17.5 pp | −1.0 % | 2.7× |
+| | Return | max DD | worst DD on | zone | vs dep | pool | entry L |
+|---|---:|---:|---|---|---:|---:|---:|
+| `HODL` | 7.3x | 76.5 % | 2022-11-21 | `RECOV` | −0.1 % | — | — |
+| Mini | 7.4x | 76.8 % | 2022-11-21 | `RECOV` | −0.1 % | 3.3 % | 1.0× |
+| **B4** | **21.4x** | **53.1 %** | 2021-07-20 | `GROWTH` | −0.1 % | 3.0 % | 1.0× |
+| **Pro** | **28.7x** | **53.1 %** | 2021-07-20 | `GROWTH` | −0.1 % | 2.9 % | 1.0× |
+| Pro Max | 150.6x | 58.9 % | 2021-07-20 | `GROWTH` | −1.0 % | 2.8 % | 2.7× |
 
-**Cycle 4 — 2024 → 2026-07-20 (in progress, one settlement)** · *HODL 1.0x, 53.0 % max DD*
+**Cycle 4 — 2024-04-20 → 2026-07-20 (in progress)**
 
-| | Return | max DD | DD-HODL | vs dep | entry L |
-|---|---:|---:|---:|---:|---:|
-| Mini | 1.0x | 53.3 % | +0.3 pp | −17.1 % | 1.0× |
-| B4 | 1.7x | 28.2 % | **−24.7 pp** | −17.1 % | 1.0× |
-| Pro | 2.1x | 28.2 % | **−24.7 pp** | −17.1 % | 1.0× |
-| Pro Max | 3.7x | 51.9 % | −1.0 pp | **−41.7 %** | 2.2× |
+| | Return | max DD | worst DD on | zone | vs dep | pool | entry L |
+|---|---:|---:|---|---|---:|---:|---:|
+| `HODL` | 1.00x | 53.0 % | 2026-06-30 | `FALL` | −17.1 % | — | — |
+| Mini | 1.03x | 53.3 % | 2026-06-30 | `FALL` | −17.1 % | **92.9 %** | 1.0× |
+| **B4** | **1.71x** | **28.2 %** | 2025-04-08 | `GROWTH` | −17.1 % | 6.8 % | 1.0× |
+| **Pro** | **2.05x** | **28.2 %** | 2025-04-08 | `GROWTH` | −17.1 % | 5.5 % | 1.0× |
+| Pro Max | 3.71x | 51.9 % | 2024-09-06 | `GROWTH` | **−41.7 %** | 3.9 % | 2.2× |
+
+### Where the drawdown comes from — and why it is not the bear
+
+A natural objection: *if B4 is in USDC (or short) through the fall, where does a 74 % drawdown
+come from?* It **cannot** come from the fall — B4's equity is constant in USDC there, so the
+`FALL` zone contributes exactly zero drawdown. Every B4/Pro drawdown above lands in `GROWTH`
+or `RECOV`: violent **intra-bull** crashes. `HODL`'s worst days land in the phase B4 sits out:
+
+| Cycle | `HODL` worst day | | B4 worst day | |
+|---|---|---|---|---|
+| 2012→2016 | 2015-01-14 | `FALL` — bear bottom | 2013-04-11 | `GROWTH` — April-2013 crash ($260→$60) |
+| 2016→2020 | 2018-12-15 | `FALL` — bear bottom | 2020-03-16 | `RECOV` — COVID |
+| 2020→2024 | 2022-11-21 | `RECOV` — FTX | 2021-07-20 | `GROWTH` — May-2021 crash |
+
+So the calendar does exactly what it claims — it removes the *bear*. It does not, and does not
+claim to, remove sharp corrections inside a bull run.
 
 ### Pool income — the protocol's core value capture
 
-Every product's return **already includes** the Pool income: the behavioural assumption is
-that **20 % of the cohort exits through the `q = 11.8 %` penalty door each cycle**, and that
-forfeited penalty is redistributed to the ~80 % who stay — **+0.25·q ≈ +2.95 % per cycle to
-every stayer**, compounding if held across cycles. It is the mechanism by which stayers are
-paid by leavers.
+Every product's return **already includes** it: the behavioural assumption is that **20 % of
+the cohort exits through the `q = 11.8 %` penalty door each cycle**, and that forfeited penalty
+is redistributed to the ~80 % who stay — **+0.25·q ≈ +2.95 % per cycle to every stayer**,
+compounding if held across cycles (×1.09 over the three complete cycles). It is the mechanism
+by which stayers are paid by leavers.
 
-You can *see* it isolated in the demo's footnote: Mini holds `1×` long always — exactly HODL's
-exposure — so **Mini minus HODL is nothing but the Pool income net of the operator fee**
-(cycle 1: 52.9x vs 52.3x). Every other product carries the same credit on top of its strategy.
+It is visible **in isolation**: Mini holds `1×` long always — exactly `HODL`'s exposure — so
+the Mini − `HODL` gap is nothing but the Pool income net of the operator fee.
+
+| Cycle | Mini | `HODL` | Pool share of Mini's profit |
+|---|---:|---:|---:|
+| 2012→2016 | 52.9x | 52.3x | 2.9 % |
+| 2016→2020 | 13.8x | 13.6x | 3.0 % |
+| 2020→2024 | 7.4x | 7.3x | 3.3 % |
+| 2024→now (flat cycle) | 1.03x | 1.00x | **92.9 %** |
+
+In a bull cycle the pool is a ~3 % bonus on top of price. In a **flat cycle it is essentially
+the entire return** — the protocol pays stayers when the market does not. That asymmetry, not
+the bull-cycle multiple, is the point of the mechanism.
 
 ## Reading it honestly
 
-- **Less drawdown than holding — the `DD-HODL` column.** HODL eats a 53–84 % top-to-bottom
-  crash every cycle. B4 and Pro cut **10–25 pp** off that: they hold spot only through the
-  *rise* and sit in **USDC through the fall**, so their drawdown is intra-bull volatility, not
-  the cycle bear. Mini stays `1×` long through the bear (like HODL), so its drawdown tracks
-  HODL's — that is the price of the simplest product. The real strategies step aside.
+- **Less drawdown than holding — compare the `max DD` rows against the `HODL` row.** HODL eats
+  a 53–84 % top-to-bottom crash every cycle. B4 and Pro cut **10–25 pp** off that: they hold
+  spot only through the *rise* and sit in **USDC through the fall**, so their drawdown is
+  intra-bull volatility, not the cycle bear — see the `zone` column and the section above.
+  Mini stays `1×` long through the bear (like HODL), so its drawdown tracks HODL's — that is
+  the price of the simplest product. The real strategies step aside.
 - **`max DD` and `vs dep` are different risks — read both.** B4 shows ~74 % peak-to-trough in
   cycle 1 yet only −0.3 % vs the deposit: the swing gives back accumulated *profit*, not
   principal, for a holder who entered at the halving. A mid-cycle entrant faces the full
