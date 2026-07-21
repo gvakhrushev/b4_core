@@ -35,7 +35,10 @@ subject to `HAZARDS.md`. Economic rationale is non-normative (`WHITEPAPER.md`).
 - A policy is a stored `(growth, fall)` pair of signed WAD targets; a strategy is read only at
   selection. For base `b`, scale `k`: `resolved = b·k/WAD`, with `|b| ≤ 10·WAD`,
   `0 < k ≤ 10·WAD`, `|resolved| ≤ φ` (`φ = 1_618033988749894848`). Mini is the canonical
-  special case resolving to `(1,1)`.
+  special case resolving to `(1,1)`. The stored magnitude is the product's **base** leverage
+  `g`; for a leveraged long the *effective* exposure at entry is `g` amplified by proximity to
+  the cycle's structural low (§7b) and MAY exceed `φ` — the `|resolved| ≤ φ` bound is on the
+  stored base, not the effective leverage.
 - Execution MUST decompose the current signed target `n` as `spot = clamp(n,0,1)`,
   `perp = n − spot`.
 - Policy/scale change MUST update the same vault with no withdrawal, exit, or penalty.
@@ -120,6 +123,46 @@ subject to `HAZARDS.md`. Economic rationale is non-normative (`WHITEPAPER.md`).
   positive mark PnL snapshotted, that PnL × fraction actually reduced).
 - Favorable overfill and donations remain unaccounted and separately recoverable (bounded,
   flat/idle, no accounting callback) for spot AND perp surplus.
+
+### 7b. Position sizing and structural leverage (long side)
+
+- **Sized once, then held.** A directional/perp position MUST be sized when it is opened or
+  materially re-targeted (an entry, a deposit, or a calendar zone change) and MUST NOT be
+  continuously re-sized against a moving NAV within a zone. The calendar is the rebalance
+  schedule; a running NAV-relative target is NOT. A tolerance band still suppresses dust
+  re-trades, but the trigger is a target change, not price drift.
+- **Structural leverage floor.** For a leveraged long product (base leverage `g = |growth| >
+  1`, e.g. Pro Max `g = φ`), the effective leverage at entry price `p` MUST be bounded by the
+  cycle's confirmed structural lows, not by a flat multiple:
+
+  ```
+  stop = min( p − (p − floor)/g ,  cap )
+  L    = p / (p − stop)          (then clamped by the venue maxLeverage)
+  ```
+
+  where `floor` and `cap` are two ratcheted anchors (below). The uncapped stop sits `1/φ` of
+  the delta `(p − floor)` below `p` for `g = φ`, so `L = g·p/(p − floor)` uncapped — leverage
+  grows as the entry approaches the structural low and decays toward `1×` for a late entry.
+  Implementations MUST use the shared pure function (`StructuralLeverage`) so the sizing math
+  is identical to what is tested and demonstrated.
+- **`cap` limits maximum leverage, not the right to enter.** Any `p > floor` MAY open; `cap`
+  only lowers the stop (⇒ lower leverage). Only `p ≤ floor` MUST refuse a leveraged open
+  (fall back to the un-leveraged spot leg). `floor == 0` (genesis, before the first window
+  closes) MUST degrade to the flat base `L = g`.
+- **The stop is realized by margin size, not a stop order.** The posted perp margin MUST equal
+  `notional / L`, so the venue's own liquidation sits at `stop`. The whole deposit is deployed
+  (no split-out reserve). On a stop the perp margin is consumed but the spot leg survives, so
+  the position degrades to spot-only with `stop/p` of the directional retained — never zero.
+- **Anchors — two confirmed structural lows, ratcheted UP only.** The minimum directional
+  price is recorded by a permissionless ratchet within two calendar windows: the 62-window
+  `[T, T+W]` (the cycle bottom) and the post-halving window `[halving, halving+W]`. The
+  recorded minimum only moves down *within its own window*; across windows the pair
+  `(floor, cap)` ratchets up at each structural event — at the halving the previous `cap`
+  becomes the new `floor` and the post-halving low becomes the new `cap`. Under-sampling is
+  fail-safe: a missed lower observation can only raise the delta and lower leverage. A new
+  low BELOW the current `cap` MUST NOT raise leverage (the ratchet does not move down).
+- **Short side.** A short leg (fall regime) uses the flat base `g` with no structural
+  multiplier in this version — there is no structural ceiling above a short.
 
 ## 8. Checkpoints, fees, reward weight
 

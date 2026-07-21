@@ -1,13 +1,15 @@
-# Historical demo: the calendar over real BTC data
+# Historical demo: the calendar and structural leverage over real BTC data
 
-What the four products' exposure path would have produced across the completed Bitcoin
-cycles — run through the **protocol's own `Calendar` library**, not a re-implementation.
+What the four products would have produced across the completed Bitcoin cycles — run through
+the **protocol's own libraries** (`Calendar` for the regime, `StructuralLeverage` for the
+leverage), not a re-implementation.
 
 > [!IMPORTANT]
-> **This is an illustration of the mechanism, not evidence of edge, and not a forecast.**
-> Three completed cycles is not a statistical sample — and never can be: only about thirty
-> halvings will ever occur, which the [whitepaper](../spec/WHITEPAPER.md) §5 states as a
-> structural limit of the design rather than a gap to be filled with more data.
+> **Illustration of the mechanism, not evidence of edge, and not a forecast.** Three
+> completed cycles is not a statistical sample — and never can be: only about thirty halvings
+> will ever occur ([whitepaper](../spec/WHITEPAPER.md) §5). Leveraged multiples are
+> *arithmetic under perfect timing* — entry at the halving, infinite depth at any size, no
+> slippage or market impact — not outcomes.
 
 ## How to run it
 
@@ -16,145 +18,123 @@ forge test --match-path 'test/backtest/*' -vv
 ```
 
 Source: [`test/backtest/Backtest.t.sol`](../test/backtest/Backtest.t.sol) ·
+leverage: [`src/libraries/StructuralLeverage.sol`](../src/libraries/StructuralLeverage.sol) ·
 data: [`data/btcusd_daily.csv`](../data/btcusd_daily.csv)
 
-## Why it runs in Foundry rather than a notebook
+## What the model does
 
-The exposure path comes from **`Calendar.targetAt` — the same function the vaults call**.
-A Python re-implementation of the calendar could silently drift from the deployed
-arithmetic and produce a demo that flatters a protocol it no longer describes. Here, if the
-calendar changes, this output changes with it.
+- **Sized once per regime, then held.** A position is sized when the calendar rotates and
+  then held at **fixed units** — equity is *linear* in price (`eq·(1 + dir·L·(px/entry − 1))`),
+  not daily-compounded. This matches the shipped mechanic ([SPECIFICATION §7b](../spec/SPECIFICATION.md))
+  and removes the volatility drag of a daily rebalance. It also means there is no explosive
+  compounding: the numbers are what fixed leverage actually returns over a move.
+- **Leverage from the protocol's own function.** Pro Max's long leverage is
+  `StructuralLeverage.leverageWad(entry, φ, floor, cap)` — the exact function the engine will
+  call. A Python re-implementation could silently drift; this cannot.
+- **Structural anchors from the data.** `floor` and `cap` are the two ratcheted structural
+  lows: the previous cycle's 62-window bottom and this cycle's post-halving-window low. They
+  are read from the same daily series, so the demo and the mechanism see the same lows.
 
-Only the portfolio bookkeeping — compounding a daily return at the given exposure — lives in
-the test. That is market simulation, not protocol logic.
+Only the portfolio bookkeeping (funding, fee, Pool credit, drawdown) lives in the test.
 
 ## Results, per cycle
 
-Each cycle restarts at `1.0x`. Cumulative compounding since 2012 is deliberately **not**
-reported: it would be dominated by the earliest, least liquid period and would say more about
-a \$12 starting price than about the design.
+Each cycle restarts at `1.0x`, deposit assumed at the halving. `max DD` is peak-to-trough;
+`vs dep` is the worst the equity ever fell **below the deposit** — the number that actually
+matters.
 
-**Cycle 1 — 2012-11-29 → 2016-07-09**
+**Cycle 1 — 2012 → 2016**
 
-| | Return | Max DD | DD at day | Regime |
-|---|---:|---:|---:|---|
-| Mini | 51.03x | 84.65 % | 775 | fall |
-| B4 | 126.31x | 73.85 % | 132 | growth |
-| Pro | 176.26x | 73.85 % | 132 | growth |
-| Pro Max | 385.40x | **96.74 %** | 218 | growth |
-| *HODL* | *51.85x* | *84.18 %* | | |
+| | Return | max DD | vs dep | entry L |
+|---|---:|---:|---:|---:|
+| Mini | 47.8x | 84.7 % | −0.3 % | 1.0× |
+| B4 | 132.2x | 73.9 % | −0.3 % | 1.0× |
+| Pro | 176.6x | 73.9 % | −0.3 % | 1.0× |
+| Pro Max | 432.4x | 75.5 % | −0.6 % | 1.6× |
+| *HODL* | *52.3x* | *84.2 %* | | |
 
-**Cycle 2 — 2016-07-10 → 2020-05-11**
+**Cycle 2 — 2016 → 2020**
 
-| | Return | Max DD | DD at day | Regime |
-|---|---:|---:|---:|---|
-| Mini | 13.32x | 83.65 % | 887 | fall |
-| B4 | 54.34x | 64.20 % | 1344 | terminal growth |
-| Pro | 74.96x | 64.20 % | 1344 | terminal growth |
-| Pro Max | 300.65x | 85.71 % | 1344 | terminal growth |
-| *HODL* | *13.52x* | *83.16 %* | | |
+| | Return | max DD | vs dep | entry L |
+|---|---:|---:|---:|---:|
+| Mini | 12.5x | 83.6 % | −13.2 % | 1.0× |
+| B4 | 36.8x | 64.2 % | −13.2 % | 1.0× |
+| Pro | 49.7x | 64.2 % | −13.2 % | 1.0× |
+| Pro Max | 192.7x | 67.9 % | **−33.6 %** | 2.5× |
+| *HODL* | *13.6x* | *83.2 %* | | |
 
-**Cycle 3 — 2020-05-12 → 2024-04-20**
+**Cycle 3 — 2020 → 2024**
 
-| | Return | Max DD | DD at day | Regime |
-|---|---:|---:|---:|---|
-| Mini | 7.29x | 76.70 % | 922 | transition |
-| B4 | 27.89x | 53.05 % | 433 | growth |
-| Pro | 42.56x | 53.05 % | 433 | growth |
-| Pro Max | 233.14x | 74.17 % | 433 | growth |
-| *HODL* | *7.37x* | *76.45 %* | | |
+| | Return | max DD | vs dep | entry L |
+|---|---:|---:|---:|---:|
+| Mini | 6.9x | 77.3 % | −0.1 % | 1.0× |
+| B4 | 19.7x | 53.1 % | −0.1 % | 1.0× |
+| Pro | 26.5x | 53.1 % | −0.1 % | 1.0× |
+| Pro Max | 139.0x | 58.9 % | −1.0 % | 2.7× |
+| *HODL* | *7.3x* | *76.5 %* | | |
 
-**Cycle 4 — 2024-04-21 → 2026-07-20 (in progress, one settlement)**
+**Cycle 4 — 2024 → 2026-07-20 (in progress, one settlement)**
 
-| | Return | Max DD | DD at day | Regime |
-|---|---:|---:|---:|---|
-| Mini | 1.00x | 53.19 % | 799 | fall |
-| B4 | 1.70x | 28.19 % | 351 | growth |
-| Pro | 2.09x | 28.19 % | 351 | growth |
-| Pro Max | 2.80x | 45.54 % | 748 | fall |
-| *HODL* | *1.00x* | *52.99 %* | | |
+| | Return | max DD | vs dep | entry L |
+|---|---:|---:|---:|---:|
+| Mini | 1.0x | 53.2 % | −17.1 % | 1.0× |
+| B4 | 1.7x | 28.2 % | −17.1 % | 1.0× |
+| Pro | 2.0x | 28.2 % | −17.1 % | 1.0× |
+| Pro Max | 3.6x | 51.9 % | **−41.7 %** | 2.2× |
+| *HODL* | *1.0x* | *53.0 %* | | |
 
-## Where the drawdowns happen — and why it is not a rotation artefact
+## Reading it honestly
 
-A natural suspicion is that the drawdowns come from rotating on a single settlement price,
-and that closing in slices would smooth them away. The `DD at day` column tests that
-directly, and the answer is no.
+- **`max DD` and `vs dep` are different risks — read both.** Mini shows ~85 % peak-to-trough
+  in cycle 1 yet only −0.3 % vs the deposit: the swing gives back accumulated *profit*, not
+  principal, for a holder who entered at the halving. A mid-cycle entrant faces the full
+  peak-to-trough instead.
+- **Pro Max carries real downside, and the demo shows it.** −33.6 % (cycle 2) and −41.7 %
+  (cycle 4) below deposit. Leverage cuts both ways; the structural floor bounds the *long's*
+  liquidation, but the short side and interim dips are genuine risk. The structural mechanism
+  is what keeps these numbers survivable (see below) — not what removes the risk.
+- **Structural leverage, not a flat multiple.** Pro Max's entry leverage is 1.6× / 2.5× /
+  2.7× / 2.2× across the cycles — set by proximity to the confirmed structural low, capped by
+  the last one. In cycle 1 the anchors barely exist (`floor = 0`), so it opens near the base
+  `φ ≈ 1.6×`; in later cycles the delta from the previous bottom lifts it toward ~2.7×.
+- **Why the cap matters — the survival test.** Without it, a φ-leverage long opened in
+  2019–2020 liquidates in the −53 % March-2020 day (its stop would sit at ~4 100–5 400, above
+  the 3 850 intraday low). With the cap pinned to the 2019 bottom (3 504), the stop is below
+  the low and it survives. This is pinned as a unit test
+  ([`test/unit/StructuralLeverage.t.sol`](../test/unit/StructuralLeverage.t.sol),
+  `test_covid_survival_cap_binds`).
+- **Mini ≈ HODL.** It never trades; it pays the fee on interval profit and earns it back as
+  Pool income, landing near HODL. The small gap is fee/Pool-assumption noise, not signal.
+- **B4 < Pro < Pro Max in return, by construction** — each adds one interior move (a USDC
+  rotation, a hedge, leverage). B4 and Pro share a drawdown because both hold `n = 1` through
+  the growth regime where the drawdown occurs.
 
-`Calendar.targetAt` already interpolates **continuously across the full 20-day transition** —
-the model rotates in daily slices and averages its prices by construction:
-
-| Day of cycle | 535 | 538 | 542 | 547 | 548 | 552 | 557 |
-|---|---:|---:|---:|---:|---:|---:|---:|
-| Pro Max target `n` | +1.618 | +1.565 | +0.917 | +0.108 | −0.053 | −0.701 | −1.510 |
-
-And for **every rotating product** (B4, Pro, Pro Max) the worst drawdown lands *inside a
-regime*, never in a transition window (which begins on day 538). Pro Max's cycle-1 figure is
-the April 2013 crash — BTC `229.50 → 65.65`, **−70.4 %** — which at φ leverage compounds to
-roughly −86 % arithmetically and −96.7 % with the volatility drag of daily rebalancing. It
-occurred **319 days before** the growth→fall pivot.
-
-**The calendar rotates at the pivots; it does not protect against a drawdown inside a
-regime.** For a leveraged product that is amplified. This is a property of the products, not
-a defect in the simulation — and it is the single most important thing to understand before
-reading the return column.
-
-(Mini is the one entry that lands in a transition, in cycle 3. Mini never rotates — `n = 1`
-throughout — so its drawdown simply tracks HODL and the timing is incidental.)
-
-## Reading the table honestly
-
-- **Mini ≈ HODL, by construction.** It holds spot in both regimes and never trades: it pays
-  the performance fee on interval profit and earns it back as Pool income, landing just under
-  HODL. The test asserts this within a tolerance — a correctness check on the model, not a
-  result. The Pool side rests on the behavioural assumption below, so treat the small
-  remaining gap as noise, not signal.
-- **B4 and Pro share a drawdown** in every completed cycle (73.85 / 64.20 / 53.05 %) because
-  the drawdown happens in the growth regime, where both hold `n = 1`. They differ only in the
-  fall regime.
-- **Pro Max's 96.74 % drawdown in cycle 1 is a liquidation, not a return.** A leveraged
-  position through that path would have been closed out long before the cycle ended. The
-  model has no liquidation engine, so its Pro Max figures for the early cycles are
-  arithmetic, not outcomes.
-- **Perps were not liquid before ~2016**, so Pro/Pro Max in the early cycles are historical
-  hypotheticals. This limits how far back the comparison reaches; it says nothing about the
-  design, and the instrument is amply liquid today.
-- **Cycle 4 is not finished.** One settlement has occurred; BTC is roughly flat over the
-  window, so the separation shown is the fall-regime rotation, not a full-cycle result.
-
-## Model and its assumptions
+## Model and assumptions
 
 | | |
 |---|---|
-| Data | Daily closes. 2012-01-01 → 2026-07-20; the simulation starts at the first halving in range |
-| Halvings | Real block timestamps (210000 / 420000 / 630000 / 840000); 840000 matches the genesis anchor used throughout the test suite |
-| Exposure | `Calendar.targetAt` — the protocol's own function |
-| Timing | Yesterday's calendar position drives today's return, so there is **no lookahead** |
-| Rebalancing | Daily to target |
-| Performance fee | `Phi.FEE_F` on interval profit at each settlement point, entry ledger re-anchored — mirroring `opsSettle` |
-| Funding | Flat **10 %/yr** charged on the absolute perp leg |
-| Pool income | Assumes **20 % of a cohort exits penalised per cycle**; uplift `share·q/(1−share)` credited in halves at the two settlement points |
+| Data | Daily closes, 2012-01-01 → 2026-07-20; simulation starts at the first halving in range |
+| Halvings | Real block timestamps; `840000` matches the genesis anchor used across the suite |
+| Regime | `Calendar` pivots `P`, `T`; three held segments per cycle (long → fall → long) |
+| Leverage | `StructuralLeverage.leverageWad` for Pro Max's long; flat `|target|` otherwise |
+| Timing | Position sized once per regime, held; deposit at the halving; no lookahead |
+| Performance fee | `Phi.FEE_F` on profit over the deposit at each rotation |
+| Funding | Flat **10 %/yr** on the absolute perp leg (assumption) |
+| Pool income | **20 % of a cohort exits penalised per cycle** (behavioural assumption) |
 
-**Not modelled:** slippage, trading fees, liquidation, the rebalance dead-band, and the
-asynchronous execution delay.
+**Not modelled:** slippage, market impact, trading fees, liquidation mechanics, the rebalance
+dead-band, and the async execution delay. The full fee is charged even though its client share
+returns to users as reward weight (conservative). Mini and B4 never carry a perp
+(`perp = n − clamp(n,0,1) = 0` for `n ∈ {0,1}`), so funding does not touch them.
 
-The Pool-income line is the one **behavioural** assumption in the file — a guess about how
-users behave, not protocol arithmetic. Everything else is either the protocol's own code or a
-stated market parameter. It is set out separately so it can be argued with: at 20 % exiting
-penalised, the uplift is `0.20 × q / 0.80 ≈ 2.95 %` per cycle, which roughly offsets the
-performance fee for a non-trading product. Lower the assumption and Mini drifts below HODL;
-raise it and Mini rises above.
-
-Note that **Mini and B4 never carry a perp leg** (`perp = n − clamp(n, 0, 1) = 0` for
-`n ∈ {0, 1}`), so the funding assumption does not touch them. It applies only to Pro and
-Pro Max, and a flat rate is a crude stand-in for a path-dependent cost that this dataset does
-not contain.
+The two **assumption** lines (funding, Pool income) are guesses about the market and about
+user behaviour; every other line is the protocol's own arithmetic. They are stated separately
+so they can be argued with.
 
 ## Data provenance
 
-`data/btcusd_daily.csv` — daily BTC/USD OHLCV, 2012-01-01 → 2026-07-20. History through
-2026-05-06 from the project's existing dataset; extended to 2026-07-20 from Binance
-`BTCUSDT` daily klines. The two sources agree to within 0.02 % across their six-day overlap;
-the original file's final row was a partial bar and was dropped before splicing.
-
-Early-period pricing (2012–2013) comes from thin, fragmented venues and should be treated as
-indicative.
+`data/btcusd_daily.csv` — daily BTC/USD closes, 2012-01-01 → 2026-07-20. History through
+2026-05-06 from the project's existing dataset; extended from Binance `BTCUSDT` daily klines.
+The two sources agree to within 0.02 % across their six-day overlap; the original file's final
+partial bar was dropped before splicing. Early-period pricing (2012–2013) comes from thin,
+fragmented venues and is indicative.

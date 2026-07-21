@@ -4,48 +4,37 @@ pragma solidity 0.8.28;
 import {Test, console} from "forge-std/Test.sol";
 import {Calendar} from "src/libraries/Calendar.sol";
 import {Phi} from "src/libraries/Phi.sol";
+import {StructuralLeverage} from "src/libraries/StructuralLeverage.sol";
 
-/// @title Historical demo of the calendar over real BTC data.
-/// @notice This drives the **actual `Calendar` library** — the same `targetAt` the vaults
-///         use — over daily BTC closes, so the exposure path shown here is the protocol's
-///         own arithmetic, not a re-implementation that could drift from it. Only the
-///         portfolio bookkeeping (compounding a daily return at the given exposure) lives
-///         in this file; that is market simulation, not protocol logic.
+/// @title Historical demo — the calendar + structural leverage over real BTC data.
+/// @notice Models the SHIPPED mechanic: a position is sized once when the calendar rotates
+///         and then **held** (fixed units, not re-balanced to a moving NAV ratio), and a
+///         leveraged long's leverage comes from `StructuralLeverage` — the protocol's own
+///         function — bounded by the cycle's confirmed structural lows.
 ///
-///         **What this is NOT.** It is an illustration of the mechanism, not evidence of
-///         edge. Three completed cycles is a statistically meaningless sample, and by
-///         construction it always will be — only ~32 halvings will ever occur. The model
-///         also omits most real costs: slippage, trading fees, liquidation, the exit
-///         penalty, the rebalance dead-band, and Pool income. Perp funding IS charged, but
-///         at a flat assumed rate rather than the realised path. See the caveats printed
-///         at the end of the run.
+///         Held-units matters: within a regime, equity is **linear** in price
+///         (`eq · (1 + dir·L·(px/entry − 1))`), not daily-compounded, so there is no
+///         volatility drag and no explosive compounding — the numbers are what fixed
+///         leverage actually returns over a move.
+///
+///         **This is an illustration, not evidence of edge and not a forecast.** Three
+///         completed cycles is not a sample and never can be (~32 halvings will ever occur).
+///         It assumes entry at the halving, perfect calendar timing, and infinite depth at
+///         any size; it omits slippage, market impact, trading fees, and the async execution
+///         delay. Leveraged multiples are arithmetic, not outcomes. Read the `vs deposit`
+///         column, not the return column: the structural stop bounds the long's downside,
+///         but the short side and interim dips are real risk.
 ///
 ///         Run: `forge test --match-path 'test/backtest/*' -vv`
 contract BacktestTest is Test {
     int256 constant WAD = 1e18;
+    int256 constant FEE_F = int256(Phi.FEE_F);
+    int256 constant DAILY_FUNDING = 273972602739726; // 10%/yr ÷ 365, WAD (assumption)
+    // Pool income (behavioural assumption): 20% of a cohort exits penalised per cycle ⇒
+    // uplift = 0.2·q/0.8 = 0.25·q = 0.25 · EXIT_Q, credited in halves at the two settlements.
+    int256 constant POOL_UPLIFT = 29508497187473712; // 0.25 · Phi.EXIT_Q, WAD
 
-    /// Annual funding cost charged on the ABSOLUTE perpetual leg. Real perp funding is
-    /// path-dependent and not in this dataset, so it is an explicit ASSUMPTION, stated
-    /// rather than hidden. Mini and B4 never carry a perp (`perp = n − clamp(n,0,1) = 0`
-    /// for n ∈ {0,1}), so they are unaffected by it; Pro and Pro Max are.
-    int256 constant FUNDING_APR = 10e16; // 10% / year
-
-    /// Pool income, modelled conservatively. Assumption: **20 % of a cohort exits outside a
-    /// free window per cycle**, paying the in-kind penalty `q`; the remainder is distributed
-    /// to the participants who stayed. Uplift per cycle = `share·q / (1 − share)`, credited
-    /// in equal parts at the two settlement points. This is a BEHAVIOURAL assumption about
-    /// users, not protocol mechanics — every other line in this file is the protocol's own
-    /// arithmetic, this one is a guess, and it is stated so it can be argued with.
-    int256 constant POOL_EXIT_SHARE = 20e16; // 20% of a cohort exits penalised
-
-    /// Real halving block timestamps (UTC). 840000 matches the genesis anchor used across
-    /// the rest of the suite (`1713571767`).
-    uint256[4] HALVINGS = [
-        uint256(1354116278), // 210000 — 2012-11-28
-        1468082773, // 420000 — 2016-07-09
-        1589225023, // 630000 — 2020-05-11
-        1713571767 // 840000 — 2024-04-20
-    ];
+    uint256[4] HALVINGS = [uint256(1354116278), 1468082773, 1589225023, 1713571767];
 
     struct Product {
         string name;
@@ -53,22 +42,15 @@ contract BacktestTest is Test {
         int256 fall;
     }
 
-    struct Run {
-        int256 value; // portfolio value (WAD), starts at 1.0
-        int256 entry; // entry ledger for the fee (WAD)
-        int256 fees; // cumulative performance fee paid (WAD)
-        int256 poolYield; // cumulative Pool credit (WAD)
-        int256 peak;
-        int256 maxDD; // worst peak-to-trough, WAD
-        uint256 ddDay; // day-of-cycle at which maxDD was reached
-    }
+    uint256[] ts;
+    int256[] px;
 
-    uint256[] ts; // day timestamp (UTC midnight)
-    int256[] px; // close price, WAD
+    // ------------------------------------------------------------------ data loading
 
     function _loadPrices() internal {
         string memory path = string.concat(vm.projectRoot(), "/data/btcusd_daily.csv");
-        string memory line = vm.readLine(path); // header
+        vm.readLine(path); // header
+        string memory line;
         while (bytes((line = vm.readLine(path))).length != 0) {
             string[] memory f = vm.split(line, ",");
             ts.push(_dateToTs(f[0]));
@@ -76,7 +58,6 @@ contract BacktestTest is Test {
         }
     }
 
-    /// "YYYY-MM-DD" → unix seconds (days-from-civil, Howard Hinnant's algorithm).
     function _dateToTs(string memory d) internal pure returns (uint256) {
         bytes memory b = bytes(d);
         uint256 y = _num(b, 0, 4);
@@ -97,7 +78,6 @@ contract BacktestTest is Test {
         }
     }
 
-    /// "81457.0" → "81457000000000000000000" (WAD), tolerating any decimal length.
     function _toWadDecimal(string memory s) internal pure returns (string memory) {
         bytes memory b = bytes(s);
         uint256 dot = b.length;
@@ -118,17 +98,42 @@ contract BacktestTest is Test {
         return string(out);
     }
 
-    /// Epoch index active at `t`, and the seconds since that halving.
-    function _sinceHalving(uint256 t) internal view returns (bool live, uint256 dt) {
-        if (t < HALVINGS[0]) return (false, 0);
-        uint256 i = 0;
-        while (i + 1 < HALVINGS.length && t >= HALVINGS[i + 1]) {
-            i++;
+    // ------------------------------------------------------------------ helpers
+
+    /// Price on/after `t` (step function on daily closes).
+    function _pxAt(uint256 t) internal view returns (int256) {
+        for (uint256 i = 0; i < ts.length; i++) {
+            if (ts[i] >= t) return px[i];
         }
-        return (true, t - HALVINGS[i]);
+        return px[px.length - 1];
     }
 
-    function test_backtest_products_vs_hold() public {
+    /// Minimum close in `[a, b]`.
+    function _windowMin(uint256 a, uint256 b) internal view returns (int256 m) {
+        m = type(int256).max;
+        for (uint256 i = 0; i < ts.length; i++) {
+            if (ts[i] >= a && ts[i] <= b && px[i] < m) m = px[i];
+        }
+        if (m == type(int256).max) m = 0;
+    }
+
+    // ------------------------------------------------------------------ the run
+
+    struct Seg {
+        uint256 a;
+        uint256 b;
+        int256 target; // signed regime exposure over [a,b]
+        bool longLeg; // structural leverage applies (long, g>1)
+    }
+
+    struct Acc {
+        int256 eq; // equity, WAD (1.0x = deposit)
+        int256 peak;
+        int256 low;
+        int256 maxDD;
+    }
+
+    function test_backtest_products() public {
         _loadPrices();
         assertGt(px.length, 4000, "dataset loaded");
 
@@ -140,202 +145,182 @@ contract BacktestTest is Test {
         ];
 
         console.log("");
-        console.log("=== B4 calendar over real BTC daily closes, PER CYCLE ===");
-        console.log("Each cycle restarts at 1.0x. Cumulative compounding since 2012 is");
-        console.log("deliberately NOT reported: it is dominated by the earliest, least");
-        console.log("liquid period and says more about a $12 base than about the design.");
-        console.log(
-            "Assumptions: funding %s bps/yr on the abs perp leg; Pool income from",
-            uint256(FUNDING_APR / 1e14)
-        );
-        console.log("20% of a cohort exiting penalised each cycle (behavioural guess).");
+        console.log("=== B4 + structural leverage over real BTC closes, PER CYCLE ===");
+        console.log("Sized once per regime and HELD (equity linear in price, no rebalance");
+        console.log("drag). Pro Max leverage = StructuralLeverage, bounded by the cycle's");
+        console.log("confirmed lows. Deposit assumed at the halving; each cycle at 1.0x.");
+        console.log("READ 'vs dep' (worst value below the deposit), not 'return': the stop");
+        console.log("bounds the long, the short and interim dips are real risk.");
         console.log("");
 
-        for (uint256 c = 0; c < HALVINGS.length; c++) {
-            uint256 from = HALVINGS[c];
-            uint256 to = c + 1 < HALVINGS.length ? HALVINGS[c + 1] : type(uint256).max;
-            _runCycle(prods, from, to, c);
+        for (uint256 c = 0; c < 4; c++) {
+            _runCycle(prods, c);
         }
 
-        console.log("");
-        console.log("Mini holds spot in both regimes and never trades: it pays the fee on");
-        console.log("interval profit and earns it back as Pool income, landing near HODL.");
-        console.log("Both effects are modelled; the Pool side rests on the 20% assumption.");
-        console.log("NOT modelled: slippage, trading fees, liquidation, the rebalance");
-        console.log("dead-band, async execution delay. Daily closes, daily rebalancing.");
-        console.log("Three completed cycles is not a sample - and never can be: only about");
-        console.log("thirty halvings will ever occur.");
-        console.log("");
-        console.log("Note the DD column: for every ROTATING product (B4/Pro/Pro Max) the");
-        console.log("worst drawdown falls inside a regime, never in a 20-day transition.");
-        console.log("The calendar rotates AT the pivots; it does not protect against a");
-        console.log("drawdown INSIDE a regime. Pro Max cycle 1 is the Apr-2013 crash");
-        console.log("(BTC -70.4%) at phi leverage, 319 days before the pivot - not a");
-        console.log("rotation-timing artefact. Mini never rotates, so its DD tracks HODL.");
+        console.log("Assumptions: funding 10%/yr on the abs perp leg; Pool income from 20%");
+        console.log("of a cohort exiting penalised (behavioural guess). NOT modelled:");
+        console.log("slippage, market impact, trading fees, async delay. Multiples are");
+        console.log("arithmetic under perfect timing, not outcomes. Cycle 4 in progress.");
     }
 
-    struct Ctx {
-        uint256 from;
-        uint256 i0;
-        uint256 last;
-        uint256 settlements;
-    }
+    function _runCycle(Product[4] memory prods, uint256 c) internal {
+        uint256 frm = HALVINGS[c];
+        uint256 nxt = c + 1 < 4 ? HALVINGS[c + 1] : ts[ts.length - 1];
+        // Anchors: floor = previous cycle's 62-window bottom; cap = this cycle's
+        // post-halving-window low. Ratchet: at the halving the previous bottom is the
+        // floor and the post-halving low is the cap (SPECIFICATION §7b).
+        int256 floor_ = c >= 1
+            ? _windowMin(HALVINGS[c - 1] + Calendar.T, HALVINGS[c - 1] + Calendar.T + Calendar.W)
+            : int256(0);
+        int256 cap_ = _windowMin(frm, frm + Calendar.W);
 
-    function _runCycle(Product[4] memory prods, uint256 from, uint256 to, uint256 idx) internal {
-        Ctx memory c;
-        c.from = from;
-        while (c.i0 < ts.length && ts[c.i0] < from) {
-            c.i0++;
-        }
-        if (c.i0 == 0 || c.i0 >= ts.length) return;
-        c.last = c.i0;
+        // Three held regimes: long to the top (P), fall to the bottom (T), long again.
+        uint256 pTop = _min(frm + Calendar.P, nxt);
+        uint256 pBot = _min(frm + Calendar.T, nxt);
 
-        Run[4] memory r;
-        for (uint256 p = 0; p < 4; p++) {
-            r[p] = Run(WAD, WAD, 0, 0, WAD, 0, 0);
-        }
-
-        for (uint256 i = c.i0 + 1; i < px.length && ts[i] < to; i++) {
-            c.last = i;
-            bool settled = _crossedSettlement(ts[i - 1] - from, ts[i] - from);
-            if (settled) c.settlements++;
-            for (uint256 p = 0; p < 4; p++) {
-                _step(
-                    r[p],
-                    prods[p],
-                    ts[i - 1] - from,
-                    ((px[i] - px[i - 1]) * WAD) / px[i - 1],
-                    settled
-                );
-            }
-        }
-        // Correctness check on the model, not a result: Mini never trades, so its path
-        // must be HODL adjusted only by the fee it pays and the Pool income it earns.
-        int256 hold = (px[c.last] * WAD) / px[c.i0];
-        assertApproxEqRel(r[0].value, hold, 0.08e18, "Mini must track HODL within fee/Pool drift");
-
-        _report(prods, r, c, idx, to == type(uint256).max);
-    }
-
-    function _crossedSettlement(uint256 dtPrev, uint256 dtNow) internal pure returns (bool) {
-        return (dtPrev < Calendar.P - Calendar.H && dtNow >= Calendar.P - Calendar.H)
-            || (dtPrev < Calendar.T + Calendar.H && dtNow >= Calendar.T + Calendar.H);
-    }
-
-    /// One day for one product. `dtPrev` is YESTERDAY's calendar position, so the exposure
-    /// applied to today's return was knowable yesterday — no lookahead.
-    function _step(Run memory r, Product memory prod, uint256 dtPrev, int256 rWad, bool settled)
-        internal
-        pure
-    {
-        // THE PROTOCOL'S OWN FUNCTION.
-        int256 n = Calendar.targetAt(dtPrev, prod.growth, prod.fall);
-        r.value += ((r.value * n) / WAD) * rWad / WAD;
-
-        // Funding on the residual perp leg only: perp = n − clamp(n, 0, 1).
-        int256 spot = n < 0 ? int256(0) : (n > WAD ? WAD : n);
-        int256 perp = n - spot;
-        if (perp != 0) {
-            int256 absPerp = perp < 0 ? -perp : perp;
-            r.value -= ((r.value * absPerp) / WAD) * (FUNDING_APR / 365) / WAD;
-        }
-
-        if (settled) {
-            int256 profit = r.value - r.entry;
-            if (profit > 0) {
-                int256 fee = (profit * int256(Phi.FEE_F)) / WAD;
-                r.value -= fee;
-                r.fees += fee;
-            }
-            r.entry = r.value;
-
-            // Pool income: the penalty paid by the cohort that exited early, shared out
-            // among those who stayed. Half the per-cycle uplift at each of the two points.
-            int256 uplift =
-                (POOL_EXIT_SHARE * int256(Phi.EXIT_Q) / WAD) * WAD / (WAD - POOL_EXIT_SHARE) / 2;
-            int256 credit = (r.value * uplift) / WAD;
-            r.value += credit;
-            r.poolYield += credit;
-        }
-        if (r.value > r.peak) r.peak = r.value;
-        int256 dd = r.peak <= 0 ? WAD : ((r.peak - r.value) * WAD) / r.peak;
-        if (dd > r.maxDD) {
-            r.maxDD = dd;
-            r.ddDay = dtPrev / 86400;
-        }
-    }
-
-    function _report(
-        Product[4] memory prods,
-        Run[4] memory r,
-        Ctx memory c,
-        uint256 idx,
-        bool inProgress
-    ) internal view {
         console.log(
             string.concat(
                 "--- cycle ",
-                vm.toString(idx + 1),
+                vm.toString(c + 1),
                 ": ",
-                _date(ts[c.i0]),
+                _date(frm),
                 " -> ",
-                _date(ts[c.last]),
-                inProgress ? " (IN PROGRESS)" : ""
+                _date(nxt),
+                c == 3 ? " (IN PROGRESS)" : ""
             )
         );
-        console.log("    settlements: %s", c.settlements);
-        console.log("    product |  return |  max DD | DD at day | zone");
+        console.log("    product |  return |  max DD | vs dep | entry L");
+
         for (uint256 p = 0; p < 4; p++) {
+            Acc memory a = Acc(WAD, WAD, WAD, 0);
+            int256 entryL;
+            // regime 1: long [frm, pTop]
+            entryL = _regime(a, prods[p], frm, pTop, prods[p].growth, floor_, cap_);
+            // regime 2: fall [pTop, pBot]
+            _regime(a, prods[p], pTop, pBot, prods[p].fall, floor_, cap_);
+            // regime 3: long [pBot, nxt]
+            _regime(a, prods[p], pBot, nxt, prods[p].growth, floor_, cap_);
+
             console.log(
                 string.concat(
                     "    ",
                     prods[p].name,
                     " | ",
-                    _x(r[p].value),
+                    _x(a.eq),
                     " | ",
-                    _pct(r[p].maxDD),
+                    _pct(a.maxDD),
                     " | ",
-                    _pad3(vm.toString(r[p].ddDay)),
-                    "       | ",
-                    _zone(r[p].ddDay)
+                    _pctSigned(a.low - WAD),
+                    " | ",
+                    p == 3 ? _x(entryL) : "  1.00x"
                 )
             );
         }
         console.log(
             string.concat(
                 "    HODL    | ",
-                _x((px[c.last] * WAD) / px[c.i0]),
+                _x((_pxAt(nxt) * WAD) / _pxAt(frm)),
                 " | ",
-                _pct(_holdMaxDDRange(c.i0, c.last))
+                _pct(_holdDD(frm, nxt)),
+                " |",
+                "        |"
             )
         );
         console.log("");
     }
 
-    /// Which regime the worst drawdown fell in — the point being that none of them land
-    /// inside the 20-day transition, so they are not a rotation-timing artefact.
-    function _zone(uint256 day) internal pure returns (string memory) {
-        uint256 t = day * 86400;
-        if (t < Calendar.P - Calendar.W) return "GROWTH";
-        if (t < Calendar.P) return "transition";
-        if (t < Calendar.T) return "FALL";
-        if (t < Calendar.T + Calendar.W) return "transition";
-        return "terminal growth";
+    /// One held regime. Sizes leverage once at entry, holds fixed units (equity linear in
+    /// price), tracks drawdown day-by-day, charges funding on the perp leg, and takes the
+    /// fee + Pool credit at the regime's end (a settlement point). Returns the entry leverage.
+    struct Leg {
+        int256 entry;
+        int256 dir;
+        int256 L;
+        int256 perp;
+        int256 eq0;
     }
 
-    function _holdMaxDDRange(uint256 a, uint256 b) internal view returns (int256 maxDD) {
-        int256 peak = px[a];
-        for (uint256 i = a; i <= b; i++) {
+    function _regime(
+        Acc memory a,
+        Product memory, /*prod*/
+        uint256 from_,
+        uint256 to_,
+        int256 target,
+        int256 floor_,
+        int256 cap_
+    ) internal view returns (int256) {
+        if (to_ <= from_) return WAD;
+        Leg memory g;
+        g.entry = _pxAt(from_);
+        g.dir = target >= 0 ? int256(1) : -int256(1);
+        int256 mag = target >= 0 ? target : -target;
+        if (target > WAD) {
+            // Leveraged long: structural leverage, refusal (0) falls back to 1× spot.
+            g.L = int256(
+                StructuralLeverage.leverageWad(
+                    uint256(g.entry), uint256(mag), uint256(floor_), uint256(cap_)
+                )
+            );
+            if (g.L == 0) g.L = WAD;
+        } else {
+            // target ∈ {0 flat/USDC, 1 spot, −1/φ or −φ short}: exposure = |target|, no
+            // structural amplification. A zero target is genuinely flat (exposure 0).
+            g.L = mag;
+        }
+        g.perp = g.L > WAD ? g.L - WAD : (target < 0 ? mag : int256(0));
+        g.eq0 = a.eq;
+
+        for (uint256 i = 0; i < ts.length; i++) {
+            if (ts[i] < from_ || ts[i] >= to_) continue;
+            _mark(a, g, _value(g, px[i], (ts[i] - from_) / 86400));
+        }
+        a.eq = _value(g, _pxAt(to_), (to_ - from_) / 86400);
+        if (a.eq > WAD) a.eq -= (a.eq - WAD) * FEE_F / WAD; // fee on profit at the rotation
+        a.eq += a.eq * POOL_UPLIFT / WAD / 2; // Pool credit (two settlements per cycle)
+        return g.L;
+    }
+
+    /// Held-units equity at price `p`, `d` days into the leg (equity linear in price).
+    function _value(Leg memory g, int256 p, uint256 d) internal pure returns (int256 v) {
+        int256 ret = ((p - g.entry) * WAD) / g.entry;
+        v = g.eq0 + (g.eq0 * g.dir * g.L / WAD) * ret / WAD;
+        v -= g.eq0 * g.perp / WAD * DAILY_FUNDING / WAD * int256(d);
+        if (v < 0) v = 0;
+    }
+
+    function _mark(
+        Acc memory a,
+        Leg memory,
+        /*g*/
+        int256 pos
+    )
+        internal
+        pure
+    {
+        if (pos > a.peak) a.peak = pos;
+        if (pos < a.low) a.low = pos;
+        int256 dd = a.peak <= 0 ? WAD : ((a.peak - pos) * WAD) / a.peak;
+        if (dd > a.maxDD) a.maxDD = dd;
+    }
+
+    function _holdDD(uint256 from_, uint256 to_) internal view returns (int256 maxDD) {
+        int256 peak;
+        for (uint256 i = 0; i < ts.length; i++) {
+            if (ts[i] < from_ || ts[i] > to_) continue;
             if (px[i] > peak) peak = px[i];
-            int256 dd = ((peak - px[i]) * WAD) / peak;
+            int256 dd = peak <= 0 ? int256(0) : ((peak - px[i]) * WAD) / peak;
             if (dd > maxDD) maxDD = dd;
         }
+    }
+
+    function _min(uint256 x, uint256 y) internal pure returns (uint256) {
+        return x < y ? x : y;
     }
 
     // ------------------------------------------------------------------ formatting
 
     function _x(int256 v) internal pure returns (string memory) {
-        if (v < 0) return "  <0";
+        if (v < 0) return "   <0x";
         uint256 w = uint256(v);
         return string.concat(_pad(vm.toString(w / 1e18)), ".", _two((w % 1e18) / 1e16), "x");
     }
@@ -347,12 +332,16 @@ contract BacktestTest is Test {
         );
     }
 
+    function _pctSigned(int256 v) internal pure returns (string memory) {
+        return string.concat(v < 0 ? "-" : "+", _pct(v));
+    }
+
     function _two(uint256 v) internal pure returns (string memory) {
         return v < 10 ? string.concat("0", vm.toString(v)) : vm.toString(v);
     }
 
     function _pad(string memory s) internal pure returns (string memory) {
-        while (bytes(s).length < 6) {
+        while (bytes(s).length < 7) {
             s = string.concat(" ", s);
         }
         return s;

@@ -134,40 +134,41 @@ Details: [Core concepts](docs/02-core-concepts.md).
 
 ## Historical demo
 
-The four products' exposure path run over real BTC daily closes — through the **protocol's
-own `Calendar` library**, so the demo tracks the deployed arithmetic rather than a
-re-implementation that could drift from it.
+The four products over real BTC daily closes, sized once per regime and **held** (fixed
+units, no daily rebalance), with Pro Max's leverage from `StructuralLeverage` — the
+protocol's own function, bounded by the cycle's confirmed lows.
 
 ```bash
 forge test --match-path 'test/backtest/*' -vv
 ```
 
-Return by cycle, each starting at `1.0x` (max drawdown in brackets):
+Return by cycle, each starting at `1.0x`. **Read the `vs deposit` column, not the return
+column** — it is the worst the position ever fell below the deposit:
 
-| Cycle | Mini | B4 | Pro | Pro Max | HODL |
-|---|---:|---:|---:|---:|---:|
-| 2012→2016 | 51.0x (85%) | 126.3x (74%) | 176.3x (74%) | 385.4x (**97%**) | 51.9x (84%) |
-| 2016→2020 | 13.3x (84%) | 54.3x (64%) | 75.0x (64%) | 300.7x (86%) | 13.5x (83%) |
-| 2020→2024 | 7.3x (77%) | 27.9x (53%) | 42.6x (53%) | 233.1x (74%) | 7.4x (76%) |
-| 2024→now* | 1.00x (53%) | 1.70x (28%) | 2.09x (28%) | 2.80x (46%) | 1.00x (53%) |
+| Cycle | Mini | B4 | Pro | Pro Max | HODL | Pro Max vs deposit |
+|---|---:|---:|---:|---:|---:|---:|
+| 2012→2016 | 47.8x | 132.2x | 176.6x | 432.4x | 52.3x | **−0.6 %** |
+| 2016→2020 | 12.5x | 36.8x | 49.7x | 192.7x | 13.6x | **−33.6 %** |
+| 2020→2024 | 6.9x | 19.7x | 26.5x | 139.0x | 7.3x | **−1.0 %** |
+| 2024→now\* | 1.0x | 1.7x | 2.0x | 3.6x | 1.0x | **−41.7 %** |
 
-<sub>\* cycle in progress, one settlement so far</sub>
+<sub>\* cycle in progress, one settlement so far. Pro Max entry leverage per cycle:
+1.6× / 2.5× / 2.7× / 2.2× — structural, not flat.</sub>
+
+The point of the `vs deposit` column: Mini's **max drawdown is ~85 % peak-to-trough** yet it
+sits at **−0.3 % vs the deposit** — the swing gives back *profit*, not principal, if you
+entered at the halving. Pro Max, by contrast, genuinely risks a third to a half of the
+deposit — leverage cuts both ways, and the demo shows it rather than hiding it.
 
 > [!IMPORTANT]
 > **Illustration of the mechanism — not evidence of edge, and not a forecast.** Three
-> completed cycles is not a statistical sample and never can be: only ~32 halvings will ever
-> occur. Pro Max's 97 % drawdown is a liquidation, not a return — the model has no
-> liquidation engine. Pool income rests on a **behavioural assumption** (20 % of a cohort
-> exits penalised per cycle), not on protocol mechanics.
+> completed cycles is not a statistical sample and never can be (~32 halvings will ever
+> occur). Multiples are *arithmetic under perfect timing* — entry at the halving, infinite
+> depth at any size, no slippage or market impact — not outcomes. Perps were not liquid
+> before ~2016, so Pro/Pro Max in the early cycles are historical hypotheticals. Pool income
+> rests on a behavioural assumption (20 % exit penalised per cycle).
 
-**Where the drawdowns actually happen matters.** For every rotating product the worst
-drawdown falls *inside* a regime, never in a 20-day transition — Pro Max's cycle-1 figure is
-the April-2013 crash (BTC −70.4 %) at φ leverage, 319 days before the pivot. The calendar
-rotates **at** the pivots; it does not protect against a drawdown **inside** a regime. That is
-a property of the products, not a rotation-timing artefact.
-
-
-Method, assumptions and every omitted cost: [Backtest](docs/11-backtest.md).
+Method, the structural-leverage mechanism, and every omitted cost: [Backtest](docs/11-backtest.md).
 
 ## Versioning: no upgrade path, by design
 

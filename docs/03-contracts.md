@@ -16,7 +16,7 @@ src/
   citrea/     HalvingProver
   periphery/  Keeper  ReferenceStrategies (StrategyMini/B4/Pro/ProMax)
   venue/      CoreTypes  CoreReader  CoreWriterLib  DescriptorLib
-  libraries/  Phi  Calendar  BtcHeader  SafeTransfer
+  libraries/  Phi  Calendar  BtcHeader  SafeTransfer  StructuralLeverage
   interfaces/ IERC20  IStrategy  IHalvingOracle  ILayerZero
 ```
 
@@ -401,6 +401,7 @@ Descriptor validation and unit conversion. `verifyDirectional` rejects a `fixedU
 | Library | Responsibility |
 |---|---|
 | `Phi.sol` | Fixed-point math and protocol constants. `WAD = 1e18`; `PHI`, `PHI_SQ`, `INV_PHI`; fee `FEE_F = φ⁻⁵/2`; exit penalty `EXIT_Q = φ⁻³/2`; `MAX_OPERATOR_BPS = 3819`, `MIN_REFERRER_BPS = 3819`; policy bounds `MAX_BASE_TARGET = MAX_SCALE = 10e18`. Full-precision `mulDiv` (512-bit product, reverts on overflow or zero divisor), `wmul`, `bps`, `min`, `max`, `abs`. **Every division floors toward the protocol** — fees, penalties, cuts and pool claims never round up. |
+| `StructuralLeverage.sol` | Pure leverage math: `L = min(g·p/(p−floor), p/(p−cap))` for a leveraged long, bounded by the cycle's confirmed structural lows ([SPECIFICATION §7b](../spec/SPECIFICATION.md)). **Status:** the library and its spec are new; it is exercised by the historical demo, and its unit tests pin the March-2020 survival case. The engine wiring (`_planPerpStep` sizing once per zone from this function + an on-chain min-ratchet for the anchors) is a **pending phase** — the shipped engine still uses flat NAV-relative sizing. See `../PROPOSAL-structural-leverage.md` and `../REPORT.md`. |
 | `Calendar.sol` | Pure cycle geometry over `t = now − halvingTs`. `CYCLE = 1460 days`, `W = 20 days`, `H = 10 days`, pivots `P = CYCLE/φ²` (growth→fall) and `T = CYCLE/φ` (fall→growth), `SNAPSHOT_WINDOW = 24 hours`, `REPORT_WINDOW = 2 days`, `POST_FACT_FREE_EXIT = W`. `zoneAt` (7 zones), `targetAt` (piecewise split at zero for opposite-sign or zero-endpoint pairs; **strictly same-sign pairs interpolate directly and never synthesize a zero** — so `StrategyMini` (1,1) never trades, yet is still fee'd on interval profit), `decompose(n)` = `spot = clamp(n, 0, 1); perp = n − spot`, `depositOpen`, `freeExit`, `nextSettlementPoint` (the two fixed instants `P−H` and `T+H` per epoch). After `T+W` the calendar rests in terminal growth until the next accepted fact. |
 | `BtcHeader.sol` | The 80-byte header binding: `hash` = dSHA256 in Bitcoin-internal byte order, `timestamp` = little-endian `uint32` at offset 68, `HALVING_PERIOD = 210_000`, `HEADER_LENGTH = 80`. The light client's stored byte-order convention is a funded integration gate. |
 | `SafeTransfer.sol` | Minimal ERC-20 helpers tolerating missing/malformed return data. `safeTransfer` / `safeTransferFrom` revert on failure; **`tryTransfer` never reverts, whatever the token returns** — the fail-soft pool claim path and the pay-or-defer payout path depend on that. Gas forwarded to a token is capped at 500,000 and the return copy at 32 bytes, so a hostile token can neither return-bomb nor gas-drain a loop. Directional assets are required to be plain ERC-20s; rebasing and fee-on-transfer tokens are excluded by `spec/SECURITY_MODEL.md` §4. |

@@ -168,6 +168,32 @@ its effect must be proven by a later on-chain state read.
   defense-in-depth against a manipulated/erroneous read but adds a dependency. Decide.
   **Decided (2026-07-18): no band** — the 500/50 bps execution envelopes are the defense;
   the venue oracle remains a disclosed trusted dependency.
+- **C5 · Leverage sizing.** A flat leverage multiple has no relation to where the cycle's
+  confirmed support sits, and a running NAV-relative target re-trades the position daily —
+  neither is intended. Decide how a leveraged long is sized and how far its risk may reach.
+  **Decided (2026-07-21): structural leverage floor, sized once per zone** (`SPECIFICATION.md`
+  §7b). The effective leverage is `g·p/(p − floor)` capped by the most recent confirmed
+  structural low, where the two anchors ratchet up at the 62-window and the post-halving
+  window. Rationale and consequences, all deliberate:
+  - **Risk is bounded by structure, not by user optimism.** The stop sits at a golden-ratio
+    retrace toward a price the market has already proven and held, so a position cannot be
+    sized to liquidate above the last confirmed low. Real-data check: a φ-long opened in
+    2019–2020 survives the −53% March-2020 day *only* with the cap; the flat formula
+    liquidates.
+  - **Leverage self-adjusts to entry.** Entry near the low earns high (structurally justified)
+    leverage; a late entry after a long run decays toward `1×`. The operator sets the base `g`
+    (the ceiling); the floor mechanism sets where it is applicable — together they bound
+    realized risk. Effective leverage MAY exceed `φ` near the low; that replaces the flat
+    `|resolved| ≤ φ` cap for leveraged products.
+  - **Sized once, held until rotation.** No daily NAV rebalance ⇒ no volatility drag inside a
+    zone; the calendar is the rebalance schedule. The trade-off: within a zone the effective
+    leverage drifts with price (it is fixed in *notional*, not in NAV-ratio) — accepted, since
+    re-sizing to hold a ratio is exactly the drag being removed.
+  - **The `min` price ratchet is a new permissionless surface.** It is sampling-only (reads the
+    venue spot price, writes a monotone-within-window minimum), moves funds for no one, and its
+    only failure mode — under-sampling — is fail-safe (raises the delta, lowers leverage). A
+    lower low across cycles does not raise leverage (ratchet up only). Long-only; shorts keep
+    the flat base.
 
 ---
 
