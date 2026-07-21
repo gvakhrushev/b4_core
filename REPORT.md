@@ -205,26 +205,33 @@ invariant campaign 512×256 green (8/8, 131,072 calls each, zero reverts), size 
 3. ~~Amend the specification package with the two errata~~ — done 2026-07-18
    (SPECIFICATION.md §4/§9, WHITEPAPER.md §4, HAZARDS.md §C decisions, TEST_PLAN.md §3b).
 
-## Pending mechanism — structural leverage (specified, not yet wired)
+## Structural leverage (specified and wired, 2026-07-21)
 
-A new sizing mechanism was specified on 2026-07-21 (`SPECIFICATION.md` §7b, `HAZARDS.md` §C5,
-`PROPOSAL-structural-leverage.md`) and its pure math shipped as a unit-tested library
-(`src/libraries/StructuralLeverage.sol`). A leveraged long's effective leverage is bounded by
-the cycle's confirmed structural lows — `L = min(g·p/(p−floor), p/(p−cap))` — and the position
-is sized once per regime and held rather than rebalanced against a moving NAV. The historical
-demo runs on the library; its tests pin the March-2020 survival case (the cap is what saves a
-φ-long that the flat formula liquidates).
+A sizing mechanism specified in `SPECIFICATION.md` §7b, `HAZARDS.md` §C5 and
+`PROPOSAL-structural-leverage.md`: a leveraged long's effective leverage is bounded by the
+cycle's confirmed structural lows — `L = min(g·p/(p−floor), p/(p−cap))` — and the position is
+sized once per regime and **held** (the sizing price is frozen at entry) rather than
+rebalanced against a moving NAV. Preceded by a design + adversarial-critique round (which
+caught an inverted fail-safe claim in an earlier draft of the spec) since it touches the
+most-audited async surface. Implemented in three pieces, all with tests:
 
-**Two engine changes remain and are deliberately deferred to their own audit round**, because
-they touch the most-audited async surface and add new state:
+1. `src/libraries/StructuralLeverage.sol` — the pure math; 8 unit tests pin the March-2020
+   survival case (the cap is what saves a φ-long the flat formula liquidates), May-2021, the
+   post-halving flip, and genesis = flat φ.
+2. `B4Pool.sampleAnchor` / `anchors` — a permissionless, sampling-only min-ratchet over the
+   62-window and the post-halving window, per directional asset; 7 tests. More sampling lowers
+   the anchor (⇒ lower leverage), so it depends on a keeper sampling each window — an
+   under-sampled window installs no cap and the product falls back to flat `g`.
+3. `B4VaultEngine._planPerpStep` — sizes the perp from `StructuralLeverage` at the frozen price
+   and holds it; 3 tests (structural leverage enlarges the perp; a price move does not resize
+   a held position; the sizing price resets when flat).
 
-1. `_planPerpStep` / `_planSpotStep`: size once at entry / deposit / zone change (event-driven)
-   instead of continuously tracking a NAV-relative target, and take the leverage from
-   `StructuralLeverage` for leveraged longs.
-2. An on-chain permissionless min-ratchet (per directional asset) recording the two window
-   lows, from which the vault reads `(floor, cap)` at entry.
+Placement is EIP-170-safe: the engine sizing is reached from `B4Vault` only via the
+`opsPlanStep` delegatecall, so it lands in `B4VaultOps`; **B4Vault is unchanged at 24,195 B**.
+Genesis (no window sampled) degrades to flat `φ`, so all pre-existing leverage tests hold.
+Verification: 230/230 green, deep campaign 8/8 at 512×256, `slither --fail-high` exit 0.
 
-Until these land, the shipped engine uses flat NAV-relative sizing; the library and spec
-describe the target behaviour, not the current runtime. Regressions already required by the
-spec: `COVID-2020 survives`, `May-2021 survives`, `entry-below-fresh-low opens`,
-`position not resized mid-zone`, `stop realized by margin`, `genesis degrades to flat`.
+Open items on this mechanism, for the external audit: the anchor sampling is an operational
+dependency (a keeper must sample the low each window; under-sampling raises leverage, bounded
+by real observed prices); the spot/perp basis at the frozen price is ignored (it cancels for a
+pure-directional strategy); a deposit adds at the held leverage rather than re-sizing.

@@ -122,6 +122,12 @@ abstract contract B4VaultStorage {
     mapping(address => mapping(address => uint256)) public deferredPayout;
     mapping(address => uint256) public deferredPayoutTotal; // token → total deferred
 
+    /// Directional spot price (WAD) captured when the perp position was last opened from
+    /// flat — the FROZEN sizing price. The perp is sized once and held: while a position is
+    /// open, valuation and size use this price, not the live one, so a pure price move never
+    /// re-trades the position (SPECIFICATION §7b). 0 ⇔ flat / not yet sized.
+    uint256 internal _sizePxWad;
+
     // ------------------------------------------------------------------ events (G1)
     event Initialized(address owner, address pool, bytes32 dirDescriptorHash);
     event PolicySelected(address strategy, int256 growth, int256 fall, uint256 scaleWad);
