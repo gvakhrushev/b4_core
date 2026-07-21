@@ -39,60 +39,76 @@ Only the portfolio bookkeeping (funding, fee, Pool credit, drawdown) lives in th
 
 ## Results, per cycle
 
-Each cycle restarts at `1.0x`, deposit assumed at the halving. `max DD` is peak-to-trough;
-`vs dep` is the worst the equity ever fell **below the deposit** — the number that actually
-matters.
+Each cycle restarts at `1.0x`, deposit assumed at the halving. `HODL` is raw buy-and-hold —
+no pool, no protocol, the benchmark to beat. `max DD` is peak-to-trough; **`DD-HODL`** is how
+much *less* (negative) the product drew down than holding; `vs dep` is the worst the equity
+ever fell **below the deposit** — the number that actually matters. Returns include the Pool
+income (see below); `entry L` is the structural leverage at the cycle's first long.
 
-**Cycle 1 — 2012 → 2016**
+**Cycle 1 — 2012 → 2016** · *HODL 52.3x, 84.2 % max DD*
 
-| | Return | max DD | vs dep | entry L |
-|---|---:|---:|---:|---:|
-| Mini | 47.8x | 84.7 % | −0.3 % | 1.0× |
-| B4 | 132.2x | 73.9 % | −0.3 % | 1.0× |
-| Pro | 176.6x | 73.9 % | −0.3 % | 1.0× |
-| Pro Max | 432.4x | 75.5 % | −0.6 % | 1.6× |
-| *HODL* | *52.3x* | *84.2 %* | | |
+| | Return | max DD | DD-HODL | vs dep | entry L |
+|---|---:|---:|---:|---:|---:|
+| Mini | 52.9x | 84.5 % | +0.2 pp | −0.3 % | 1.0× |
+| B4 | 145.1x | 73.9 % | **−10.3 pp** | −0.3 % | 1.0× |
+| Pro | 193.1x | 73.9 % | **−10.3 pp** | −0.3 % | 1.0× |
+| Pro Max | 471.0x | 75.5 % | −8.7 pp | −0.6 % | 1.6× |
 
-**Cycle 2 — 2016 → 2020**
+**Cycle 2 — 2016 → 2020** · *HODL 13.6x, 83.2 % max DD*
 
-| | Return | max DD | vs dep | entry L |
-|---|---:|---:|---:|---:|
-| Mini | 12.5x | 83.6 % | −13.2 % | 1.0× |
-| B4 | 36.8x | 64.2 % | −13.2 % | 1.0× |
-| Pro | 49.7x | 64.2 % | −13.2 % | 1.0× |
-| Pro Max | 192.7x | 67.9 % | **−33.6 %** | 2.5× |
-| *HODL* | *13.6x* | *83.2 %* | | |
+| | Return | max DD | DD-HODL | vs dep | entry L |
+|---|---:|---:|---:|---:|---:|
+| Mini | 13.8x | 83.4 % | +0.2 pp | −13.2 % | 1.0× |
+| B4 | 40.3x | 64.2 % | **−18.9 pp** | −13.2 % | 1.0× |
+| Pro | 54.2x | 64.2 % | **−18.9 pp** | −13.2 % | 1.0× |
+| Pro Max | 209.9x | 67.9 % | −15.2 pp | **−33.6 %** | 2.5× |
 
-**Cycle 3 — 2020 → 2024**
+**Cycle 3 — 2020 → 2024** · *HODL 7.3x, 76.5 % max DD*
 
-| | Return | max DD | vs dep | entry L |
-|---|---:|---:|---:|---:|
-| Mini | 6.9x | 77.3 % | −0.1 % | 1.0× |
-| B4 | 19.7x | 53.1 % | −0.1 % | 1.0× |
-| Pro | 26.5x | 53.1 % | −0.1 % | 1.0× |
-| Pro Max | 139.0x | 58.9 % | −1.0 % | 2.7× |
-| *HODL* | *7.3x* | *76.5 %* | | |
+| | Return | max DD | DD-HODL | vs dep | entry L |
+|---|---:|---:|---:|---:|---:|
+| Mini | 7.4x | 76.8 % | +0.3 pp | −0.1 % | 1.0× |
+| B4 | 21.4x | 53.1 % | **−23.4 pp** | −0.1 % | 1.0× |
+| Pro | 28.7x | 53.1 % | **−23.4 pp** | −0.1 % | 1.0× |
+| Pro Max | 150.6x | 58.9 % | −17.5 pp | −1.0 % | 2.7× |
 
-**Cycle 4 — 2024 → 2026-07-20 (in progress, one settlement)**
+**Cycle 4 — 2024 → 2026-07-20 (in progress, one settlement)** · *HODL 1.0x, 53.0 % max DD*
 
-| | Return | max DD | vs dep | entry L |
-|---|---:|---:|---:|---:|
-| Mini | 1.0x | 53.2 % | −17.1 % | 1.0× |
-| B4 | 1.7x | 28.2 % | −17.1 % | 1.0× |
-| Pro | 2.0x | 28.2 % | −17.1 % | 1.0× |
-| Pro Max | 3.6x | 51.9 % | **−41.7 %** | 2.2× |
-| *HODL* | *1.0x* | *53.0 %* | | |
+| | Return | max DD | DD-HODL | vs dep | entry L |
+|---|---:|---:|---:|---:|---:|
+| Mini | 1.0x | 53.3 % | +0.3 pp | −17.1 % | 1.0× |
+| B4 | 1.7x | 28.2 % | **−24.7 pp** | −17.1 % | 1.0× |
+| Pro | 2.1x | 28.2 % | **−24.7 pp** | −17.1 % | 1.0× |
+| Pro Max | 3.7x | 51.9 % | −1.0 pp | **−41.7 %** | 2.2× |
+
+### Pool income — the protocol's core value capture
+
+Every product's return **already includes** the Pool income: the behavioural assumption is
+that **20 % of the cohort exits through the `q = 11.8 %` penalty door each cycle**, and that
+forfeited penalty is redistributed to the ~80 % who stay — **+0.25·q ≈ +2.95 % per cycle to
+every stayer**, compounding if held across cycles. It is the mechanism by which stayers are
+paid by leavers.
+
+You can *see* it isolated in the demo's footnote: Mini holds `1×` long always — exactly HODL's
+exposure — so **Mini minus HODL is nothing but the Pool income net of the operator fee**
+(cycle 1: 52.9x vs 52.3x). Every other product carries the same credit on top of its strategy.
 
 ## Reading it honestly
 
-- **`max DD` and `vs dep` are different risks — read both.** Mini shows ~85 % peak-to-trough
-  in cycle 1 yet only −0.3 % vs the deposit: the swing gives back accumulated *profit*, not
+- **Less drawdown than holding — the `DD-HODL` column.** HODL eats a 53–84 % top-to-bottom
+  crash every cycle. B4 and Pro cut **10–25 pp** off that: they hold spot only through the
+  *rise* and sit in **USDC through the fall**, so their drawdown is intra-bull volatility, not
+  the cycle bear. Mini stays `1×` long through the bear (like HODL), so its drawdown tracks
+  HODL's — that is the price of the simplest product. The real strategies step aside.
+- **`max DD` and `vs dep` are different risks — read both.** B4 shows ~74 % peak-to-trough in
+  cycle 1 yet only −0.3 % vs the deposit: the swing gives back accumulated *profit*, not
   principal, for a holder who entered at the halving. A mid-cycle entrant faces the full
   peak-to-trough instead.
 - **Pro Max carries real downside, and the demo shows it.** −33.6 % (cycle 2) and −41.7 %
-  (cycle 4) below deposit. Leverage cuts both ways; the structural floor bounds the *long's*
-  liquidation, but the short side and interim dips are genuine risk. The structural mechanism
-  is what keeps these numbers survivable (see below) — not what removes the risk.
+  (cycle 4) below deposit, and a drawdown near HODL's despite the lower cycle bear — that is
+  the leverage on the *interim* dips. The structural floor bounds the *long's* liquidation, but
+  the short side and interim dips are genuine risk. The mechanism keeps these numbers
+  survivable (see below) — it does not remove the risk.
 - **Structural leverage, not a flat multiple.** Pro Max's entry leverage is 1.6× / 2.5× /
   2.7× / 2.2× across the cycles — set by proximity to the confirmed structural low, capped by
   the last one. In cycle 1 the anchors barely exist (`floor = 0`), so it opens near the base
@@ -103,8 +119,10 @@ matters.
   the low and it survives. This is pinned as a unit test
   ([`test/unit/StructuralLeverage.t.sol`](../test/unit/StructuralLeverage.t.sol),
   `test_covid_survival_cap_binds`).
-- **Mini ≈ HODL.** It never trades; it pays the fee on interval profit and earns it back as
-  Pool income, landing near HODL. The small gap is fee/Pool-assumption noise, not signal.
+- **Mini edges out HODL — and the gap is the pool.** Mini never changes exposure, so before
+  fees it *is* HODL. It pays a small operator performance fee on interval profit and receives
+  the Pool income; the income wins, so Mini lands just **above** HODL (52.9x vs 52.3x). The
+  gap is the redistributed exit penalty — small per cycle, structural over many.
 - **B4 < Pro < Pro Max in return, by construction** — each adds one interior move (a USDC
   rotation, a hedge, leverage). B4 and Pro share a drawdown because both hold `n = 1` through
   the growth regime where the drawdown occurs.
@@ -118,13 +136,19 @@ matters.
 | Regime | `Calendar` pivots `P`, `T`; three held segments per cycle (long → fall → long) |
 | Leverage | `StructuralLeverage.leverageWad` for Pro Max's long; flat `|target|` otherwise |
 | Timing | Position sized once per regime, held; deposit at the halving; no lookahead |
-| Performance fee | `Phi.FEE_F` on profit over the deposit at each rotation |
+| Performance fee | Operator's cut of `Phi.FEE_F`: ≤ 38.19 % of a 4.5 % fee on new profit above the high-water mark ⇒ **≤ ~1.72 % of profit** actually leaves NAV |
 | Funding | Flat **10 %/yr** on the absolute perp leg (assumption) |
-| Pool income | **20 % of a cohort exits penalised per cycle** (behavioural assumption) |
+| Pool income | **20 % of a cohort exits penalised per cycle** at `q = 11.8 %`, redistributed to stayers ⇒ **+0.25·q ≈ +2.95 %/cycle** (behavioural assumption) |
+
+**Fee model, corrected.** `Phi.FEE_F` (4.5 %) is a *virtual* fee: only the operator's route
+share — capped at 38.19 % — is ever paid out in kind, so a holder loses at most ~1.72 % of
+profit; the rest is pool-weight accounting and never leaves NAV. An earlier version of this
+demo removed the full 4.5 % three times on *cumulative* profit, which pushed Mini below plain
+hold — a modelling artefact, now fixed (charged once per settlement, on new profit above the
+high-water mark, at the operator rate).
 
 **Not modelled:** slippage, market impact, trading fees, liquidation mechanics, the rebalance
-dead-band, and the async execution delay. The full fee is charged even though its client share
-returns to users as reward weight (conservative). Mini and B4 never carry a perp
+dead-band, and the async execution delay. Mini and B4 never carry a perp
 (`perp = n − clamp(n,0,1) = 0` for `n ∈ {0,1}`), so funding does not touch them.
 
 The two **assumption** lines (funding, Pool income) are guesses about the market and about
