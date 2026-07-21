@@ -99,20 +99,36 @@ margin    = notional / L_tranche  ⇒ venue liquidation sits at s
 - Sub-threshold tranches, refused opens (`p ≥ s`), exits with no live short at initiation
   (mid-transition, wrong-sign cleanup), and the directional in-kind dust of any exit.
 
-### Minimum tranche
+### Minimum tranche — the open check is dynamic, not a flat threshold
 
 The venue minimum is already enforced protocol-wide: `MIN_ORDER_USD_WAD = 10e18` — a perp
 target below $10 notional zeroes out (`B4VaultEngine` L802). **Empirically confirmed by the
 owner on the live venue (2026-07-21): a sub-$10 BTC-perp order on Hyperliquid is rejected
 with a "$10 minimum" error** — the constant matches production behavior, not just docs.
-For the tranche to open at all:
 
-- Pro Max fall `−φ`: notional = φ·margin ⇒ margin ≥ ~$6.2 for a $10 notional.
-- Pro fall `−1/φ`: notional = 0.618·margin ⇒ margin ≥ ~$16.2.
+Because the tranche opens at the **inherited-stop leverage**, not the flat product target,
+its notional is `amount · L_tranche` with `L_tranche = p / (s − p)` — and `L_tranche` falls
+as the short runs into profit (the stop `s` sits ever further above the falling price `p`).
+A flat-φ intuition ("$20 at φ opens ~$32") holds only at `p = p₀`. Worked (Pro Max exiter,
+`s = φ·p₀` — a neat identity: `1 + 1/φ = φ`):
 
-**`MIN_TRANCHE_USD = $20`** covers both with headroom; below it, passive fallback. (Plus lot
-rounding: a tranche whose size floors to zero lots at the venue's `szDecimals` also falls
-back — checked at open, not assumed.)
+| Price at tranche open | `L_tranche` | $20 tranche → notional | ≥ $10? |
+|---|---:|---:|---|
+| `p = p₀` | 1.618 | $32.4 | ✓ |
+| `p = 0.8·p₀` | 0.98 | $19.6 | ✓ |
+| `p = 0.6·p₀` | 0.59 | $11.8 | ✓ |
+| `p ≈ 0.54·p₀` | 0.50 | $10.0 | boundary |
+| `p = 0.5·p₀` | 0.45 | $8.9 | ✗ (needs $22.4) |
+| `p = 0.4·p₀` | 0.33 | $6.6 | ✗ (needs $30.5) |
+
+For Pro (`s = φ²·p₀`, sub-unit exposure) the boundary arrives sooner. So:
+
+- **The openability condition is checked at open time:** `amount · L_tranche ≥ $10` **and**
+  the size survives lot flooring at the venue's `szDecimals`. Unmet ⇒ passive fallback.
+- **`MIN_TRANCHE_USD = $20` is escrow dust hygiene only** — it filters records not worth
+  a keeper transaction; it does not by itself guarantee an openable position.
+- Partial self-compensation: a deep-in-profit exit pays its 11.8% on a *grown* value, so
+  tranches from exactly the deep-`p` exits tend to be larger in dollars.
 
 ## Invariants preserved (why this does not break the protocol)
 
