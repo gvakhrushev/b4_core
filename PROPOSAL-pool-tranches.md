@@ -121,7 +121,7 @@ A flat-φ intuition ("$20 at φ opens ~$32") holds only at `p = p₀`. Worked (P
 | `p = 0.5·p₀` | 0.45 | $8.9 | ✗ (needs $22.4) |
 | `p = 0.4·p₀` | 0.33 | $6.6 | ✗ (needs $30.5) |
 
-For Pro (`s = φ²·p₀`, sub-unit exposure) the boundary arrives sooner. So:
+For Pro (full `1×` short, `s = 2·p₀`) the boundary sits at `p = ⅔·p₀`. So:
 
 - **The openability condition is checked at open time:** `amount · L_tranche ≥ $10` **and**
   the size survives lot flooring at the venue's `szDecimals`. Unmet ⇒ passive fallback.
@@ -180,7 +180,7 @@ For Pro (`s = φ²·p₀`, sub-unit exposure) the boundary arrives sooner. So:
 1. Escrow record lifecycle: double-open, open-after-refusal, stale snapshots across the
    halving, records surviving a policy change, escrow griefing by dust records.
 2. Stop-inheritance math at the edges: `p → s` (maxLev clamp), `p ≥ s` refusal, sub-lot
-   flooring, Pro's sub-1 exposure (`L < 1` semantics in the sizing formula).
+   flooring, sub-1 `L_tranche` from deep-in-profit opens (`L < 1` sizing semantics).
 3. `poolExit` gating: early-call griefing (must be impossible before `T`), re-entry with
    the pool as owner-recipient, interaction with `capture()` measured-receipt accounting.
 4. Tranche vault under the degenerate `{0, fall}` policy: does the growth-side `0` truly

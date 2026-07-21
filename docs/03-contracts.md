@@ -369,7 +369,7 @@ interface IStrategy {
 |---|---|
 | `StrategyMini` | `(1, 1)` — hold spot in both regimes |
 | `StrategyB4` | `(1, 0)` — fall-regime rotation into USDC |
-| `StrategyPro` | `(1, −1/φ)` — hedge short `1/φ` in the fall regime |
+| `StrategyPro` | `(1, −1)` — full `1×` short in the fall regime |
 | `StrategyProMax` | `(φ, −φ)` — leveraged expression, `|n| = φ` |
 
 All four are `pure`. **Strategies hold no authority over funds** — they are read exactly once, at `selectPolicy` / `initialize`, and the resolved targets are stored in the vault. Mutating or replacing a strategy contract afterwards cannot change any existing vault's behavior unless its owner re-selects. The core stores no product names; a strategy is just a number pair.

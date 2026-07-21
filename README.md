@@ -85,7 +85,7 @@ Each product is the previous one plus one more interior move at the two cycle pi
 |---|---:|---:|---|
 | Mini | `1` | `1` | holds spot, trades nothing; earns pool yield |
 | B4 | `1` | `0` | a fall-regime rotation into USDC |
-| Pro | `1` | `−1/φ` | a hedge — short in the fall regime |
+| Pro | `1` | `−1` | a full `1×` short in the fall regime |
 | Pro Max | `φ` | `−φ` | leveraged expression of the same signs |
 
 A signed target `n` decomposes exactly once, identically for every product:
@@ -151,23 +151,23 @@ More return **and** less drawdown than holding, in one table. `1.00x` = deposit.
 | `HODL` buy & hold | 5,214x | 84.2 % | −13.2 % | — |
 | Mini | 5,415x | 84.5 % | −13.2 % | ×1.09 |
 | **B4** | **125,149x** | **73.9 %** | −13.2 % | ×1.09 |
-| **Pro** | **300,473x** | **73.9 %** | −13.2 % | ×1.09 |
+| **Pro** | **464,746x** | **73.9 %** | −13.2 % | ×1.09 |
 | Pro Max | 14,893,463x | 75.5 % | −33.6 % | ×1.09 |
 
 ### Per cycle
 
 | Cycle | | `HODL` | Mini | B4 | Pro | Pro Max |
 |---|---|---:|---:|---:|---:|---:|
-| **2012→2016** | return | 52.3x | 52.9x | 145.1x | 193.1x | 471.0x |
+| **2012→2016** | return | 52.3x | 52.9x | 145.1x | 222.8x | 471.0x |
 | | max DD | 84.2 % | 84.5 % | 73.9 % | 73.9 % | 75.5 % |
 | | DD landed in | `FALL` | `FALL` | `GROWTH` | `GROWTH` | `GROWTH` |
-| **2016→2020** | return | 13.6x | 13.8x | 40.3x | 54.2x | 209.9x |
+| **2016→2020** | return | 13.6x | 13.8x | 40.3x | 62.8x | 209.9x |
 | | max DD | 83.2 % | 83.4 % | 64.2 % | 64.2 % | 67.9 % |
 | | DD landed in | `FALL` | `FALL` | `RECOV` | `RECOV` | `RECOV` |
-| **2020→2024** | return | 7.3x | 7.4x | 21.4x | 28.7x | 150.6x |
+| **2020→2024** | return | 7.3x | 7.4x | 21.4x | 33.2x | 150.6x |
 | | max DD | 76.5 % | 76.8 % | 53.1 % | 53.1 % | 58.9 % |
 | | DD landed in | `RECOV` | `RECOV` | `GROWTH` | `GROWTH` | `GROWTH` |
-| **2024→now**\* | return | 1.00x | 1.03x | 1.71x | 2.05x | 3.71x |
+| **2024→now**\* | return | 1.00x | 1.03x | 1.71x | 2.26x | 3.71x |
 | | max DD | 53.0 % | 53.3 % | 28.2 % | 28.2 % | 51.9 % |
 | | DD landed in | `FALL` | `FALL` | `GROWTH` | `GROWTH` | `GROWTH` |
 

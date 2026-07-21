@@ -143,7 +143,7 @@ contract BacktestTest is Test {
         Product[4] memory prods = [
             Product("Mini   ", WAD, WAD),
             Product("B4     ", WAD, int256(0)),
-            Product("Pro    ", WAD, -int256(Phi.INV_PHI)),
+            Product("Pro    ", WAD, -WAD),
             Product("Pro Max", int256(Phi.PHI), -int256(Phi.PHI))
         ];
 
@@ -266,7 +266,7 @@ contract BacktestTest is Test {
             );
             if (g.L == 0) g.L = WAD;
         } else {
-            // target ∈ {0 flat/USDC, 1 spot, −1/φ or −φ short}: exposure = |target|, no
+            // target ∈ {0 flat/USDC, 1 spot, −1 or −φ short}: exposure = |target|, no
             // structural amplification. A zero target is genuinely flat (exposure 0).
             g.L = mag;
         }

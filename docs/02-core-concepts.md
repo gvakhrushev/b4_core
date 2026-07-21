@@ -96,8 +96,8 @@ Worked values for the reference ladder at scale `k = 1`:
 | `StrategyMini` | `(1, 1)` | both | `1` | `1` | `0` |
 | `StrategyB4` | `(1, 0)` | growth | `1` | `1` | `0` |
 | | | fall | `0` | `0` | `0` (all USDC) |
-| `StrategyPro` | `(1, −1/φ)` | growth | `1` | `1` | `0` |
-| | | fall | `−0.618033988749894848` | `0` | `−0.618033988749894848` |
+| `StrategyPro` | `(1, −1)` | growth | `1` | `1` | `0` |
+| | | fall | `−1` | `0` | `−1` (full short) |
 | `StrategyProMax` | `(φ, −φ)` | growth | `1.618033988749894848` | `1` | `+0.618033988749894848` |
 | | | fall | `−1.618033988749894848` | `0` | `−1.618033988749894848` |
 

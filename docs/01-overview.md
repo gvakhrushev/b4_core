@@ -57,7 +57,7 @@ authority over funds. The core stores no product names — the pair is read once
 |---|---:|---:|---|
 | `StrategyMini` | `1` | `1` | hold spot in both regimes; earns shared-Pool yield, trades nothing |
 | `StrategyB4` | `1` | `0` | a fall-regime rotation into USDC |
-| `StrategyPro` | `1` | `-1/φ` | a hedge — short `1/φ` in fall |
+| `StrategyPro` | `1` | `-1` | a full `1×` short in fall — the mirror of the long |
 | `StrategyProMax` | `φ` | `-φ` | leveraged expression of the same signs, `\|n\| = φ` |
 
 `φ = 1.618033988749894848` (WAD). Each rung is the previous one plus one more interior move at

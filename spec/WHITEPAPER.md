@@ -33,7 +33,7 @@ between):
 |---|---:|---:|---|
 | Mini | `1` | `1` | hold spot; earns shared-Pool yield, no trade |
 | B4 | `1` | `0` | a fall-regime rotation into USDC |
-| Pro | `1` | `-1/φ` | a hedge (short in fall) |
+| Pro | `1` | `-1` | a full `1×` short in fall |
 | Pro Max | `φ` | `-φ` | leveraged expression of the same signs |
 
 Each product is the previous one plus one more interior move at the two cycle pivots. How

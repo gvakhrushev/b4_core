@@ -136,7 +136,8 @@ low 3850); the cap is what saves it. This makes **"COVID-2020 survives"** and
    different).
 
 3. **Does `Pro` (not just `Pro Max`) get the multiplier?** Pro's growth target is `1`
-   (no leverage in growth) and its fall target is `−1/φ` (short). Under "shorts flat φ,
+   (no leverage in growth) and its fall target is `−1` (a full `1×` short; corrected
+   2026-07-21 — the ladder is `{1,1}, {1,0}, {1,−1}, {φ,−φ}`). Under "shorts at flat base,
    long-only multiplier," Pro is effectively untouched. Confirm Pro is out of scope and only
    Pro Max (and any future `>1` growth product) uses it.
 
