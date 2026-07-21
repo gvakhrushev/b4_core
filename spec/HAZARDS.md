@@ -187,12 +187,16 @@ its effect must be proven by a later on-chain state read.
     `|resolved| ≤ φ` cap for leveraged products.
   - **Sized once, held until rotation.** No daily NAV rebalance ⇒ no volatility drag inside a
     zone; the calendar is the rebalance schedule. The trade-off: within a zone the effective
-    leverage drifts with price (it is fixed in *notional*, not in NAV-ratio) — accepted, since
-    re-sizing to hold a ratio is exactly the drag being removed.
+    leverage drifts with price (the position is fixed in *size* — the contract count `szi` —
+    so both notional and leverage drift with price, never re-traded to hold a ratio, which is
+    exactly the drag being removed) — accepted.
   - **The `min` price ratchet is a new permissionless surface.** It is sampling-only (reads the
-    venue spot price, writes a monotone-within-window minimum), moves funds for no one, and its
-    only failure mode — under-sampling — is fail-safe (raises the delta, lowers leverage). A
-    lower low across cycles does not raise leverage (ratchet up only). Long-only; shorts keep
+    venue spot price, writes a monotone-within-window minimum), moves funds for no one. Its
+    safety is directional: **more sampling lowers the recorded low ⇒ lowers leverage**, so the
+    honest failure mode is under-sampling (a keeper samples each window; the pool benefits). An
+    unsampled window installs no cap, so a leveraged product falls back to the flat base `g`
+    (pre-mechanism behaviour), never to a false ceiling. A lower low across cycles does not
+    raise leverage (advances only at the halving flip). Long-only; shorts keep
     the flat base.
 
 ---

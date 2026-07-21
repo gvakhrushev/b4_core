@@ -158,9 +158,15 @@ subject to `HAZARDS.md`. Economic rationale is non-normative (`WHITEPAPER.md`).
   `[T, T+W]` (the cycle bottom) and the post-halving window `[halving, halving+W]`. The
   recorded minimum only moves down *within its own window*; across windows the pair
   `(floor, cap)` ratchets up at each structural event — at the halving the previous `cap`
-  becomes the new `floor` and the post-halving low becomes the new `cap`. Under-sampling is
-  fail-safe: a missed lower observation can only raise the delta and lower leverage. A new
-  low BELOW the current `cap` MUST NOT raise leverage (the ratchet does not move down).
+  becomes the new `floor` and the post-halving low becomes the new `cap`. **Sampling more
+  lowers the anchors and therefore lowers leverage** — the recorded minimum is an *upper*
+  bound on the true low, so a diligently-sampled window records a lower anchor (larger delta,
+  less leverage) than an under-sampled one. Under-sampling is therefore NOT fail-safe on its
+  own; the mechanism depends on the low being sampled (a keeper does this each window, and
+  it is in the pool's interest). Until a window is sampled at all, a leveraged product MUST
+  fall back to the flat base leverage `g` (the pre-mechanism behaviour) rather than assume a
+  cap that does not exist. A new low observed WITHIN a window only lowers the anchor; across
+  windows the pair advances only at the halving flip (never sideways to a higher value).
 - **Short side.** A short leg (fall regime) uses the flat base `g` with no structural
   multiplier in this version — there is no structural ceiling above a short.
 

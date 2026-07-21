@@ -30,8 +30,11 @@ Two defects in the shipped sizing, both in `B4VaultEngine._planPerpStep` / `_pla
 
 The protocol already has two windows per cycle where a structural low forms. The minimum
 of each is recorded on-chain by a permissionless ratchet (any caller submits; the recorded
-value only moves **down** within its own window, so under-sampling is fail-safe — it can
-only *raise* the delta and *lower* leverage):
+value only moves **down** within its own window. Note the direction, corrected after the
+design review: the recorded minimum is an *upper bound* on the true low, so **more sampling
+lowers the anchor and lowers leverage** — under-sampling is not fail-safe on its own, and an
+unsampled window installs no cap (a leveraged product falls back to the flat base `g`). A
+keeper samples each window; the pool benefits from a lower, more accurate low):
 
 - **62-window** `[T, T+W]` — the cycle bottom (bear low). Verified: 222 (2015), 3504 (2019),
   16499 (2022).
