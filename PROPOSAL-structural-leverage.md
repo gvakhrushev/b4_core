@@ -1,10 +1,12 @@
 # Proposal: structural leverage floor (v2 mechanism)
 
-**Status (2026-07-21): specified + library shipped; engine wiring pending.** The mechanism is
-now normative — `spec/SPECIFICATION.md` §7b + §3, `spec/HAZARDS.md` §C5 — and its pure math is
-a unit-tested library (`src/libraries/StructuralLeverage.sol`), exercised by the historical
-demo. The remaining work is the engine integration (event-driven sizing + on-chain
-min-ratchet), deferred to its own audit round (`REPORT.md`). This file is the design record.
+**Status (2026-07-21): specified, wired, and tested.** The mechanism is normative
+(`spec/SPECIFICATION.md` §7b + §3, `spec/HAZARDS.md` §C5) and fully implemented: the pure math
+(`src/libraries/StructuralLeverage.sol`), the on-chain anchor ratchet (`B4Pool.sampleAnchor`),
+and the engine sizing (`B4VaultEngine._planPerpStep` — sized once at the frozen price, held).
+230/230 green, B4Vault unchanged at 24,195 B, deep campaign 8/8, slither exit 0. This file is
+the design record; `REPORT.md` lists the residual items for the external audit. It still
+carries the pre-mainnet, unaudited, funded-gate caveats of the whole protocol.
 
 **Decisions on the three open questions:** (1) structural `L` replaces the flat sizing for
 leveraged products, with the venue `maxLeverage` a hard technical ceiling on top; (2) the

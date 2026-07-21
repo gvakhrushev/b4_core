@@ -116,7 +116,7 @@ Strategies are **view-only**. `IStrategy.targets()` returns a pair of `int256`; 
 
 For a leveraged long (base `g = |growth| > 1`, i.e. Pro Max), the *effective* leverage is not a flat multiple. It is bounded by the cycle's confirmed structural lows: `L = min(g·p/(p−floor), p/(p−cap))`, where `floor`/`cap` are two ratcheted lows (the previous cycle bottom and the post-halving-window low). Leverage is highest near a structural low and decays toward `1×` for a late entry; the position is sized **once per regime and held**, not rebalanced to a moving NAV. This is [SPECIFICATION §7b](../spec/SPECIFICATION.md) and the pure math lives in [`StructuralLeverage.sol`](../src/libraries/StructuralLeverage.sol).
 
-> **Status:** the library, its unit tests and the spec are in place, and the [historical demo](11-backtest.md) runs on it. The **engine does not yet call it** — the shipped `_planPerpStep` still uses flat NAV-relative sizing. Wiring it in (plus the on-chain min-ratchet for the anchors) is a pending phase; see [`../REPORT.md`](../REPORT.md).
+> **Status:** implemented and tested. `B4VaultEngine._planPerpStep` sizes the perp from `StructuralLeverage` and **holds** it (the sizing price is frozen at entry, so a price move no longer re-trades the position — `test/unit/StructuralSizing.t.sol`), and `B4Pool.sampleAnchor` ratchets the two window lows (`test/unit/AnchorRatchet.t.sol`). Still funded-gate-blocked like the rest of the protocol, and the anchor sampling depends on a keeper each window. See [`../REPORT.md`](../REPORT.md).
 
 ---
 
