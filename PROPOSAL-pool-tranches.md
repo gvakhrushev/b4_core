@@ -1,219 +1,164 @@
-# Proposal: penalty tranches — the pool rides the fall (v2 mechanism)
+# Proposal: the pool rides the fall — a standing pool short (SPS-1)
 
-**Status (2026-07-21): designed, decisions locked; awaiting integration.** This is the
-pre-implementation design record, prepared while the structural-leverage adversarial audit
-runs. Sequencing agreed with the owner: audit round closes → adjudication + fixes → this
-design is integrated (spec §9c + HAZARDS §C6 + implementation) in the next round, followed
-by its own post-implementation adversarial pass. Nothing here is in the shipped code yet.
+**Status (2026-07-21): designed, direction decided (SPS-1), gated behind the §7b redo.**
+Pre-implementation design record. Sequencing: the structural-leverage §7b redo lands first
+(margin `= notional/L`), then this. Until then the pool holds its fall-zone penalty share as
+**passive USDC** — the honest interim. Nothing here is in shipped code.
+
+**Design evolved (2026-07-21).** An earlier draft used *per-exit isolated tranches* with the
+exiter's *inherited stop*. Working through the small-penalty problem (below) with a multi-agent
+generate → adversarial-stress → synthesis pass (18 candidates, 3 killed on stop-attribution)
+overturned that: the dust problem *forces* aggregation, aggregation needs a *shared* stop, the
+only sound shared stop is a *far product-flat* one, and a far stop makes an in-regime shared
+stop-out nearly impossible — which removes the entire reason isolation existed. The owner
+accepted the reversal. The design is now a single standing pool short (SPS-1), no isolated tier.
 
 ## Problem being fixed — the fall-zone asymmetry
 
-The exit penalty (`q = 11.8%`) is paid to the pool **in kind**, proportionally across the
-exiting vault's buckets (`B4VaultOps._payBucket`), and the pool holds it passively until the
-next settlement. This carries the exiter's *stance* correctly in only one of the two regimes:
+The exit penalty (`q = 11.8 %`) is paid to the pool **in kind** (`B4VaultOps._payBucket`) and
+held passively until the next settlement. This carries the exiter's *stance* in only one regime:
 
-| Exit during | Exiter's buckets | Pool receives | Pool's stance until the zone |
+| Exit during | Exiter's buckets | Pool receives | Pool's stance to the zone |
 |---|---|---|---|
-| Growth (long) | spot BTC + margin USDC | mostly **BTC** | long — position carried ✓ |
+| Growth (long) | spot BTC + margin USDC | mostly **BTC** | long — carried ✓ |
 | Fall 38–62 (Pro/Pro Max short) | USDC + margin USDC | almost pure **USDC** | flat — **the short is lost** ✗ |
 
-In the fall zone the pool sits flat during exactly the regime where the strategy's stance is
-short. The stayers' penalty income loses the fall-zone alpha. Fixing this is the point of
-this mechanism: *"we built strategies that beat hold on both return and drawdown — it is
-illogical for the pool to sit idle instead of running them."*
+In the fall the pool sits flat during exactly the regime where the strategy's stance is short.
+The stayers forfeit the fall-zone alpha. Capturing it is the point of this mechanism.
 
-## Decisions locked (owner, 2026-07-21)
+## The small-penalty problem that shaped the design
 
-1. **A tranche can go to zero — accepted.** The user chooses the product and its risk; the
-   protocol supplies four strategies and honest statistics, not risk management. A holder
-   who did *not* exit faces the same stop on the same strategy.
-2. **Pool income becomes strategy-exposed — intended.** Distribution replaces the flat
-   guaranteed credit; in the fall zone shorts historically pay well (P-top → 62-bottom is
-   −70…−80%), and loss tranches are possible. Deliberate change of profile.
-3. **Dust-exit DoS is economically self-defeating** — the "attacker" pays the 11.8% penalty
-   per exit, funding the pool they grief. The minimum threshold is technical hygiene, not a
-   security control.
-4. **A late tranche slides to the next interval — fine.** Deferral, not loss (H3).
-5. **Reuse the existing stack** — tranches are standard vaults run by the standard engine.
-   An audit round follows the implementation.
+A penalty share is often too small to open a perp at all. Two distinct failure modes:
 
-Design choices: **per-exit isolation** (one vault per tranche, own margin ⇒ own stop — one
-tranche's stop-out cannot touch another); **stop inheritance** (the tranche reproduces the
-exiter's stop *price*, not a fresh flat φ); threshold **technical, ~$10–20**.
+1. **Dust:** a small deposit → a small penalty. `$20` deposit → `~$2.36` penalty; Hyperliquid's
+   perp minimum is **`$10`** (confirmed on the live venue). `$2.36 < $10`.
+2. **Low inherited leverage:** under the *old* per-exit design a decent penalty still opened a
+   tiny notional when the exiter was deep in profit — the inherited stop `s` sits far above `p`,
+   so `L = p/(s−p)` is low and `notional = penalty·L < $10` (a `$30` penalty at `L=0.3` → `$9`).
 
-## The mechanism
+The second mode is caused by *stop inheritance itself*. Drop the inherited stop, size at the
+product-flat leverage, and it disappears: `$30` of penalty → `~$30` of notional regardless of
+the exiter's profit. That, plus the fact that dust *must* be aggregated to open at all, is why
+the design collapses to a single aggregate short.
 
-### Flow (the owner's model, verbatim in protocol terms)
+## The mechanism — SPS-1
 
-An exiter holds a 1 BTC short with its margin-realized stop. On a penalized exit:
+### One standing pool short per (asset, product)
 
-1. The exit machinery runs exactly as today: strict flatness, harvest, repatriation,
-   in-kind split. Owner gets their share; **operator/referral are carved from the penalty
-   immediately, in kind, as today** — they decide for themselves what to do with it.
-2. The pool's penalty share (~0.11 of the position, slightly less after the operator carve)
-   arrives in the pool in kind. During the fall this is USDC.
-3. **Instead of sitting flat, the settlement-token share is escrowed with a tranche record**
-   `{amount, stopPxWad, fallTarget}` — the stop is snapshotted at *exit initiation*, while
-   the exiter's position is still live (by finalize time the perp is already closed).
-4. A permissionless keeper step `openTranche()` consumes the record: creates a fresh vault
-   (factory), **owner = the pool** (F2 fixed-owner: every payout returns to the pool by
-   construction), policy `{growth: 0, fall: exiter's fall target}`, deposits the escrowed
-   USDC. The engine — unchanged machinery — opens the short.
-5. The tranche **rides to the zone**. At `T` the calendar flips the target to `0` and the
-   engine flattens the tranche to USDC by itself (strict flatness at the regime end) — even
-   if no one calls anything. A permissionless `poolExit(vault)`, gated to `owner == pool`
-   vaults and `timeSinceHalving ≥ T`, finalizes the exit; proceeds pay the pool, `capture()`
-   accounts them, and they distribute to stayers by weight at the settlement — *"the trade
-   closes at the zone and what is distributed is the realized profit."*
+The pool runs a single reusable, pool-owned short vault per **(directional asset, product)** —
+bounded (≤ assets × leveraged products, a small constant). It is an ordinary vault run by the
+ordinary engine with a fixed degenerate policy `{growth: 0, fall: product's fall target}`
+(Pro `{0,−1}`, Pro Max `{0,−φ}`), owner = the pool (F2 fixed-payout).
 
-### Stop inheritance — sizing, not stop orders
+Every fall-zone penalty share — dust, low-L, or large — is an **O(1) scalar add** to that
+vault's escrow accumulator; there is **no per-exit object at all**. A permissionless crank folds
+the accumulated escrow into the vault as margin/notional. Dust rides as soon as the cumulative
+escrow clears the keeper break-even threshold; below it, it stays staged (= passive) and reverts
+to passive at `T`. The low-L mode does not exist (notional is product-flat, not inheritance-tied).
 
-The venue has no position-transfer primitive and the protocol places **no trigger orders**
-(a resting trigger can sit unfilled forever, which breaks the async completion discipline
-"resend = exact complement of fills"). Both are unnecessary: the protocol already realizes
-stops **by margin size** (SPEC §7b). The tranche opens at the current price `p` and inherits
-the exiter's stop price `s` by sizing:
+At `T` the calendar flips the vault's target to `0`; the engine flattens it by ordinary cranking
+even if no one calls anything. A permissionless `poolExit`, gated to `owner == pool` and
+`timeSinceHalving ≥ T`, finalizes; proceeds pay the pool, `capture()` accounts them, and they
+distribute to stayers pro-rata by weight at the settlement.
 
-```
-L_tranche = p / (s − p)          (short: s > p; clamped by the venue maxLeverage)
-margin    = notional / L_tranche  ⇒ venue liquidation sits at s
-```
+### The aggregate stop — product-flat far ceiling (NOT the anchor)
 
-- Three tranches with stops 30k / 33k / 27k are three vaults with three margins — three
-  independent stops. Price going the wrong way stops out one tranche without touching the
-  others (the owner's isolation requirement, achieved the protocol's native way).
-- `p ≥ s` at open time (the market already went past the exiter's stop) → **refuse**, fall
-  back to today's passive USDC. No position beyond its own stop is ever opened.
-- `p` close to `s` → huge `L`, clamped by the venue `maxLeverage` (stop lands nearer than
-  inherited; same clamp rule as §7b).
-- Side effect worth making normative: this gives the short side the **structural ceiling**
-  that SPEC §7b explicitly lacks ("no structural ceiling above a short") — the ceiling is
-  the exiter's confirmed, margin-realized stop.
+**The structural anchors cannot ceiling a short.** They are confirmed structural *lows* (they
+bound a long's stop from below); a short's stop is *above* price. Spec §7b says so explicitly
+("no structural ceiling above a short"). Inheriting the anchor is unavailable without a new,
+symmetric confirmed-*high* ratchet — deferred (see "left on the table").
 
-### What stays passive (explicit fallbacks — today's behavior)
+The sound, no-new-machinery substitute is the **product-flat far stop**: margin `= notional/L`
+at the product's own leverage, so venue liquidation sits at `1× short → 2·p` (Pro),
+`φ short → φ·p ≈ 1.618·p` (Pro Max). In the fall regime price is *falling* from the top, so this
+stop sits 60–100 % **above** entry — an in-regime shared stop-out essentially cannot occur, which
+is exactly what makes sharing one stop safe and dissolves the case for isolation.
 
-- Growth-zone exits (the in-kind BTC already carries the long; the un-carried `L−1` perp
-  excess of a Pro Max exit is a possible later extension, out of scope here).
-- Mini (fall target `+1` — its in-kind BTC *is* the position) and B4 (fall `0` — flat is
-  the stance; passive USDC is correct).
-- Sub-threshold tranches, refused opens (`p ≥ s`), exits with no live short at initiation
-  (mid-transition, wrong-sign cleanup), and the directional in-kind dust of any exit.
+- **Cap-drift (mandatory).** A standing short topped up down the fall has a blended entry that
+  drifts down, dragging its realized liquidation down with it. Refuse any top-up that would pull
+  the aggregate's realized liquidation below the **fall-start price `P`**; route the overflow to
+  passive. This pins the stop above the top of the traversed range, so no counter-trend bounce
+  can hit it.
 
-### Minimum tranche — the open check is dynamic, not a flat threshold
+### Standing short vs generational fresh tranches — decide against the §7b code
 
-The venue minimum is already enforced protocol-wide: `MIN_ORDER_USD_WAD = 10e18` — a perp
-target below $10 notional zeroes out (`B4VaultEngine` L802). **Empirically confirmed by the
-owner on the live venue (2026-07-21): a sub-$10 BTC-perp order on Hyperliquid is rejected
-with a "$10 minimum" error** — the constant matches production behavior, not just docs.
+If the redone §7b engine can safely re-size a **held** short on each top-up (drift-bounded, no
+re-lever), keep the single standing vault (SPS-1). If it cannot — re-sizing a live leveraged
+short against the current mark is *precisely* the reverted C1/C4 detonation — fall back to
+**SPS-3**: the same accumulator mints a **fresh, once-sized, frozen** tranche each time the
+escrow clears threshold, never touching a live position. Same stop, same aggregation; more
+keeper objects. **This is decided against the redone sizing code, not in the abstract.**
 
-Because the tranche opens at the **inherited-stop leverage**, not the flat product target,
-its notional is `amount · L_tranche` with `L_tranche = p / (s − p)` — and `L_tranche` falls
-as the short runs into profit (the stop `s` sits ever further above the falling price `p`).
-A flat-φ intuition ("$20 at φ opens ~$32") holds only at `p = p₀`. Worked (Pro Max exiter,
-`s = φ·p₀` — a neat identity: `1 + 1/φ = φ`):
+## Mandatory implementation constraint (every candidate independently found this)
 
-| Price at tranche open | `L_tranche` | $20 tranche → notional | ≥ $10? |
-|---|---:|---:|---|
-| `p = p₀` | 1.618 | $32.4 | ✓ |
-| `p = 0.8·p₀` | 0.98 | $19.6 | ✓ |
-| `p = 0.6·p₀` | 0.59 | $11.8 | ✓ |
-| `p ≈ 0.54·p₀` | 0.50 | $10.0 | boundary |
-| `p = 0.5·p₀` | 0.45 | $8.9 | ✗ (needs $22.4) |
-| `p = 0.4·p₀` | 0.33 | $6.6 | ✗ (needs $30.5) |
+**Escrow must be a segregated sub-ledger, not the pool's USDC balance.** The permissionless
+`B4Pool.capture()` sweeps any balance-above-`liability` into distributable `accruing`; escrow
+sitting in the pool balance would either be *stolen* by `capture()` (mechanism silently no-ops
+to passive) or *double-counted* against `liability` (haircutting unrelated stayers via the
+`claimFor` shortfall path). Required: a segregated `escrowTotal` that `capture()` nets out
+(`bal − liability − escrowTotal`), decremented atomically on funding, with the exit's escrow
+write wrapped in `try/catch` so exit-liveness never couples to aggregation (V3-POOL-1). Ship an
+invariant test asserting `balance ≥ liability + escrow` through every branch.
 
-For Pro (full `1×` short, `s = 2·p₀`) the boundary sits at `p = ⅔·p₀`. So:
+## Decisions
 
-- **The openability condition is checked at open time:** `amount · L_tranche ≥ $10` **and**
-  the size survives lot flooring at the venue's `szDecimals`. Unmet ⇒ passive fallback.
-- **`MIN_TRANCHE_USD = $20` is escrow dust hygiene only** — it filters records not worth
-  a keeper transaction; it does not by itself guarantee an openable position.
-- Partial self-compensation: a deep-in-profit exit pays its 11.8% on a *grown* value, so
-  tranches from exactly the deep-`p` exits tend to be larger in dollars.
+**Settled (2026-07-21):**
+- **Single-tier SPS-1, no isolated tier.** Isolation guarded against a shared stop-out that the
+  far stop makes near-impossible; surrendering it is close to free. (Overturns the earlier lean.)
+- **Aggregate stop = product-flat far stop**, now. A market-confirmed high-ratchet is optional
+  future tightening, not a blocker.
+- **Trigger threshold = keeper break-even**, not the `$10` venue minimum (opening at the bare
+  minimum mints objects too small to profitably crank, which silently degrade to passive).
+- **Truly-unopenable residual stays passive** one interval (deferral, never loss) — the explicit,
+  pre-committed fallback.
+- **Per-(asset, product) bucketing** kept, so Pro Max runs its short at `φ`, not `1×`.
 
-## Invariants preserved (why this does not break the protocol)
+**Deferred to the §7b code:** standing (SPS-1) vs generational (SPS-3), per the re-size question.
 
-- **Exit liveness never depends on tranche machinery** (the V3-POOL-1 pattern): the exit
-  transfers and records; `openTranche()` is a separate permissionless step. A reverting
-  factory, a full escrow queue, a broken tranche — none of it can block or delay an exit.
-- **No new order machinery, no trigger orders, no position transfer.** The tranche is a
-  standard vault; the engine, async keys, completion discipline, reduce-only rules and
-  crank economics are the already-audited ones.
-- **No admin, no privileged mover.** Creation, cranking, and `poolExit` are permissionless;
-  the pool owns tranches only in the F2 fixed-payout sense — it has no initiative and no
-  keys. `poolExit` is gated by `owner == pool` + calendar time, not by identity.
-- **H3.** A stuck tranche is its own liveness island: worst case its proceeds miss the
-  interval and accrue to the next one (deferral, accepted). Pool distribution of other
-  assets is already per-token deferrable (D5).
-- **Keeper economics.** Tranche count is bounded by real penalized exits ≥ $20; each one was
-  paid for by an 11.8% penalty. Griefing-per-dollar is worse for the attacker than for the
-  keeper.
+## Invariants preserved
 
-## Honest risk statement (goes into HAZARDS §C6 at integration)
+- **Exit liveness never depends on this** (V3-POOL-1): the exit adds a scalar to escrow inside a
+  `try/catch`; folding/opening/`poolExit` are separate permissionless steps. A wedged vault,
+  full escrow, or reverting fold can never block or delay an exit.
+- **No new order machinery, no trigger orders, no position transfer.** Standard vault, standard
+  engine, already-audited async keys, reduce-only rules, crank economics.
+- **No admin / privileged mover.** The pool "owns" the vault only in the F2 fixed-payout sense —
+  BUT it must hold the vault's `deposit`/`initiateExit` authority, which is *more* than F2.
+  Constrain to permissionless, zero-discretion, fixed-parameter wrappers (fixed vault address per
+  bucket, fixed policy, hardcoded recipient); enumerate that no other `onlyOwner` power is reachable.
+- **H3:** worst reachable state is deferral-to-passive, self-healing by permissionless crank —
+  never freeze, never loss (once the escrow-segregation fix is in).
+- **Keeper economics:** zero per-exit state — dust spam is a scalar add that costs the attacker
+  11.8 % funding the pool it griefs; no object to bloat, no loop to OOG, no per-exit list.
 
-- **A short tranche has no surviving spot leg.** A gap through the inherited stop →
-  venue liquidation → the tranche's margin is consumed → that tranche distributes ≈ 0.
-  Bounded to the tranche by per-exit isolation; the passive-USDC counterfactual never zeroes.
-- **Stayers' pool income becomes a distribution**, including loss tranches. In exchange it
-  carries the fall-zone alpha the passive pool forfeits — the point of the mechanism.
-- **Stop snapshots are only as good as the exit-initiation mark** — same oracle discipline
-  as every other sizing read (`_livePxWad`), no new oracle surface.
+## Pre-registered attack surface (for the post-implementation audit)
 
-## Draft normative language (paste into SPECIFICATION §9c at integration)
+1. **Escrow ↔ `capture()`/`liability` double-count** — the single most-repeated finding.
+   Invariant test `balance ≥ liability + escrow` through fund/expire/poolExit/loss.
+2. **Exit-liveness independence** — exits byte-identical when the escrow/vault reverts, is
+   closed, or is wedged.
+3. **Held-position re-lever on top-up (C1/C4 redux)** — if SPS-1's standing short is chosen, the
+   completion/retry key reads only self-moved balances (size, spot deltas), never PnL/withdrawable;
+   the top-up re-size must be provably drift-bounded.
+4. **Blended-entry drift below `P`** — the cap-drift rule is load-bearing; without it a deep-fall
+   liquidation drifts into the traversed range and a bounce wipes the book.
+5. **Pool-as-owner initiative** — constrain the deposit/exit authority to fixed-parameter
+   wrappers; prove no other owner power is reachable.
+6. **Standing vault in its own distribution** — bar the pool-owned short from
+   `reportWeight`/`claimFor` so it cannot dilute or self-claim against the pool it feeds.
+7. **Cross-interval attribution / late-joiner skim** — proceeds land in one lump at `T` and
+   distribute by weight-at-`T`; deposits are open through the fall, so a just-before-`T` depositor
+   skims the concentrated fall alpha. The two-settlement calendar bounds it (the whole fall is one
+   interval), but the concentration is real — gate eligibility to pre-fall tenure if it matters.
+8. **Threshold / graduation griefing** — a permissionless crank must not open the aggregate at a
+   wick or the venue floor; for SPS-3, `graduate()` timing sets the batch entry price.
 
-- On a penalized exit during the fall regime by a policy with `fall < 0`, the pool's
-  settlement-token penalty share ≥ `MIN_TRANCHE_USD` MUST be escrowed with the exiter's
-  live stop price snapshotted at exit initiation, and MUST be openable permissionlessly
-  into a tranche vault (owner = pool, policy `{0, fall}`) sized so the margin-realized
-  stop sits at the snapshotted price, clamped by the venue `maxLeverage`.
-- `p ≥ stop` at open MUST refuse (passive fallback). A tranche below the venue minimum
-  order or below `MIN_TRANCHE_USD` MUST fall back. Exit liveness MUST NOT depend on any
-  tranche step.
-- After `T` the tranche's target is `0`; the engine MUST flatten it by ordinary cranking.
-  `poolExit` MUST be permissionless, gated to `owner == pool` and `timeSinceHalving ≥ T`,
-  with no deadline (funds never strand). Proceeds accrue to whichever interval is accruing
-  when they land.
-- Growth-zone exits, Mini/B4 exits, and directional in-kind shares stay passive (today's
-  §9 behavior is the normative fallback in every refused/sub-threshold case).
+## Value left on the table (honestly)
 
-## Pre-registered attack surface (for the post-implementation adversarial round)
-
-1. Escrow record lifecycle: double-open, open-after-refusal, stale snapshots across the
-   halving, records surviving a policy change, escrow griefing by dust records.
-2. Stop-inheritance math at the edges: `p → s` (maxLev clamp), `p ≥ s` refusal, sub-lot
-   flooring, sub-1 `L_tranche` from deep-in-profit opens (`L < 1` sizing semantics).
-3. `poolExit` gating: early-call griefing (must be impossible before `T`), re-entry with
-   the pool as owner-recipient, interaction with `capture()` measured-receipt accounting.
-4. Tranche vault under the degenerate `{0, fall}` policy: does the growth-side `0` truly
-   flatten at `T` under all crank orders; no long ever opens; A13 no-spin on the flatten.
-5. Factory-from-pool path: reentrancy, who pays gas, failure containment (openTranche
-   reverts ⇒ escrow intact, exit unaffected).
-6. Interval attribution: proceeds landing during `advance()` materialization races.
-7. Double-counting vs `liability` in the pool when tranche proceeds return.
-8. Keeper-abandonment: no `openTranche` call all regime — escrow must remain claimable as
-   passive fallback at some point (design an expiry-to-passive rule at integration).
-
-## Test plan (fail-before/pass-after at implementation)
-
-- Unit: stop-inheritance sizing (inherit / clamp / refuse / sub-lot / sub-threshold);
-  escrow record write at exit initiation with a live short; two-step open.
-- Integration: full lifecycle — penalized Pro Max exit mid-fall → escrow → open → ride →
-  `T` flip flattens → `poolExit` → `capture` → distribution by weights; late tranche →
-  next interval; gapped tranche → liquidation → isolated loss, neighbors unaffected.
-- Regression: exits never blocked by a reverting factory/escrow (V3-POOL-1 discipline);
-  no completion key depends on tranche state; Mini/B4/growth exits byte-identical to today.
-
-## Integration checkpoints
-
-1. ~~`selectPolicy` accepts `growth = 0`?~~ **Verified 2026-07-21:** `_setPolicy` checks
-   magnitude only (`|r| ≤ φ` after scale); zero targets pass — B4 itself is `{1, 0}`. The
-   tranche policy `{0, fall}` needs only a trivial `IStrategy` returning those targets,
-   installed at vault creation (deposit and policy are `onlyOwner` = the pool).
-2. ~~Deposit-window gating vs mid-fall funding?~~ **Verified 2026-07-21:** `depositOpen`
-   closes only in `OpeningFall`/`OpeningGrowth` — both are **free-exit** zones, where
-   penalized exits cannot occur. Every penalized exit therefore happens while deposits are
-   open; `openTranche` funds the tranche in the same steady zone. An escrow that lingers
-   past the zone (keeper abandonment) hits a closed window only after `T`, when the ride is
-   over anyway — covered by the expiry-to-passive rule (surface #8).
-3. `MIN_TRANCHE_USD = 20e18` constant placement (pool, not engine).
-4. Stop snapshot plumbing at exit *initiation* (the only moment the short is still live).
-5. Escrow-expiry-to-passive rule for keeper abandonment (surface #8).
+- **Sub-threshold late-fall tail stays passive** and captures no fall alpha — the genuine residual
+  leak, largest in thin pools and late in deep falls.
+- **No market-confirmed short ceiling** — the product-flat stop is sound but product-defined, not
+  structurally anchored. A symmetric confirmed-high ratchet (mirror of `sampleAnchor`'s lows)
+  would market-justify the ceiling; net-new audited machinery, deferred.
+- **Per-exiter tailored stops are gone** — but the analysis shows those far tailored stops were
+  the *cause* of the low-leverage failure, not a feature worth preserving.
