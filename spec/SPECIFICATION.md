@@ -174,8 +174,36 @@ subject to `HAZARDS.md`. Economic rationale is non-normative (`WHITEPAPER.md`).
   fall back to the flat base leverage `g` (the pre-mechanism behaviour) rather than assume a
   cap that does not exist. A new low observed WITHIN a window only lowers the anchor; across
   windows the pair advances only at the halving flip (never sideways to a higher value).
-- **Short side.** A short leg (fall regime) uses the flat base `g` with no structural
-  multiplier in this version — there is no structural ceiling above a short.
+- **Short side (top) — symmetric to the long.** A short leg (fall regime) is bounded by the
+  cycle's confirmed structural **highs**, the exact mirror of the long's lows (min↔max,
+  −↔+, floor↔prevPeak, cap↔`C`). Two anchors: `prevPeak` (the previous cycle's confirmed peak)
+  and `C` (this cycle's confirmed peak = the max over the 20-day window ending at the 38.2%
+  pivot). The window width is structural: `q² = (φ⁻³/2)²` of the cycle ≈ 20 days, where the
+  quantum `q = φ⁻³/2 = 0.118` is the same one that places the 38.2/61.8 pivots (the cycle peak
+  historically forms at `0.382 − q² ≈ 0.368` of the cycle). Two regimes, because `C` is not
+  known until the window closes:
+
+  - **Opening window (the 20 days to the pivot, `C` not yet confirmed).** Shorts open in daily
+    DCA slices; each slice at price `p` sizes to `stop = p + (p − prevPeak)·(φ−1)`, i.e.
+    `L = φ·p/(p − prevPeak)`. The anchor is `prevPeak` (known); the last slice (`p ≈ C`) lands
+    exactly on `MaxStop` below, so the two regimes join.
+  - **After the pivot (`C` confirmed).** `MaxStop = C + (C − prevPeak)·(φ−1)`; a short at price
+    `p` sizes to `stop = max( p + (MaxStop − p)·(φ−1),  C )`. Leverage **decreases** as the
+    entry falls (deeper = riskier = less leverage — monotone, not a mid-fall peak), rises above
+    `φ` only for an entry **above** `C`, and pins to `C` for deep entries: the minimum stop is
+    the confirmed peak `C`, never below a price the fall already traversed.
+
+  The stop is realized by margin size, as for the long. Two facts make this sound, both verified
+  on all four cycles: (1) the fall's price never returns to `C` (the post-pivot max is 2–23%
+  below `C`), so the structural stop is never hit; (2) a flat-`φ` short would be **liquidated by
+  the +99–103% bear-market rallies of cycles 1–2** (a fall to $152/$5,921 then a bounce to
+  $310/$11,780) — the structural stop, pinned to the far `C`, survives them. This is why a deep
+  short MUST de-lever below `φ` (and below `1×`) rather than refuse: the reduced size with a
+  distant stop is the safety, not a defect.
+- **Symmetry / redo scope.** The long side above is the *window* regime (anchor `floor`, bounded
+  by `cap`); the redo generalises **both** sides to the window + post-pivot pair shown for the
+  short, so the top and bottom are one reflected mechanism. Full derivation, per-cycle leverage
+  curves and the empirical checks: `PROPOSAL-structural-leverage.md`.
 
 ## 8. Checkpoints, fees, reward weight
 

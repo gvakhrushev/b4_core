@@ -159,6 +159,62 @@ low 3850); the cap is what saves it. This makes **"COVID-2020 survives"** and
    long-only multiplier," Pro is effectively untouched. Confirm Pro is out of scope and only
    Pro Max (and any future `>1` growth product) uses it.
 
+## Symmetric short side (added 2026-07-22, owner-derived & verified)
+
+The short side is no longer flat `φ`. It mirrors the long: bounded by the cycle's confirmed
+structural **highs** instead of lows. Owner-derived, verified on all four cycles.
+
+### Anchors and the window
+
+- `prevPeak` — the previous cycle's confirmed peak. `C` — this cycle's confirmed peak = the max
+  over the 20-day window ending at the 38.2% pivot.
+- **The 20-day window is structural, not tuned.** Width `= q² = (φ⁻³/2)²` of the cycle ≈ 20.3
+  days, where `q = φ⁻³/2 = 0.118034` is the same quantum that places the 38.2/61.8 pivots
+  (`0.5 ± q`). The cycle peak forms at `0.382 − q² ≈ 0.368`; verified on cycle 4 (base
+  2024-04-19/20): the 38.2% pivot lands ~2025-10-26/30 and the window max is the real ATH region.
+
+### The two regimes (because `C` is unknown until the window closes)
+
+Let `θ = φ − 1 = 1/φ = 0.618`.
+
+- **Opening window (days 11–20 of the peak window; longs close days 1–10, shorts open days
+  11–20 by daily DCA; `C` unknown).** Each slice at price `p`:
+  `stop = p + (p − prevPeak)·θ`, so `L = φ·p/(p − prevPeak)`. Anchor is `prevPeak` (known). The
+  last slice (`p ≈ C`) lands on `MaxStop`, joining the next regime.
+- **After 38.2 (`C` confirmed).** `MaxStop = C + (C − prevPeak)·θ`;
+  `stop = max( p + (MaxStop − p)·θ,  C )`. Leverage **decreases monotonically** as the entry
+  falls, exceeds `φ` only for an entry above `C`, and pins to `C` (the min stop) for deep
+  entries. (An earlier draft used the window formula here and produced a spurious mid-fall
+  leverage peak — corrected: the post-pivot anchor is `MaxStop` from above, not `prevPeak`.)
+
+Worked (cycle 4, `prevPeak = 67k`, `C = 115k`, `MaxStop = 144.7k`): entry 120k → `L 7.87×`
+(above `C`); 108k → `4.77×`; 97k → stop 126k, `3.29×`; 80k → `2.00×`; 60k → pinned `C`, `1.09×`;
+50k → `0.77×`. Per-cycle peak-entry boost over `φ` = `C/(C − prevPeak)`: +4% / +33% / +143%
+(cycles 2/3/4) — it grows as BTC matures (peak-over-peak growth shrinks). No far-future cap is
+specced: the venue `maxLeverage` is the technical ceiling, and a new contract version ships per
+cycle (owner decision, 2026-07-22).
+
+### Why it is sound — two verified facts
+
+1. **The structural stop is never hit.** Across all four cycles the fall's price never returns
+   to `C` (post-pivot max is 2–23% below `C`). So the short survives the entire fall (−49…−81%
+   price decline captured) with a stop that is never touched.
+2. **Flat-`φ` would be liquidated; the structural stop is why deep shorts de-lever.** The
+   biggest bear-market rally inside the fall was **+103%** (cycle 1, $152→$310) and **+99%**
+   (cycle 2, $5,921→$11,780) — both past the `+61.8%` that liquidates a flat-`φ` short. A deep
+   short pinned to the far `C` survives (cycle-1 $152 entry: `0.27×`, stop $712, the +103% bounce
+   costs only ~28% of margin). So a deep entry MUST de-lever below `φ` (and below `1×`); the
+   small size with a distant stop is the safety, not a defect. This retires the earlier
+   "refuse `L<1`" question — `L<1` is the mechanism, kept.
+
+### Symmetry / redo scope
+
+The long side (§7b top) is currently the *window* regime only (anchor `floor`, bounded by
+`cap`). The redo generalises **both** sides to the window + post-pivot pair above, so top and
+bottom are one reflected mechanism. The long's post-pivot regime uses `MinStop = B − (B −
+prevBottom)·θ` and `stop = min(p − (p − MinStop)·θ, B)` — the exact reflection, to be verified
+empirically on the recovery legs the way the short was on the falls before it is frozen.
+
 ## Execution plan on approval
 
 1. `spec/SPECIFICATION.md` §7 + `spec/HAZARDS.md` new §C5 — the normative text above.
