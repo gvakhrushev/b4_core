@@ -204,3 +204,27 @@ invariant campaign 512×256 green (8/8, 131,072 calls each, zero reverts), size 
 2. Funded gate campaign per the list above, recorded and independently reviewed.
 3. ~~Amend the specification package with the two errata~~ — done 2026-07-18
    (SPECIFICATION.md §4/§9, WHITEPAPER.md §4, HAZARDS.md §C decisions, TEST_PLAN.md §3b).
+
+## Pending mechanism — structural leverage (specified, not yet wired)
+
+A new sizing mechanism was specified on 2026-07-21 (`SPECIFICATION.md` §7b, `HAZARDS.md` §C5,
+`PROPOSAL-structural-leverage.md`) and its pure math shipped as a unit-tested library
+(`src/libraries/StructuralLeverage.sol`). A leveraged long's effective leverage is bounded by
+the cycle's confirmed structural lows — `L = min(g·p/(p−floor), p/(p−cap))` — and the position
+is sized once per regime and held rather than rebalanced against a moving NAV. The historical
+demo runs on the library; its tests pin the March-2020 survival case (the cap is what saves a
+φ-long that the flat formula liquidates).
+
+**Two engine changes remain and are deliberately deferred to their own audit round**, because
+they touch the most-audited async surface and add new state:
+
+1. `_planPerpStep` / `_planSpotStep`: size once at entry / deposit / zone change (event-driven)
+   instead of continuously tracking a NAV-relative target, and take the leverage from
+   `StructuralLeverage` for leveraged longs.
+2. An on-chain permissionless min-ratchet (per directional asset) recording the two window
+   lows, from which the vault reads `(floor, cap)` at entry.
+
+Until these land, the shipped engine uses flat NAV-relative sizing; the library and spec
+describe the target behaviour, not the current runtime. Regressions already required by the
+spec: `COVID-2020 survives`, `May-2021 survives`, `entry-below-fresh-low opens`,
+`position not resized mid-zone`, `stop realized by margin`, `genesis degrades to flat`.

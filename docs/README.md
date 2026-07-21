@@ -23,10 +23,11 @@ when you need the authoritative `MUST`/`MUST NOT` statements.
 | 8 | [Keeper operations](08-keeper.md) | Running the permissionless crank |
 | 9 | [Roles](09-roles.md) | Owner / operator / referrer / keeper — flows, earnings, hard limits |
 | 10 | [Off-chain architecture](10-offchain-architecture.md) | API, automation and UI — trust boundaries for operators |
+| 11 | [Backtest](11-backtest.md) | The calendar over real BTC data — method, results, and what the model omits |
 
 **Integrating?** 1 → 2 → 4. **Auditing?** 2 → 3 → 5, then
 [`../spec/HAZARDS.md`](../spec/HAZARDS.md) and [`../INVARIANTS.md`](../INVARIANTS.md).
-**Deploying?** 6 → 8. **Running an interface?** 9 → 10.
+**Deploying?** 6 → 8. **Running an interface?** 9 → 10. **Curious how it behaved?** 11.
 
 ## The one-paragraph version
 

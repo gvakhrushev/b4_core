@@ -112,6 +112,12 @@ Mid-transition example — `StrategyMini` at the same instant: same-sign path, `
 
 Strategies are **view-only**. `IStrategy.targets()` returns a pair of `int256`; a strategy holds no authority over funds and is never called again after selection.
 
+### Structural leverage (Pro Max long) — specified, engine wiring pending
+
+For a leveraged long (base `g = |growth| > 1`, i.e. Pro Max), the *effective* leverage is not a flat multiple. It is bounded by the cycle's confirmed structural lows: `L = min(g·p/(p−floor), p/(p−cap))`, where `floor`/`cap` are two ratcheted lows (the previous cycle bottom and the post-halving-window low). Leverage is highest near a structural low and decays toward `1×` for a late entry; the position is sized **once per regime and held**, not rebalanced to a moving NAV. This is [SPECIFICATION §7b](../spec/SPECIFICATION.md) and the pure math lives in [`StructuralLeverage.sol`](../src/libraries/StructuralLeverage.sol).
+
+> **Status:** the library, its unit tests and the spec are in place, and the [historical demo](11-backtest.md) runs on it. The **engine does not yet call it** — the shipped `_planPerpStep` still uses flat NAV-relative sizing. Wiring it in (plus the on-chain min-ratchet for the anchors) is a pending phase; see [`../REPORT.md`](../REPORT.md).
+
 ---
 
 ## 3. Policy = a pair × a scale, resolved at selection

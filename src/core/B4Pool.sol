@@ -53,6 +53,18 @@ contract B4Pool {
     mapping(uint256 => Interval) internal _intervals;
     uint256 public lastPointTime;
 
+    /// Structural-leverage anchors per directional asset (SPECIFICATION §7b). `floor` is the
+    /// previous confirmed structural low (the delta anchor); `cap` is the current window's
+    /// running low (the stop ceiling); `windowTag = epoch·2 + kind + 1` identifies the window
+    /// being sampled (kind 0 = post-halving window, 1 = 62-window), 0 = never sampled.
+    struct Anchor {
+        uint256 floor;
+        uint256 cap;
+        uint256 windowTag;
+    }
+
+    mapping(uint256 => Anchor) internal _anchor; // directional asset index → anchors
+
     /// Inventory collecting for the next interval to be materialized (asset index →
     /// amount, EVM units).
     mapping(uint256 => uint256) public accruing;
@@ -72,6 +84,7 @@ contract B4Pool {
     event Swept(uint256 indexed id);
     event Captured(uint256 assetIndex, uint256 amount);
     event VaultRegistered(address vault);
+    event AnchorSampled(uint256 indexed assetIndex, uint256 floor, uint256 cap, uint256 tag);
 
     error OnlyFactory();
     error TooManyAssets();
@@ -89,6 +102,8 @@ contract B4Pool {
     error NothingToClaim();
     error NotExpired();
     error AlreadySwept();
+    error BadAsset();
+    error NotInWindow();
     error Reentrancy();
 
     modifier nonReentrant() {
@@ -181,6 +196,55 @@ contract B4Pool {
         }
         it.lockedAt = uint64(block.timestamp);
         emit PricesLocked(id, block.timestamp);
+    }
+
+    // ------------------------------------------------------------- structural anchors
+
+    /// @notice Permissionless: record the directional spot price into the structural-leverage
+    ///         ratchet for asset `i`, if we are inside one of the two sampling windows —
+    ///         the post-halving window `[0, W)` or the 62-window `[T, T+W)`. Moves funds for
+    ///         no one; reads only the venue precompile (`spotPxWad`), so a caller cannot forge
+    ///         the price, only choose when to sample. Sampling MORE lowers the recorded low
+    ///         and therefore lowers leverage (SPECIFICATION §7b) — a keeper samples each
+    ///         window; the pool benefits from an accurate low.
+    ///
+    ///         Ratchet: within a window the `cap` tracks the running minimum DOWN. When a new
+    ///         62-window opens the `cap` is reseeded to this cycle's bottom (the `floor` is
+    ///         unchanged); when a new post-halving window opens the halving **flip** fires —
+    ///         the previous `cap` becomes the new `floor`, and `cap` is reseeded to the
+    ///         post-halving low. So the pair advances up only at the halving flip.
+    function sampleAnchor(uint256 i) external {
+        if (i == 0 || i >= assetCount) revert BadAsset();
+        uint256 t = oracle.timeSinceHalving();
+        uint256 kind;
+        if (t < Calendar.W) {
+            kind = 0; // post-halving window
+        } else if (t >= Calendar.T && t < Calendar.T + Calendar.W) {
+            kind = 1; // 62-window (cycle bottom)
+        } else {
+            revert NotInWindow();
+        }
+        uint256 px = CoreReader.spotPxWad(_assets[i]);
+        if (px == 0) revert ZeroPrice();
+
+        uint256 tag = oracle.epoch() * 2 + kind + 1; // +1 so 0 means "never sampled"
+        Anchor storage a = _anchor[i];
+        if (tag != a.windowTag) {
+            // A new window opens.
+            if (kind == 0) a.floor = a.cap; // halving flip: last cap becomes the floor
+            a.cap = px; // reseed the ceiling to the first observation of this window
+            a.windowTag = tag;
+        } else if (px < a.cap) {
+            a.cap = px; // ratchet the ceiling down within the window
+        }
+        emit AnchorSampled(i, a.floor, a.cap, tag);
+    }
+
+    /// @notice The `(floor, cap)` anchors for directional asset `i`, WAD. `(0, 0)` before any
+    ///         window is sampled — a leveraged product then uses its flat base leverage.
+    function anchors(uint256 i) external view returns (uint256 floor, uint256 cap) {
+        Anchor storage a = _anchor[i];
+        return (a.floor, a.cap);
     }
 
     // ------------------------------------------------------------------ weights
