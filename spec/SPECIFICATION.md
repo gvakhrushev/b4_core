@@ -126,6 +126,13 @@ subject to `HAZARDS.md`. Economic rationale is non-normative (`WHITEPAPER.md`).
 
 ### 7b. Position sizing and structural leverage (long side)
 
+> **Implementation status (2026-07-21): this section is the normative TARGET; the engine does
+> not yet meet it.** The pure math (`StructuralLeverage`) and the anchor ratchet
+> (`B4Pool.sampleAnchor`) are shipped; the `B4VaultEngine` sizing that would consume them was
+> written, failed a dedicated adversarial audit (margin never realized the stop; a held position
+> re-levered at the halving) and was reverted. The engine currently sizes leveraged perps at
+> flat `φ`. See `AUDIT-2026-07-structural-leverage.md`. The MUSTs below bind the redo.
+
 - **Sized once, then held.** A directional/perp position MUST be sized when it is opened or
   materially re-targeted (an entry, a deposit, or a calendar zone change) and MUST NOT be
   continuously re-sized against a moving NAV within a zone. The calendar is the rebalance

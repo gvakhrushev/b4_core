@@ -6,12 +6,20 @@ import {Calendar} from "src/libraries/Calendar.sol";
 import {Phi} from "src/libraries/Phi.sol";
 import {StructuralLeverage} from "src/libraries/StructuralLeverage.sol";
 
-/// @title Historical demo — the calendar + structural leverage over real BTC closes.
-/// @notice One benchmark table per cycle, HODL as the baseline row. Models the SHIPPED
-///         mechanic: a position is sized once when the calendar rotates and then HELD
-///         (fixed units, equity linear in price — no rebalance drag), and a leveraged
-///         long's leverage comes from `StructuralLeverage`, bounded by the cycle's
-///         confirmed structural lows.
+/// @title Historical demo — the calendar (shipped) + structural leverage (designed) over BTC.
+/// @notice One benchmark table per cycle, HODL as the baseline row. A position is sized once
+///         when the calendar rotates and then HELD (fixed units, equity linear in price — no
+///         rebalance drag).
+///
+///         **Two different maturity levels are shown together — read the disclaimer.** The
+///         calendar rotation (Mini/B4/Pro, and Pro Max's spot leg) is the SHIPPED mechanic.
+///         Pro Max's *leverage* column uses the DESIGNED structural-leverage mechanism
+///         (`StructuralLeverage` library + `B4Pool` anchor ratchet are on-chain, but the
+///         2026-07-21 audit found the vault-engine wiring unsafe — margin never realizes the
+///         structural stop, and a held position re-levers at the halving — so it was reverted;
+///         the engine currently sizes leveraged perps flat-φ, NOT structurally). The Pro Max
+///         leverage figures therefore illustrate the design target, not today's shipped code.
+///         See `REPORT.md` and `PROPOSAL-structural-leverage.md` for the wiring status.
 ///
 ///         **Illustration, not evidence of edge and not a forecast.** Three completed
 ///         cycles is not a sample and never can be. Assumes entry at the halving, perfect
@@ -38,6 +46,17 @@ contract BacktestTest is Test {
         string name;
         int256 growth;
         int256 fall;
+    }
+
+    /// Per-cycle geometry + anchors (a memory struct to keep _runCycle off the stack).
+    struct Cyc {
+        uint256 frm;
+        uint256 nxt;
+        uint256 pTop;
+        uint256 pBot;
+        int256 floor_;
+        int256 capG; // growth-long cap = post-halving-window low
+        int256 capR; // recovery-long cap = 62-window low (re-seeded at T)
     }
 
     /// One row of the benchmark table.
@@ -169,46 +188,50 @@ contract BacktestTest is Test {
         view
         returns (Row[5] memory out)
     {
-        uint256 frm = HALVINGS[c];
-        uint256 nxt = c + 1 < 4 ? HALVINGS[c + 1] : ts[ts.length - 1];
-        // Anchors: floor = previous cycle's 62-window bottom; cap = this cycle's
-        // post-halving-window low (SPECIFICATION §7b).
-        int256 floor_ = c >= 1
+        // Anchors, as B4Pool.sampleAnchor's ratchet would actually hold them (audit C10):
+        // floor = previous cycle's 62-window bottom (set by the halving flip, unchanged all
+        // cycle). The cap differs by regime, because the 62-window at T re-seeds it:
+        //  - growth long (opens at the halving): cap = this cycle's post-halving-window low;
+        //  - recovery long (opens at T): cap = this cycle's 62-window low (freshly re-seeded).
+        Cyc memory k;
+        k.frm = HALVINGS[c];
+        k.nxt = c + 1 < 4 ? HALVINGS[c + 1] : ts[ts.length - 1];
+        k.floor_ = c >= 1
             ? _windowMin(HALVINGS[c - 1] + Calendar.T, HALVINGS[c - 1] + Calendar.T + Calendar.W)
             : int256(0);
-        int256 cap_ = _windowMin(frm, frm + Calendar.W);
-
-        uint256 pTop = _min(frm + Calendar.P, nxt);
-        uint256 pBot = _min(frm + Calendar.T, nxt);
+        k.capG = _windowMin(k.frm, k.frm + Calendar.W);
+        k.capR = _windowMin(k.frm + Calendar.T, k.frm + Calendar.T + Calendar.W);
+        k.pTop = _min(k.frm + Calendar.P, k.nxt);
+        k.pBot = _min(k.frm + Calendar.T, k.nxt);
 
         console.log(
             string.concat(
                 "cycle ",
                 vm.toString(c + 1),
                 ":  ",
-                _date(frm),
+                _date(k.frm),
                 " -> ",
-                _date(nxt),
+                _date(k.nxt),
                 c == 3 ? "   (IN PROGRESS)" : ""
             )
         );
         console.log("  strategy      ret     maxDD   worst DD on   zone     vs dep    pool     lev");
 
-        out[0] = _hodl(frm, nxt);
-        _print("  HODL   ", out[0], frm);
+        out[0] = _hodl(k.frm, k.nxt);
+        _print("  HODL   ", out[0], k.frm);
 
         for (uint256 p = 0; p < 4; p++) {
-            Acc memory a = Acc(WAD, WAD, WAD, 0, frm, WAD);
+            Acc memory a = Acc(WAD, WAD, WAD, 0, k.frm, WAD);
             // regime 1: long [frm, pTop] | regime 2: fall [pTop, pBot] | regime 3: long [pBot, nxt]
-            int256 lev = _regime(a, frm, pTop, prods[p].growth, floor_, cap_);
-            _regime(a, pTop, pBot, prods[p].fall, floor_, cap_);
-            _regime(a, pBot, nxt, prods[p].growth, floor_, cap_);
+            int256 lev = _regime(a, k.frm, k.pTop, prods[p].growth, k.floor_, k.capG);
+            _regime(a, k.pTop, k.pBot, prods[p].fall, k.floor_, k.capG); // short: cap unused
+            _regime(a, k.pBot, k.nxt, prods[p].growth, k.floor_, k.capR);
             // Pool income, credited once per cycle: the 20% penalised exits, redistributed.
             int256 pool = a.eq * POOL_U / WAD;
             a.eq += pool;
 
             out[p + 1] = Row(a.eq, a.maxDD, a.ddAt, a.low, pool, p == 3 ? lev : int256(0));
-            _print(string.concat("  ", prods[p].name), out[p + 1], frm);
+            _print(string.concat("  ", prods[p].name), out[p + 1], k.frm);
         }
         console.log("");
     }
@@ -285,11 +308,14 @@ contract BacktestTest is Test {
             }
         }
         a.eq = _value(g, _pxAt(to_), (to_ - from_) / 86400);
-        // Operator performance fee on NEW profit only (above the high-water mark).
-        if (a.eq > a.hw) {
-            a.eq -= (a.eq - a.hw) * OP_FEE / WAD;
-            a.hw = a.eq;
-        }
+        // Operator performance fee on profit above the ledger baseline. The shipped contract
+        // (B4VaultOps.opsSettle: `entryLedgerWad = nav - paidVal`, unconditional) re-anchors
+        // the baseline to NAV at EVERY settlement — there is NO high-water mark, so a loss
+        // regime resets the baseline DOWN and the subsequent recovery is charged again as
+        // fresh profit. Model that faithfully (audit C9): charge on the gain, then re-anchor
+        // whether the regime gained or lost.
+        if (a.eq > a.hw) a.eq -= (a.eq - a.hw) * OP_FEE / WAD;
+        a.hw = a.eq;
         return g.L;
     }
 

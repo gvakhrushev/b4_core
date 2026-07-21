@@ -1,12 +1,30 @@
 # Proposal: structural leverage floor (v2 mechanism)
 
-**Status (2026-07-21): specified, wired, and tested.** The mechanism is normative
-(`spec/SPECIFICATION.md` §7b + §3, `spec/HAZARDS.md` §C5) and fully implemented: the pure math
-(`src/libraries/StructuralLeverage.sol`), the on-chain anchor ratchet (`B4Pool.sampleAnchor`),
-and the engine sizing (`B4VaultEngine._planPerpStep` — sized once at the frozen price, held).
-230/230 green, B4Vault unchanged at 24,195 B, deep campaign 8/8, slither exit 0. This file is
-the design record; `REPORT.md` lists the residual items for the external audit. It still
-carries the pre-mainnet, unaudited, funded-gate caveats of the whole protocol.
+**Status (2026-07-21): two of three parts shipped; engine wiring ATTEMPTED, FAILED AUDIT,
+REVERTED.** On-chain and safe: the pure math (`src/libraries/StructuralLeverage.sol`) and the
+anchor ratchet (`B4Pool.sampleAnchor`). NOT wired: the vault-engine sizing. A first wiring of
+`B4VaultEngine._planPerpStep` was written, passed a shallow test set, and was reported done —
+then a dedicated post-implementation adversarial audit (see
+[`AUDIT-2026-07-structural-leverage.md`](AUDIT-2026-07-structural-leverage.md)) found it unsafe
+and it was reverted. Two independent Critical/High clusters:
+
+1. **The safety half was never implemented (audit C6).** The engine kept the pre-mechanism
+   flat reserve `margin = notional·φ/maxLev` and only *amplified the size*. `StructuralLeverage`
+   changed how big the position is, never where it liquidates — so the venue liquidation stayed
+   ~4 % below entry, not at the structural stop. Every "survives COVID / survives May-2021"
+   claim below holds for the **math library only**, never for the shipped sizing. `stopWad` was
+   dead code. This is worse than not shipping: a bigger position at the same tight liquidation.
+2. **Frozen price × live anchors detonate a held position (audit C1/C4).** `_perpMultiplier`
+   read the live anchors every crank but the sizing price was frozen at entry; the two are only
+   valid captured together. At the halving flip a permissionless `sampleAnchor` raised `floor`
+   just below the frozen entry, the delta collapsed, computed leverage exploded to ~25×, and the
+   engine force-bought into the held position — near-instant liquidation of the whole reserve.
+
+The engine is back to flat-`φ` sizing (safe). The full mechanism — margin `= notional/L`, whole
+deposit deployed, frozen price captured *with* its anchors, refusal → spot-only — is a dedicated
+future round (spec §7b already describes the target; the wiring must match it and carry the
+mandated regressions). Pre-mainnet, unaudited, funded-gate caveats of the whole protocol still
+apply on top.
 
 **Decisions on the three open questions:** (1) structural `L` replaces the flat sizing for
 leveraged products, with the venue `maxLeverage` a hard technical ceiling on top; (2) the

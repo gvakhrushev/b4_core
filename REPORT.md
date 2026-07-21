@@ -205,33 +205,48 @@ invariant campaign 512×256 green (8/8, 131,072 calls each, zero reverts), size 
 3. ~~Amend the specification package with the two errata~~ — done 2026-07-18
    (SPECIFICATION.md §4/§9, WHITEPAPER.md §4, HAZARDS.md §C decisions, TEST_PLAN.md §3b).
 
-## Structural leverage (specified and wired, 2026-07-21)
+## Structural leverage (2026-07-21): library + ratchet shipped; engine wiring REVERTED after audit
 
 A sizing mechanism specified in `SPECIFICATION.md` §7b, `HAZARDS.md` §C5 and
 `PROPOSAL-structural-leverage.md`: a leveraged long's effective leverage is bounded by the
-cycle's confirmed structural lows — `L = min(g·p/(p−floor), p/(p−cap))` — and the position is
-sized once per regime and **held** (the sizing price is frozen at entry) rather than
-rebalanced against a moving NAV. Preceded by a design + adversarial-critique round (which
-caught an inverted fail-safe claim in an earlier draft of the spec) since it touches the
-most-audited async surface. Implemented in three pieces, all with tests:
+cycle's confirmed structural lows — `L = min(g·p/(p−floor), p/(p−cap))` — the position is sized
+once per regime and **held**, and the posted margin equals `notional/L` so the venue liquidation
+sits at the structural stop. Preceded by a design + adversarial-critique round (which caught an
+inverted fail-safe claim in the spec). **Two of the three parts are on-chain and safe; the
+third — the engine sizing — was written, reported done, then failed a dedicated
+post-implementation audit and was reverted.**
+
+**On-chain now (safe, but unused by the engine):**
 
 1. `src/libraries/StructuralLeverage.sol` — the pure math; 8 unit tests pin the March-2020
-   survival case (the cap is what saves a φ-long the flat formula liquidates), May-2021, the
-   post-halving flip, and genesis = flat φ.
+   survival case, May-2021, the post-halving flip, and genesis = flat φ. (Survival is a property
+   of the **math**; it is realized only if the engine posts `margin = notional/L`, which it does
+   not yet — see below.)
 2. `B4Pool.sampleAnchor` / `anchors` — a permissionless, sampling-only min-ratchet over the
    62-window and the post-halving window, per directional asset; 7 tests. More sampling lowers
-   the anchor (⇒ lower leverage), so it depends on a keeper sampling each window — an
-   under-sampled window installs no cap and the product falls back to flat `g`.
-3. `B4VaultEngine._planPerpStep` — sizes the perp from `StructuralLeverage` at the frozen price
-   and holds it; 3 tests (structural leverage enlarges the perp; a price move does not resize
-   a held position; the sizing price resets when flat).
+   the anchor (⇒ lower leverage), so it depends on a keeper sampling each window.
 
-Placement is EIP-170-safe: the engine sizing is reached from `B4Vault` only via the
-`opsPlanStep` delegatecall, so it lands in `B4VaultOps`; **B4Vault is unchanged at 24,195 B**.
-Genesis (no window sampled) degrades to flat `φ`, so all pre-existing leverage tests hold.
-Verification: 230/230 green, deep campaign 8/8 at 512×256, `slither --fail-high` exit 0.
+**Reverted (was `B4VaultEngine._planPerpStep`):** the engine currently sizes leveraged perps at
+flat `φ`, not structurally. The [2026-07-21 adversarial audit](AUDIT-2026-07-structural-leverage.md)
+(46 agents, 10 confirmed findings) found two blocking defects in the wiring:
 
-Open items on this mechanism, for the external audit: the anchor sampling is an operational
-dependency (a keeper must sample the low each window; under-sampling raises leverage, bounded
-by real observed prices); the spot/perp basis at the frozen price is ignored (it cancels for a
-pure-directional strategy); a deposit adds at the held leverage rather than re-sizing.
+- **C6 (Critical) — the safety half was never implemented.** The engine kept the flat reserve
+  `margin = notional·φ/maxLev` and only amplified position *size*. The structural stop was never
+  realized; `stopWad` was dead code. A bigger position at the same ~4 %-away liquidation — worse
+  than not shipping. The proposal's own mandated regression ("stop realized by margin") was never
+  written; the shipped `StructuralSizing.t.sol` pre-loaded margin and asserted only order size.
+- **C1/C4 (Critical) — held position detonates at the halving.** `_perpMultiplier` read live
+  anchors while the sizing price was frozen; at the halving flip a permissionless `sampleAnchor`
+  collapsed the delta and leverage exploded ~25×, force-buying into the held position →
+  near-instant liquidation of the reserve.
+
+Also confirmed: C5 (refusal `p ≤ floor` mapped to flat `g` instead of the un-leveraged spot leg),
+C7 ("whole deposit deployed" absent — USDC deposits sit idle, dir-only Pro Max runs unlevered
+silently), C9/C10 (demo errors, since fixed). The audit record lists all 10 plus 5 uncovered
+surfaces the critic flagged and pre-registers the attack surface for the redo.
+
+**Next round (not started):** the full mechanism — `margin = notional/L`, whole deposit deployed,
+frozen price captured *with* its anchors, refusal → spot-only, plus the mandated regressions and
+a test suite that actually crosses a halving with a held position and checks the venue liquidation
+against `stopWad`. Design-before-code, then a fresh adversarial pass. Until then the leverage
+figures in the demo and docs are the **design target, explicitly labelled, not shipped behaviour.**
