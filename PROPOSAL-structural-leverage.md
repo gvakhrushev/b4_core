@@ -212,8 +212,29 @@ cycle (owner decision, 2026-07-22).
 The long side (§7b top) is currently the *window* regime only (anchor `floor`, bounded by
 `cap`). The redo generalises **both** sides to the window + post-pivot pair above, so top and
 bottom are one reflected mechanism. The long's post-pivot regime uses `MinStop = B − (B −
-prevBottom)·θ` and `stop = min(p − (p − MinStop)·θ, B)` — the exact reflection, to be verified
-empirically on the recovery legs the way the short was on the falls before it is frozen.
+prevBottom)·θ` and `stop = min(p − (p − MinStop)·θ, B)` — the exact reflection.
+
+**Bottom side verified empirically (2026-07-22), mirror holds with one caveat:**
+
+| cycle | bottom `B` | frac of cycle | struct stop at `B` hit? | biggest recovery pullback | flat-`φ` long |
+|---|---:|---:|:--:|---:|---|
+| 1 | $181 | 0.532 | never | −48% | survives |
+| 2 | $3,153 | 0.608 | never | **−64%** (COVID) | **liquidated** |
+| 3 | $15,954 | 0.632 | never | −28% | survives |
+
+- **Clean mirror of the top, where it matters:** the recovery **never returns below the
+  confirmed bottom `B`** in any cycle (post-bottom low +1.1…+9.8% above `B`) — so the structural
+  long stop is never hit, exactly as the fall never returns to `C`. And the COVID −64% crash
+  (cycle 2) **liquidates a flat-`φ` long** ($13,838→$4,953) while the structural stop at `B`
+  ($3,153 < $4,953) survives — the mirror of the short's +99–103% bear-rally case.
+- **Caveat — the bottom is noisier than the peak.** Bottoms land at 0.532 / 0.608 / 0.632 vs the
+  clean 0.368 peak, but **converge to `0.632 = 0.618 + q²`** as BTC matures (cycle 3 nails it —
+  the exact reflection of the peak at `0.382 − q² = 0.368`; both are `0.5 ∓ (q + q²)`). So the
+  bottom window MUST be wide/placed enough to capture the true low: an under-capturing window
+  records `B` too high ⇒ over-leverage AND a stop that a retest can hit (the same under-sampling
+  hazard as the short's `C`). Mature cycles (3+) sit in `[0.618, 0.632]`; early cycles bottom
+  earlier and need a wider/shifted window. The redo MUST verify the bottom-window placement, not
+  assume the peak-window mirror bracket.
 
 ## Execution plan on approval
 
