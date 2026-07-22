@@ -227,14 +227,20 @@ prevBottom)·θ` and `stop = min(p − (p − MinStop)·θ, B)` — the exact re
   long stop is never hit, exactly as the fall never returns to `C`. And the COVID −64% crash
   (cycle 2) **liquidates a flat-`φ` long** ($13,838→$4,953) while the structural stop at `B`
   ($3,153 < $4,953) survives — the mirror of the short's +99–103% bear-rally case.
-- **Caveat — the bottom is noisier than the peak.** Bottoms land at 0.532 / 0.608 / 0.632 vs the
-  clean 0.368 peak, but **converge to `0.632 = 0.618 + q²`** as BTC matures (cycle 3 nails it —
-  the exact reflection of the peak at `0.382 − q² = 0.368`; both are `0.5 ∓ (q + q²)`). So the
-  bottom window MUST be wide/placed enough to capture the true low: an under-capturing window
-  records `B` too high ⇒ over-leverage AND a stop that a retest can hit (the same under-sampling
-  hazard as the short's `C`). Mature cycles (3+) sit in `[0.618, 0.632]`; early cycles bottom
-  earlier and need a wider/shifted window. The redo MUST verify the bottom-window placement, not
-  assume the peak-window mirror bracket.
+- **Catching the exact bottom does NOT matter — what matters is post-62 survival.** (This
+  corrects an earlier over-cautious note: the same point the owner already made for the peak
+  applies here.) The structural long stop sits ~**62% below** the entry (`0.382·B` at genesis),
+  and the further decline *after* the 62% pivot is shallow — verified `−7% / −12% / −22%`
+  (cycles 1/2/3) — so the bottom lands **+105% to +142% above the stop**. A `φ` opening survives
+  with enormous margin regardless of whether the window pins the exact low; a window off by a few
+  percent moves a stop that is already ~62% away, which changes nothing. (Only a grossly
+  mis-placed window far from the bottom would matter, which the calendar's `[0.618, 0.632]`
+  bracket prevents.) Entering *below* the window's recorded low simply boosts leverage
+  (`1.70× / 1.77× / 1.95×`), the exact mirror of the short entering above `C`. So the design
+  metric is the post-62 drawdown and `φ`-survival (both confirmed), not exact-extreme capture —
+  identical to the top. For reference the bottoms land at `0.532 / 0.608 / 0.632`, converging to
+  `0.632 = 0.618 + q²` (cycle 3 nails it, the reflection of the peak at `0.382 − q² = 0.368`;
+  both `0.5 ∓ (q + q²)`), but this precision is not load-bearing.
 
 ## Execution plan on approval
 
