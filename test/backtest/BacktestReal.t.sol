@@ -23,12 +23,12 @@ import {
 /// @title Historical benchmark on the REAL contracts. Every figure is `B4Vault.navWad()` read
 ///        off the actual B4Vault/B4VaultOps/B4Pool/HalvingOracle + reference strategies, cranked
 ///        and settled day-by-day across the real halving epochs exactly as the on-chain keeper
-///        would — NOT a hand-rolled parallel equity model. Each vault starts from $100k BTC
-///        ("BTC base"); Pro/Pro Max also post USDC margin for the fall short (a short cannot be
-///        backed by spot-rotation USDC — it needs its own margin bucket). Returns are on the BTC
-///        base so all four products are comparable; margin is reported separately. Sizing is the
-///        shipped flat-`φ` (StructuralLeverage is designed but not wired). Run:
-///        `forge test --match-path 'test/backtest/BacktestReal.t.sol' -vv`
+///        would — NOT a hand-rolled parallel equity model. Every vault starts from the same BTC
+///        deposit and posts NO separate margin: a short product funds its fall short by selling
+///        that BTC into USDC (V6-M-2). Income is realized per cycle — a full exit in the 20-day
+///        post-halving free window pays the fee and realizes the perp PnL that navWad excludes
+///        (B3), then re-deposits. Sizing is the shipped flat-`φ` (StructuralLeverage is designed
+///        but not wired). Run: `forge test --match-path 'test/backtest/BacktestReal.t.sol' -vv`
 contract BacktestRealTest is VenueTestBase {
     uint32 constant SRC_EID = 30_101;
     bytes32 constant SRC_SENDER = bytes32(uint256(1));
@@ -169,41 +169,15 @@ contract BacktestRealTest is VenueTestBase {
 
     // ================================================================= short-leg diagnostic
 
-    /// Does Pro's fall-regime short actually open, and does its close-PnL reach NAV? Reads the
-    /// raw perp position (via the position precompile the vault uses) across the cycle-1 fall.
-    /// Documents two engine facts the benchmark depends on: (1) a short needs its OWN USDC
-    /// margin — spot-rotation USDC cannot back a perp; (2) NAV excludes unrealized PnL (B3), so
-    /// the short's gain is invisible while open and only lands when it is closed.
+    /// Pro funded with BTC ONLY must still open its fall short — the proceeds of selling the
+    /// spot BTC fund the margin (V6-M-2 fix). Reads the raw perp position across the cycle-1
+    /// fall. Also documents that NAV excludes unrealized PnL (B3), so the short's gain is
+    /// invisible while open and only lands when it is closed.
     function test_real_pro_short_opens() public {
         _freshProtocol();
         StrategyPro sp = new StrategyPro();
-        // Fund with BTC AND USDC margin (a short product needs margin capital).
-        vm.prank(user);
-        B4Vault v = B4Vault(
-            factory.createVault(
-                address(pool),
-                CoreTypes.descriptorHash(ubtcDescriptor()),
-                address(sp),
-                1e18,
-                100,
-                B4VaultStorage.FeeRoute({
-                    operator: address(0x0FE0),
-                    operatorBps: 3819,
-                    referrer: address(0),
-                    referrerBps: 0
-                })
-            )
-        );
-        _setPx(HALVING_TS[0]);
-        uint256 entryPx = uint256(_pxAt(HALVING_TS[0]));
-        uint256 dirAmount = (100_000e18 * 1e18 / entryPx) / 1e10;
-        ubtc.mint(user, dirAmount);
-        usdc.mint(user, 50_000e6);
-        vm.startPrank(user);
-        ubtc.approve(address(v), dirAmount);
-        usdc.approve(address(v), 50_000e6);
-        v.deposit(dirAmount, 50_000e6);
-        vm.stopPrank();
+        // Fund with BTC ONLY — no dedicated margin. The short must be funded by selling spot.
+        B4Vault v = _deployAndFund(address(sp), address(0x0FE0), 0);
 
         uint256 s1 = HALVING_TS[0] + Calendar.P - Calendar.H;
         uint256 pTop = HALVING_TS[0] + Calendar.P;
@@ -231,8 +205,9 @@ contract BacktestRealTest is VenueTestBase {
         console.log("  navWad (B3: unrealized excluded):", v.navWad());
         console.log("  spot BTC px mid (wad):", uint256(_pxAt(mid)));
 
-        // Finding (1): with USDC margin, the short DID open (szi < 0).
-        assertLt(p1.szi, int64(0), "short opens once USDC margin is posted");
+        // Finding (1) — V6-M-2 fix: with a BTC-ONLY deposit the short still opens (szi < 0),
+        // funded by selling the spot BTC into USDC and reclassifying it as perp margin.
+        assertLt(p1.szi, int64(0), "short opens from BTC-only funding (V6-M-2)");
         assertLt(p2.szi, int64(0), "short still open mid-fall");
         // Finding (2): B3 — while the short is open, its unrealized gain is NOT in NAV, even as
         // BTC falls ~40% from P to mid-fall. NAV moves by less than 0.1% (fees/dust only).
@@ -274,13 +249,15 @@ contract BacktestRealTest is VenueTestBase {
                 })
             )
         );
-        // BTC gives spot exposure (spot buys draw only on the rotation bucket, which the sold
-        // BTC also feeds). USDC gives PERP MARGIN (a separate bucket the short/leveraged-long
-        // leg draws on — spot-rotation USDC can NOT be used as margin). A short product must
-        // therefore deposit its own margin; Mini/B4 pass 0. $100,000 of BTC + `usdcMargin6`.
+        // Fund with BTC. Since V6-M-2 is fixed, a short product funds its perp margin by selling
+        // that BTC (the sold USDC reclassifies from the rotation bucket to margin), so no
+        // separate USDC deposit is required — `usdcMargin6` is 0 for every product now, retained
+        // only so the short-open diagnostic can still exercise the pre-funded path. $1,000 base
+        // (small enough that even the most-leveraged product's ~10^6x compounded NAV stays
+        // inside the MockCore uint64 perp accounting; multiples are scale-invariant).
         _setPx(HALVING_TS[0]);
         uint256 entryPx = uint256(_pxAt(HALVING_TS[0]));
-        uint256 dirAmount = (100_000e18 * 1e18 / entryPx) / 1e10;
+        uint256 dirAmount = (1_000e18 * 1e18 / entryPx) / 1e10;
         ubtc.mint(user, dirAmount);
         vm.startPrank(user);
         ubtc.approve(address(v), dirAmount);
@@ -346,6 +323,33 @@ contract BacktestRealTest is VenueTestBase {
         }
     }
 
+    /// The 3rd zone: in the post-halving free-exit window, fully exit (realizing the perp PnL
+    /// that navWad excludes by B3, paying the perf fee, no penalty), measure the realized value
+    /// as the OWNER's balance delta (the `user` address is shared across product runs, so an
+    /// absolute read would double-count), then re-deposit it for the next cycle. Returns the
+    /// realized value in WAD dollars — the true per-cycle income.
+    function _exitRealizeRedeposit(B4Vault v) internal returns (int256 realizedWad) {
+        uint256 px = uint256(_pxAt(block.timestamp));
+        uint256 btcBefore = ubtc.balanceOf(user);
+        uint256 usdcBefore = usdc.balanceOf(user);
+
+        vm.prank(user);
+        v.initiateExit(1e18);
+        _crankUntilIdle(v, 80);
+        require(v.exitShareWad() == 0, "exit did not finalize");
+
+        uint256 btcGained = ubtc.balanceOf(user) - btcBefore; // 8-dec
+        uint256 usdcGained = usdc.balanceOf(user) - usdcBefore; // 6-dec
+        realizedWad = int256(btcGained * 1e10 * px / 1e18 + usdcGained * 1e12); // WAD BTC*px + WAD USDC
+
+        // Re-deposit the realized funds for the next cycle (post-halving window is deposit-open).
+        vm.startPrank(user);
+        if (btcGained > 0) ubtc.approve(address(v), btcGained);
+        if (usdcGained > 0) usdc.approve(address(v), usdcGained);
+        v.deposit(btcGained, usdcGained);
+        vm.stopPrank();
+    }
+
     function _trackDD(CycleRow memory r, int256 nav) internal pure {
         if (nav > r.peak) r.peak = nav;
         if (nav < r.low) r.low = nav;
@@ -383,7 +387,7 @@ contract BacktestRealTest is VenueTestBase {
         B4Vault v = _deployAndFund(strategy, operator, usdcMargin6);
         console.log("");
         console.log(label);
-        int256 btcBase = int256(100_000e18); // the $100k BTC sleeve; margin is separate capital
+        int256 btcBase = int256(1_000e18); // the BTC deposit; the return multiple is on this
         if (usdcMargin6 > 0) {
             console.log("  (also posts USDC margin, $k):", usdcMargin6 / 1e6);
         }
@@ -401,8 +405,16 @@ contract BacktestRealTest is VenueTestBase {
             if (readPoint == cycleEndFull && c + 1 < 4) {
                 vm.warp(HALVING_TS[c + 1]);
                 _acceptHalving(HALVING_HEIGHT[c + 1], HALVING_TS[c + 1]);
+                _setPx(HALVING_TS[c + 1]);
+                // 3rd zone: the post-halving 20-day window is a FREE exit. Realize per-cycle
+                // income there — a full exit pays the performance fee (no penalty) and, crucially
+                // for Pro/Pro Max, REALIZES the recovery perp-leg PnL that navWad excludes by
+                // design (B3) — then re-deposit for the next cycle. This is "exit and pay per
+                // cycle": the return is the realized, compounded, post-fee value.
+                r.endNav = _exitRealizeRedeposit(v);
+            } else {
+                r.endNav = int256(v.navWad()); // cycle in progress: unrealized mark-to-market
             }
-            r.endNav = int256(v.navWad());
             _logCycle(c, r, c == 0 ? btcBase : prevEnd);
             prevEnd = r.endNav;
             if (c == 0) res.c1MaxDDbps = uint256(r.maxDDWad * 10000 / 1e18);
@@ -420,14 +432,13 @@ contract BacktestRealTest is VenueTestBase {
 
     function test_real_all_products() public {
         address op = address(0x0FE0);
-        // Mini/B4 never short -> no margin. Pro/Pro Max deposit USDC margin for the fall short
-        // (~15% and ~25% of the $100k BTC basis; Pro Max shorts phi x so needs more).
+        // All products funded with $100k BTC ONLY (V6-M-2 fixed): Pro/Pro Max fund their fall
+        // short by selling the spot BTC into USDC — no separate margin deposit needed.
         ProductResult memory mn = _runProduct("=== Mini ===", address(new StrategyMini()), op, 0);
         ProductResult memory b = _runProduct("=== B4 ===", address(new StrategyB4()), op, 0);
-        ProductResult memory pr =
-            _runProduct("=== Pro ===", address(new StrategyPro()), op, 15_000e6);
+        ProductResult memory pr = _runProduct("=== Pro ===", address(new StrategyPro()), op, 0);
         ProductResult memory pm =
-            _runProduct("=== Pro Max ===", address(new StrategyProMax()), op, 25_000e6);
+            _runProduct("=== Pro Max ===", address(new StrategyProMax()), op, 0);
 
         // The benchmark is a pinned claim, sourced entirely from navWad() on the real engine.
         // Ordering by compounded BTC-base multiple: Pro Max > Pro > B4 > Mini.

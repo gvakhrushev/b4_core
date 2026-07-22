@@ -169,57 +169,60 @@ epochs, rotating and settling exactly as the on-chain keeper would. Source:
 forge test --match-path 'test/backtest/BacktestReal.t.sol' -vv
 ```
 
-Each vault starts from **$100k of BTC** ("BTC base"). Mini and B4 never short, so they post no
-margin. Pro and Pro Max short in the fall and therefore also post USDC **margin** (a short
-cannot be backed by the USDC from selling spot — it needs its own margin bucket); that margin
-is *additional* capital, reported separately, and the return multiple is taken on the $100k BTC
-base so all four products stay comparable.
+Every vault starts from the **same BTC deposit** and posts **no separate margin**: a short
+product (Pro / Pro Max) funds its fall short by selling that BTC into USDC and using it as perp
+collateral — exactly as it would on-chain. Per cycle, income is **realized**: at each halving the
+vault fully exits inside the 20-day penalty-free window (paying the performance fee and realizing
+the perp-leg PnL that `navWad` excludes by design, invariant B3), then re-deposits — so the
+return is the real, compounded, post-fee value a holder would have taken.
 
 ### Three complete cycles + cycle 4 in progress (2012-11-28 → 2026-07-20)
 
-| Product | Total return (BTC base) | Worst cycle drawdown | Extra margin posted |
-|---|---:|---:|---:|
-| Mini (spot hold — the baseline) | 4,930x | 84.5 % | — |
-| **B4** | **353,850x** | **73.9 %** | — |
-| **Pro** | **369,138x** | **73.3 %** | $15k |
-| **Pro Max** | **625,543x** | **72.9 %** | $25k |
+| Product | Total return | Worst cycle drawdown |
+|---|---:|---:|
+| Mini (spot hold — the baseline) | 4,814x | 84.5 % |
+| **B4** | **345,052x** | **73.9 %** |
+| **Pro** | **1,410,032x** | **73.9 %** |
+| **Pro Max** | **9,728,705x** | **73.9 %** |
 
-### Per cycle — return and drawdown side by side
+### Per cycle — realized return and drawdown side by side
 
 | Cycle | | Mini | B4 | Pro | Pro Max |
 |---|---|---:|---:|---:|---:|
-| **2012→2016** | return | 51.0x | 137.6x | 143.7x | **231.8x** |
-| | max DD | 84.5 % | **73.9 %** | **73.3 %** | **72.9 %** |
-| **2016→2020** | return | 13.4x | 52.6x | 52.5x | **55.3x** |
-| | max DD | 83.4 % | **64.0 %** | **64.0 %** | **64.1 %** |
-| **2020→2024** | return | 7.3x | 29.2x | 29.2x | 29.1x |
-| | max DD | 76.8 % | **53.0 %** | **53.0 %** | **53.0 %** |
-| **2024→now**\* | return | 0.99x | 1.68x | 1.68x | 1.68x |
-| | max DD | 53.7 % | **28.2 %** | **28.2 %** | **28.2 %** |
+| **2012→2016** | return | 50.8x | 137.2x | 216.6x | **365.6x** |
+| | max DD | 84.5 % | **73.9 %** | **73.9 %** | **73.9 %** |
+| **2016→2020** | return | 13.2x | 51.9x | 82.2x | **154.5x** |
+| | max DD | 83.4 % | **64.0 %** | **63.6 %** | **63.5 %** |
+| **2020→2024** | return | 7.1x | 28.5x | 46.7x | **97.5x** |
+| | max DD | 76.8 % | **53.0 %** | **52.9 %** | **50.4 %** |
+| **2024→now**\* | return | 1.00x | 1.70x | 1.69x | 1.77x |
+| | max DD | 53.3 % | **28.2 %** | **28.1 %** | **21.8 %** |
 
-<sub>\* cycle in progress, read at the last available price date.</sub>
+<sub>\* cycle in progress: not yet exited, so read as an unrealized `navWad` mark.</sub>
 
-Read the two rows together: **more return, less drawdown.** B4/Pro/Pro Max cut ~10 pp off
-Mini's cycle drawdown because they step out of the market (into USDC or a short) during the
-bear that produces it. The short's edge is concentrated in cycle 1 — the biggest fall — and
-fades in later cycles: with a *fixed* margin, the short's notional shrinks relative to a
-compounding NAV, so Pro and B4 converge (a real property the old idealized model hid; scaling
-margin with NAV would keep the short's contribution, at the cost of more capital at risk). Mini
-holds spot in both regimes and pays only the operator's real cut (≈ 1.72 % of profit), so it
-lands just under raw buy-and-hold (~5,200x over the same span) — see
+Read the two rows together: **more return, less drawdown.** B4/Pro/Pro Max cut ~10 pp off Mini's
+cycle drawdown because they step out of the market (into USDC or a short) during the bear that
+produces it. Selling the whole spot position to stand up the short makes Pro a full-size short of
+the fall, so it clears B4 by a wide margin (1.4M× vs 345k×); Pro Max adds the `φ` leg on top. The
+short's edge is largest in cycle 1 (the deepest fall) and compresses in the shallower later
+cycles. Mini holds spot in both regimes and pays only the operator's real cut (≈ 1.72 % of
+profit), so it lands just under raw buy-and-hold (~5,200x) — see
 [Pool weight](#pool-weight--not-a-backtestable-number) for what the fee's larger remainder buys.
 
 > [!NOTE]
 > **These numbers depend on operational assumptions**, and moving them moves the result: the
-> keeper cadence (this run cranks at each calendar transition and the two settlements, not every
-> block), the margin a short product posts (more margin → larger short → more fall capture and
-> more risk), and — because NAV excludes unrealized PnL by design (engine invariant B3) — the
-> exact point at which a short is closed and its gain realized. A held single-vault backtest can
-> show the mechanism faithfully; it cannot promise a live keeper reproduces the multiple to the
-> digit. An **earlier hand-rolled model** (a parallel equity calculator, now deleted) reported
-> e.g. Pro Max 22,542,031x — it applied compounding structural leverage every cycle that the
-> shipped flat-`φ` engine never delivers, overstating Pro Max ~36×. This is the corrected,
-> contract-sourced replacement.
+> keeper cadence (this run cranks at each calendar transition, the two settlements, and the
+> per-cycle exit — not every block), and the exit timing inside the free window (NAV excludes
+> unrealized PnL by design, B3, so *when* a leg is realized matters). A single-vault backtest
+> shows the mechanism faithfully; it cannot promise a live keeper reproduces the multiple to the
+> digit. Two earlier models are **deleted**: a hand-rolled equity calculator (reported Pro Max
+> 22,542,031x — compounding leverage the flat-`φ` engine never delivers) and a first
+> real-contract pass that required a separate margin deposit (a workaround for the
+> [V6-M-2](AUDIT-V6.md) routing bug, now fixed so the short self-funds).
+>
+> **The V6-M-2 engine fix that makes the short self-fund is regression-green (269/269) but has
+> not yet passed the adversarial fan-out audit our discipline requires for a core money-routing
+> change** — treat these Pro/Pro Max figures as pending that gate.
 
 ### The survival record — the safety mechanism, measured
 

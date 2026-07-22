@@ -65,6 +65,41 @@ abstract contract B4VaultEngine is B4VaultStorage {
         return weiAmount / uint64(10 ** (_usdc.coreWeiDecimals - CoreTypes.PERP_USD_DECIMALS));
     }
 
+    /// The two Core-spot USDC sub-buckets label the SAME token: `coreUsdcRotatedWei` counts as
+    /// strategy value, `coreUsdcMarginWei` as perp collateral. Reclassifying moves value between
+    /// the strategy and margin sides of NAV with NO Core transaction (the sum, and thus the
+    /// actual Core balance, is unchanged). This is what lets a short be funded by selling spot
+    /// (V6-M-2): the fall's sale lands USDC in `rotated`, the short needs it in `margin`; the
+    /// recovery needs the reverse to buy spot back. Callers MUST follow it with the intent that
+    /// consumes the reclassified funds in the SAME step, so the crank reports progress (A13).
+    function _reclassifyUsdc(bool toMargin, uint64 needWei) internal {
+        if (toMargin) {
+            uint64 m = _min64(needWei, coreUsdcRotatedWei);
+            coreUsdcRotatedWei -= m;
+            coreUsdcMarginWei += m;
+        } else {
+            uint64 m = _min64(needWei, coreUsdcMarginWei);
+            coreUsdcMarginWei -= m;
+            coreUsdcRotatedWei += m;
+        }
+    }
+
+    /// EVM-side counterpart of `_reclassifyUsdc`. Steady-state custody is EVM, so a short's
+    /// funding proceeds are typically repatriated to `usdcRotatedEvm` before the perp step runs;
+    /// this reclassifies them to `usdcMarginEvm` so the margin fund path (`_startFund`) can carry
+    /// them back to Core as collateral. Same-token bookkeeping; NAV-neutral (V6-M-2).
+    function _reclassifyUsdcEvm(bool toMargin, uint256 amount) internal {
+        if (toMargin) {
+            uint256 m = Phi.min(amount, usdcRotatedEvm);
+            usdcRotatedEvm -= m;
+            usdcMarginEvm += m;
+        } else {
+            uint256 m = Phi.min(amount, usdcMarginEvm);
+            usdcMarginEvm -= m;
+            usdcRotatedEvm += m;
+        }
+    }
+
     function _livePxWad() internal view returns (uint256) {
         return CoreReader.spotPxWad(_dir);
     }
@@ -763,18 +798,26 @@ abstract contract B4VaultEngine is B4VaultStorage {
         if (targetValWad > dirValWad + band) {
             uint256 spendUsdWad = targetValWad - dirValWad;
             uint64 spendWei = _fromWad64(spendUsdWad, _usdc.coreWeiDecimals); // clamp, not wrap
+            // Buy spot from margin USDC too (V6-M-2 reverse): after a short closes, its margin
+            // returns to the margin sub-bucket; reclassify what rotation still lacks so the
+            // recovery buys BTC back. Followed immediately by the buy order below (progress).
+            if (coreUsdcRotatedWei < spendWei && coreUsdcMarginWei > 0) {
+                _reclassifyUsdc(false, spendWei - coreUsdcRotatedWei);
+            }
             if (
                 coreUsdcRotatedWei > 0
                     && _startSpotOrder(true, _min64(spendWei, coreUsdcRotatedWei))
             ) {
                 return true;
             }
+            // EVM-side reverse: a closed short's margin is repatriated to `usdcMarginEvm`;
+            // reclassify it to rotation so the recovery can fund a Core buy (V6-M-2).
+            uint256 spendEvm = DescriptorLib.coreToEvm(_usdc, spendWei);
+            if (usdcRotatedEvm < spendEvm && usdcMarginEvm > 0) {
+                _reclassifyUsdcEvm(false, spendEvm - usdcRotatedEvm);
+            }
             if (usdcRotatedEvm > 0) {
-                return _startFund(
-                    false,
-                    Purpose.Generic,
-                    Phi.min(DescriptorLib.coreToEvm(_usdc, spendWei), usdcRotatedEvm)
-                );
+                return _startFund(false, Purpose.Generic, Phi.min(spendEvm, usdcRotatedEvm));
             }
             return false; // nothing to buy with (or only sub-lot Core dust)
         }
@@ -822,6 +865,14 @@ abstract contract B4VaultEngine is B4VaultStorage {
         uint64 marginNeed6 = uint64(_fromWad(marginNeedWad, CoreTypes.PERP_USD_DECIMALS));
         if (perpMargin6 < marginNeed6) {
             uint64 deficit6 = marginNeed6 - perpMargin6;
+            // Fund the short from spot-rotation USDC (V6-M-2): selling BTC to stand up the short
+            // lands the proceeds in `rotated`; reclassify what the margin sub-bucket still lacks
+            // (same Core token) so a short opens without a dedicated margin deposit. Followed
+            // immediately by the ToPerp intent below, so the step still reports progress.
+            uint64 deficitWei = _usd6ToWei(deficit6);
+            if (coreUsdcMarginWei < deficitWei && coreUsdcRotatedWei > 0) {
+                _reclassifyUsdc(true, deficitWei - coreUsdcMarginWei);
+            }
             // Only report progress if a top-up intent was actually created; a sub-unit
             // amount that rounds to a no-op must fall through and size the perp against the
             // margin already present, never spin the crank (M-1).
@@ -833,6 +884,11 @@ abstract contract B4VaultEngine is B4VaultStorage {
             }
             uint256 deficitEvm =
                 _fromWad(_toWad(deficit6, CoreTypes.PERP_USD_DECIMALS), _usdc.evmDecimals);
+            // EVM-side: reclassify rotation USDC into margin (the repatriated short proceeds),
+            // then fund it to Core as collateral (V6-M-2).
+            if (usdcMarginEvm < deficitEvm && usdcRotatedEvm > 0) {
+                _reclassifyUsdcEvm(true, deficitEvm - usdcMarginEvm);
+            }
             if (
                 usdcMarginEvm > 0
                     && _startFund(false, Purpose.Margin, Phi.min(deficitEvm, usdcMarginEvm))
