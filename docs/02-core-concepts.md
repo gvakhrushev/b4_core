@@ -147,7 +147,7 @@ fallTarget   = rf;
 Consequences worth internalizing:
 
 - The core stores **no product names** — only two signed numbers. A strategy address is an input, not a dependency.
-- The hard cap is `|resolved| ≤ φ`. `StrategyProMax` already sits at `|φ|`, so **any** `scaleWad > 1e18` on ProMax reverts with `BadPolicy`. `StrategyPro` at `k = 1.5` resolves to `(1.5, −0.927…)` and is accepted.
+- The hard cap is `|resolved| ≤ φ`. `StrategyProMax` already sits at `|φ|`, so **any** `scaleWad > 1e18` on ProMax reverts with `BadPolicy`. `StrategyPro` (`{1, −1}`) at `k = 1.5` resolves to `(1.5, −1.5)` — a `1.5×` long / `1.5×` short — accepted because `1.5 < φ ≈ 1.618`.
 - A later `selectPolicy` (or a scale change) **rebalances this same vault in place**. It is never an exit and never a penalty; the resulting trades are ordinary sync steps. It is rejected while an exit is pending (`ExitPending`).
 
 ---

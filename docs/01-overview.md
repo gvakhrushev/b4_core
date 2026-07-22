@@ -64,11 +64,12 @@ authority over funds. The core stores no product names — the pair is read once
 the two cycle pivots. How much accepted holding risk to keep is your dial; the protocol takes no
 directional view on your behalf.
 
-Where a rung carries leverage, the leverage is itself a safety mechanism: the position's
-liquidation is placed by margin size at a *structurally confirmed* extreme — the cycle's
-confirmed low for a long, its confirmed peak for a short — never at a distance an ordinary
-swing can reach ([SPECIFICATION §7b](../spec/SPECIFICATION.md); verified on every completed
-cycle in [the benchmark](11-backtest.md)).
+Where a rung carries leverage, the leverage is *designed* to be a safety mechanism: the
+position's liquidation is placed by margin size at a *structurally confirmed* extreme — the
+cycle's confirmed low for a long, its confirmed peak for a short — never at a distance an
+ordinary swing can reach ([SPECIFICATION §7b](../spec/SPECIFICATION.md); the math and anchors
+are shipped and tested, but the engine sizes flat-`φ` pending the §7b redo — see
+[REPORT.md](../REPORT.md)).
 
 Every product uses the same decomposition for a signed WAD target `n`:
 

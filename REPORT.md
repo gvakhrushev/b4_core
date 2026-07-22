@@ -195,6 +195,65 @@ a `try this.*`). **Final verification state: 205/205 green**, `forge fmt --check
 invariant campaign 512×256 green (8/8, 131,072 calls each, zero reverts), size gate green
 (B4Vault 24,195 B), `slither . --fail-high` exit 0 (95 detectors, 131 results).
 
+## V5 audit round — full-tree re-audit (2026-07-22)
+
+A full-codebase adversarial audit (59 agents, 10 module-owner lenses → 3 verifiers per deduped
+finding → completeness critic) after the structural-sizing round and the Pro `{1,−1}` change.
+**16 findings, 1 correctly killed; the 15 confirmed are all fixed or recorded.** All are on the
+shipped code or the docs; none reopens a prior finding.
+
+**Fixed (code, with fail-before/pass-after — `test/unit/AuditV5Fixes.t.sol`, `AnchorRatchet.t.sol`):**
+
+- **F2 (High) — order limit prices were venue-invalid.** `_pxWadTo8` truncated the WAD price
+  with no quantization; HyperCore rejects a price with > 5 significant figures or too many
+  decimals, and SPECIFICATION §7 mandates "prices rounded to venue price rules." The engine
+  rounded sizes but not prices, so on the live venue every non-round-price order (rotation,
+  flatten, reduce-only, and the exit's flatten) is dropped → zero delta → resend-forever = an
+  H3 exit-freeze. Fix: `_quantizePx8` rounds to ≤ 5 sig figs and the per-market decimal cap,
+  buys down / sells up so the slippage envelope is preserved. Fuzz-proven always-valid.
+- **F1 (Medium) — the halving flip could poison the structural floor.** `sampleAnchor` promoted
+  `cap → floor` on any post-halving open, even when the previous 62-window went unsampled (cap
+  then holds a post-halving low, not a cycle bottom, which the market historically breaks). Fix:
+  promote only a 62-window-confirmed cap (even/kind-1 outgoing tag); an unsampled window
+  degrades conservatively (floor stays low). Latent today (engine flat-`φ`) but the ratchet is
+  the durable data the redo consumes.
+- **F3 (Medium) — a settlement token with < 6 wei-decimals bricked perp vaults** (usd6 exponent
+  underflow). Fix: `verifySettlement` now rejects `coreWeiDecimals < 6` at binding.
+- **F4 (Low) — the spot planner lacked the perp planner's zero-price guard** (revert-loop at a
+  halted feed instead of holding). Fix: `_startSpotOrder` returns false on `pxWad == 0`.
+
+**Fixed (docs/spec honesty — the user-facing safety claims):**
+
+- **F9 (High) — user docs sold the structural stop as shipped.** README/WHITEPAPER/docs/01 now
+  mark it *designed* (math + anchors shipped & tested; engine sizes flat-`φ` pending the redo),
+  with a per-row status column in the README protection table.
+- **F5/F6 (Medium) — false short-side claims corrected.** "Exceeds base only above `C`" was
+  false (crossover is `maxStop/2`, below `C`); the window regime's stop is an extrapolation from
+  the previous peak (unbounded as the top approaches `prevPeak`) — now stated, with a normative
+  redo requirement to cap that diminishing-returns tail structurally.
+- **F8/F10/F11 (Low) — stale/overclaimed demo docs fixed:** the scaled-Pro example, "all four
+  products less drawdown" (Mini tracks HODL by design), and the "no look-ahead" claim.
+
+**Fixed (test coverage):**
+
+- **F12 (High) — the invariant campaign never reached a calendar transition** ([1h,30d] warp,
+  first pivot ~day 538; every run stayed in Growth epoch 0, so the transition invariants were
+  vacuous). Fix: a `warpPivot` handler jumps to calendar-significant instants; a deterministic
+  reachability test (`test_F12_fall_regime_reachable_via_pivot_handler`) proves the fall flip is
+  now exercised and safe.
+- **F14/F15 — the benchmark now asserts its own claims** (each product vs HODL, Mini tracks
+  HODL, principal preserved) and the stale `−1/φ` Pro comments were corrected.
+
+**Recorded for the next round (critic surfaces + F13, not fixed here):** a pool claim is never
+paid to a real vault in an integration test (F13); `Keeper.crank` sweeps `count-2` before
+claiming `count-1` (value rolls forward via sweep, so deferral not loss — verify); the
+HalvingProver/Oracle LayerZero root-of-trust and the `opsSettle`/`_finalizeExit` phi-rounding
+waterfall were not deeply attacked; CoreReader read-side price normalization is asserted only by
+comment. These join the funded-gate list.
+
+**Verification: 245/245 green, fmt clean, B4Vault 24,239 B (337 B EIP-170 margin), deep
+invariant campaign 8/8, slither release gate in CI.**
+
 ## Recommended next steps
 
 1. **Independent external audit** with a dedicated round on the async completion/retry,

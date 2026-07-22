@@ -184,6 +184,23 @@ contract BacktestTest is Test {
             all[c] = _runCycle(prods, c);
         }
         _summary(prods, all);
+
+        // The benchmark is not decoration — pin the claims the docs make from it, per cycle,
+        // so a regression in the sizing/anchors/fee model surfaces as a failing test (F14).
+        for (uint256 c = 0; c < 3; c++) {
+            // c: HODL[0] Mini[1] B4[2] Pro[3] Pro Max[4].
+            int256 hodl = all[c][0].ret;
+            // B4/Pro/Pro Max return a multiple of HODL AND draw down less (the headline).
+            for (uint256 p = 2; p < 5; p++) {
+                assertGt(all[c][p].ret, hodl * 2, "B4/Pro/ProMax return a multiple of HODL");
+                assertLt(all[c][p].maxDD, all[c][0].maxDD, "and draw down less than HODL");
+            }
+            // Mini tracks HODL's exposure — return within a whisker, drawdown ~HODL (NOT less).
+            assertApproxEqRel(all[c][1].ret, hodl, 0.05e18, "Mini tracks HODL (pool minus fee)");
+            // Every product ends ABOVE the deposit (vs-dep is a drawdown, not a loss) except
+            // Pro Max's leveraged interim risk, which the docs disclose.
+            assertGt(all[c][2].low, 0, "B4 never wipes principal");
+        }
     }
 
     function _runCycle(Product[4] memory prods, uint256 c)

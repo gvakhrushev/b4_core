@@ -40,7 +40,8 @@ no pool, no protocol):
 
 ## Three complete cycles, compounded (2012-11-28 → 2024-04-20)
 
-Re-deposited each cycle. More return **and** less drawdown than holding, all four products.
+Re-deposited each cycle. **B4/Pro/Pro Max return a multiple of `HODL` while drawing down less;**
+Mini holds `HODL`'s exposure by design, so it tracks `HODL`'s drawdown (its edge is the pool).
 
 | Strategy | Total return | Worst drawdown | Worst vs deposit | Pool factor |
 |---|---:|---:|---:|---:|
@@ -144,7 +145,7 @@ price returns nothing: in the flat cycle in progress it is ~93 % of Mini's entir
 | Halvings | Real block timestamps |
 | Regime | `Calendar` pivots `P`, `T`; three held segments per cycle (long → fall → long) |
 | Leverage | `StructuralLeverage`, both sides; genesis/unconfirmed anchors → flat base |
-| Timing | Sized once per regime at the pivot price, held; no lookahead |
+| Timing | Sized once per regime at the pivot price, held. The long-side `cap` anchor is the min of a 20-day window that can extend a few days past the entry — a small look-ahead the demo accepts (the on-chain ratchet samples in real time, so live sizing has none); it only tightens leverage, never loosens it |
 | Fee | Operator's cut of `Phi.FEE_F` (≤ 38.19 % of 4.5 %) on profit, baseline re-anchored to NAV each settlement, matching `opsSettle` |
 | Funding | 10 %/yr on the full perp leg (assumption) |
 | Pool income | 20 % of a cohort exits penalised per cycle (behavioural assumption) |

@@ -81,14 +81,25 @@ library StructuralLeverage {
     ///         After the pivot (`peakC` known):    maxStop = C + (C − prevPeak)·θ
     ///                                             stop = max( p + (maxStop − p)·θ ,  C )
     ///
-    ///         Post-pivot leverage DECREASES monotonically with depth of entry, exceeds the
-    ///         flat base only for an entry above `C`, and pins to `C` for deep entries —
-    ///         the minimum stop is the confirmed peak, a price the fall already proved it
-    ///         cannot regain (verified on every completed cycle: the post-pivot price never
-    ///         returned to `C`). A deep short is deliberately sized BELOW 1× — the +99–103%
+    ///         Post-pivot leverage DECREASES monotonically with depth of entry and pins to
+    ///         `C` for deep entries — the minimum stop is the confirmed peak, a price the fall
+    ///         already proved it cannot regain (verified on every completed cycle: the
+    ///         post-pivot price never returned to `C`). It exceeds the flat base `g` for every
+    ///         entry above `maxStop/2` — which sits BELOW `C` — because `g·(g−1) = 1` puts the
+    ///         `L = g` crossover exactly at `maxStop/2`; near `C` the leverage is well above
+    ///         `g` (e.g. cycle-4 pivot entry ≈ 4.8×). The venue `maxLeverage` is the hard
+    ///         ceiling on top. A deep short is deliberately sized BELOW 1× — the +99–103%
     ///         bear-market rallies of cycles 1–2 liquidate a flat-`φ` short, while the small
     ///         position with its stop pinned to the far `C` survives. Sub-1× is the safety,
     ///         so `shortLeverageWad` has NO 1× floor (unlike the long).
+    ///
+    ///         WINDOW-REGIME CAVEAT: with `peakC == 0` the stop is `p + (p − prevPeak)·θ`, an
+    ///         EXTRAPOLATION from the *previous* cycle's peak, not a bound confirmed for this
+    ///         cycle. If this cycle tops close to `prevPeak` (a diminishing-returns cycle) the
+    ///         leverage grows large (unbounded as `p → prevPeak`), relying on the venue
+    ///         `maxLeverage` clamp; all completed cycles topped ≥ 1.53× the prior peak. The
+    ///         §7b redo MUST add a structural cap for that tail (bind: a diminishing cycle
+    ///         should de-lever, not over-lever).
     ///
     ///         Returns 0 (caller falls back to the flat base `g`) when the structure is not
     ///         confirmed: no previous peak recorded (genesis), a `peakC` not above

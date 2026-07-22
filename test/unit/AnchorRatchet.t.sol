@@ -163,6 +163,33 @@ contract AnchorRatchetTest is VenueTestBase {
         assertEq(_cap() / 1e18, 40_000, "cap reseeded to the new 62-window bottom");
     }
 
+    /// F1 (audit 2026-07-22): if a cycle's 62-window goes UNSAMPLED, the cap still holds that
+    /// epoch's post-halving low (an odd/kind-0 tag). The next halving flip MUST NOT promote it
+    /// to floor — a post-halving low is not a cycle bottom and the market breaks it. The floor
+    /// must stay at the prior confirmed low (0 here), the conservative direction.
+    function test_flip_skips_promotion_when_62_window_unsampled() public {
+        // Epoch 0: sample ONLY the post-halving window (t small); the 62-window is skipped.
+        _at(3 days); // t = 3 days ⇒ kind-0 (post-halving) window
+        _setBtc(56_500); // a near-halving price, NOT the cycle bottom
+        pool.sampleAnchor(DIR);
+        assertEq(_floor(), 0, "no floor yet");
+        assertEq(_cap() / 1e18, 56_500, "cap holds the post-halving low (kind-0, odd tag)");
+        // (No 62-window sample this epoch — the keeper missed it.)
+
+        // Next halving; first post-halving sample of epoch 1 fires the flip.
+        uint256 hts = GEN_TS + Calendar.T + 30 days;
+        vm.warp(hts);
+        _acceptHalving(GEN_HEIGHT + 210_000, uint32(hts));
+        vm.warp(hts + 2 days);
+        _setBtc(60_000);
+        pool.sampleAnchor(DIR);
+
+        // Pre-fix this promoted 56,500 into floor (poisoning it high for a full cycle). Fixed:
+        // the unconfirmed (odd-tag) cap is NOT promoted; floor stays at the prior confirmed low.
+        assertEq(_floor(), 0, "unconfirmed 62-window: floor NOT poisoned by the post-halving low");
+        assertEq(_cap() / 1e18, 60_000, "cap still reseeds normally");
+    }
+
     function _acceptHalving(uint256 height, uint32 ts) internal {
         bytes memory h = new bytes(80);
         h[68] = bytes1(uint8(ts));

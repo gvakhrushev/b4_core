@@ -81,11 +81,35 @@ abstract contract B4VaultEngine is B4VaultStorage {
         return CoreReader.withdrawable(address(this));
     }
 
-    /// CoreWriter order fields are fixed-point 1e8 (human value × 10⁸) — a DIFFERENT
-    /// convention from the szDecimals-scaled precompile reads. Live confirmation is a
-    /// funded gate (SECURITY_MODEL §5.4–5).
-    function _pxWadTo8(uint256 pxWad) internal pure returns (uint64) {
-        return uint64(pxWad / 1e10);
+    /// Quantize a WAD limit price to a valid HyperCore order price in the 1e8 writer
+    /// convention (SPEC §7: "prices rounded to venue price rules"). The venue REJECTS an
+    /// order whose price has more than 5 significant figures (integer prices exempt) or more
+    /// than `maxDecimals − szDecimals` decimal places (`maxDecimals` = 8 spot, 6 perp); an
+    /// un-quantized price freezes the vault (rejected order ⇒ zero delta ⇒ resend-forever,
+    /// H3). Rounds a BUY limit DOWN and a SELL limit UP so the executed price can never leave
+    /// the slippage envelope.
+    function _quantizePx8(uint256 pxWad, bool roundUp, uint8 szDec, bool isSpot)
+        internal
+        pure
+        returns (uint64)
+    {
+        uint256 px8 = pxWad / 1e10; // 1e8 writer convention
+        if (px8 == 0) return 0;
+        uint256 maxDec = isSpot ? 8 : 6;
+        uint256 dcap = maxDec > szDec ? maxDec - szDec : 0; // decimal places px may carry
+        uint256 step = 10 ** (8 - dcap); // px8 must be a multiple of this (dcap ≤ 8)
+        // 5-significant-figure rule, unless px is a whole integer (px8 a multiple of 1e8).
+        if (px8 % 1e8 != 0) {
+            uint256 digits;
+            for (uint256 t = px8; t != 0; t /= 10) {
+                digits++;
+            }
+            uint256 sigStep = digits > 5 ? 10 ** (digits - 5) : 1;
+            if (sigStep > step) step = sigStep;
+        }
+        uint256 q = (px8 / step) * step; // rounded DOWN to the coarsest valid grid
+        if (roundUp && q != px8) q += step; // SELL: round UP so we never sit below the floor
+        return uint64(q);
     }
 
     /// Read-convention perp px (6 − szDecimals decimals) — used for PnL notional math.
@@ -252,6 +276,7 @@ abstract contract B4VaultEngine is B4VaultStorage {
     ///         lot floors to zero and creates nothing (caller must not count it — M-1).
     function _startSpotOrder(bool isBuy, uint64 inputWei) internal returns (bool created) {
         uint256 pxWad = _livePxWad();
+        if (pxWad == 0) return false; // spot feed down: hold, never revert-loop (H3)
         uint64 sz;
         uint256 limitWad;
         if (isBuy) {
@@ -272,11 +297,11 @@ abstract contract B4VaultEngine is B4VaultStorage {
         // Reliable-balance snapshots of BOTH legs (A2).
         intent.snapSrcWei = _spotBal(isBuy ? _usdc.coreToken : _dir.coreToken);
         intent.snapAux = _spotBal(isBuy ? _dir.coreToken : _usdc.coreToken);
-        // Writer fields in fixed-1e8 units (px, size) — NOT the read/lot conventions.
+        // Writer fields in fixed-1e8 units (px quantized to venue price rules, size in lots).
         CoreWriterLib.iocOrder(
             CoreTypes.SPOT_ASSET_OFFSET + _dir.spotMarket,
             isBuy,
-            _pxWadTo8(limitWad),
+            _quantizePx8(limitWad, !isBuy, _dir.spotSzDecimals, true),
             _spotLotsToSz8(sz),
             false
         );
@@ -348,9 +373,13 @@ abstract contract B4VaultEngine is B4VaultStorage {
             // Snapshot the positive mark PnL for the harvest bound (SPEC §7).
             intent.claim6 = _positivePnl6(pos, markWad);
         }
-        // Writer fields in fixed-1e8 units (px, size) — NOT the read/lot conventions.
+        // Writer fields in fixed-1e8 units (px quantized to venue price rules, size in lots).
         CoreWriterLib.iocOrder(
-            _dir.perpMarket, isBuy, _pxWadTo8(limitWad), _perpLotsToSz8(szLots), reduceOnly
+            _dir.perpMarket,
+            isBuy,
+            _quantizePx8(limitWad, !isBuy, _dir.perpSzDecimals, false),
+            _perpLotsToSz8(szLots),
+            reduceOnly
         );
     }
 

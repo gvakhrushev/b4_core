@@ -139,7 +139,7 @@ rule covers both sides:
 | Confirmation window | 62-window `[T, T+W]` and post-halving `[halving, halving+W]` (min close) | the `W` days ending at the 38.2% pivot (max close) |
 | Sizing | `stop = min(p − (p − floor)/g, cap)` | window: `stop = p + (p − prevPeak)·(g−1)` (DCA slices); after the pivot: `MaxStop = C + (C − prevPeak)·(g−1)`, `stop = max(p + (MaxStop − p)·(g−1), C)` |
 | Leverage | `L = p/(p − stop)`, clamped by the venue max | `L = p/(stop − p)`, clamped by the venue max, **no 1× floor** |
-| Depth behaviour | grows toward the confirmed low, decays for a late entry | decreases monotonically with depth; exceeds the base only above `C`; pins to `C` deep |
+| Depth behaviour | grows toward the confirmed low, decays for a late entry | decreases monotonically with depth; pins to `C` deep; exceeds the base `g` for any entry above `maxStop/2` (which lies **below** `C`, since `g·(g−1) = 1`), reaching ≈ 4.8× at the cycle-4 pivot |
 | Refusal | `p ≤ floor` → un-leveraged spot leg | `p ≥ MaxStop` → flat base |
 | Genesis | `floor = 0` → flat base `g` | no `prevPeak` → flat base `g` |
 
@@ -163,9 +163,16 @@ of the cycle, the bottom at `0.618 + q² ≈ 0.632`.
   `StructuralLeverage` — the sizing math cannot drift from what is tested and demonstrated.
 - **Anchor ratchets are permissionless, sampling-only, and advance at structural events.**
   Within a window the recorded extreme only improves (min down / max up); across windows the
-  long pair `(floor, cap)` advances at the halving flip. Sampling more makes the anchors more
-  accurate ⇒ **less** leverage; under-sampling is NOT fail-safe, so an unconfirmed anchor MUST
-  fall back to the flat base `g`, never to an assumed extreme.
+  long pair `(floor, cap)` advances at the halving flip, which MUST promote only a
+  62-window-confirmed cap (an unsampled 62-window MUST NOT poison the floor with a post-halving
+  low). Sampling more makes the anchors more accurate ⇒ **less** leverage; under-sampling is
+  NOT fail-safe, so an unconfirmed anchor MUST fall back to the flat base `g`, never to an
+  assumed extreme.
+- **The window regime is bounded by a structural cap, not just the venue max.** With `C` not
+  yet confirmed the short window stop `p + (p − prevPeak)·(g−1)` is an extrapolation from the
+  *previous* peak; if a cycle tops near `prevPeak` the leverage grows large. The redo MUST cap
+  it structurally so a diminishing-returns cycle de-levers rather than over-levers — the venue
+  `maxLeverage` alone is insufficient (it can exceed the base by many multiples below the max).
 
 **Verified record (all completed cycles, real BTC closes — the safety claims are empirical,
 not aspirational):**

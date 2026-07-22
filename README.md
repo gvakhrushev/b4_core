@@ -16,21 +16,27 @@ venue (HyperEVM + HyperCore), one accounting model, no admin.
 
 ## What the protocol protects — by construction
 
-The protocol does not guess tops or bottoms. It removes the ways a cycle position dies, and
-each protection is **structural** — enforced by code and calendar geometry, not by promises:
+The protocol does not guess tops or bottoms. It removes the ways a cycle position dies. Each
+protection is **structural** — enforced by code and calendar geometry, not by promises — and
+the table marks what is live in the shipped contracts versus specified-and-tested but pending
+the leverage-sizing redo (full status: [REPORT.md](REPORT.md)):
 
-| Threat | Structural protection |
-|---|---|
-| Admin/key compromise | **There are no keys.** No upgrade proxy, no pause, no privileged fund mover — nothing for an attacker (or an insider) to take over. |
-| Riding the bear | **The calendar steps aside.** A pure function of time since the proven halving rotates B4/Pro out of the market for the fall regime — the phase where buy-and-hold takes its −76…−84 % cycle drawdown. |
-| Liquidation by an ordinary swing | **Stops sit at confirmed extremes.** A leveraged position's liquidation is placed at a price the market already printed and failed to regain — the cycle's confirmed low (longs) or confirmed peak (shorts) — realized by margin size, not stop orders. In every completed cycle that stop was **never touched**, while a flat-`φ` position is liquidated by the +99–103 % bear rallies (shorts) or the −64 % COVID crash (longs). |
-| Chasing price | **Sized once, then held.** Positions are sized when the calendar rotates and never re-traded against a moving NAV — no volatility drag, no discretionary re-entry. Window entries average in over the structural 20-day window: the calendar knows *when*, not *at what price*. |
-| Stuck execution | **Self-healing by anyone.** Execution is asynchronous and proven by venue state reads; every step is permissionlessly crankable. The worst reachable state is delayed liveness — never fund loss, never frozen funds. |
-| Exit denial | **The exit cannot be blocked.** Exit liveness depends on no operator, keeper, oracle update or pool interaction; penalties route through guarded one-way paths. |
+| Threat | Structural protection | Status |
+|---|---|---|
+| Admin/key compromise | **There are no keys.** No upgrade proxy, no pause, no privileged fund mover — nothing for an attacker or insider to take over. | shipped |
+| Riding the bear | **The calendar steps aside.** A pure function of time since the proven halving rotates B4/Pro out of the market for the fall regime — the phase where buy-and-hold takes its −76…−84 % cycle drawdown. | shipped |
+| Chasing price | **Sized once, then held.** Positions are sized when the calendar rotates and never re-traded against a moving NAV — no volatility drag, no discretionary re-entry. | shipped |
+| Stuck execution | **Self-healing by anyone.** Async execution is proven by venue state reads; every step is permissionlessly crankable. Worst reachable state is delayed liveness — never fund loss, never frozen funds. | shipped |
+| Exit denial | **The exit cannot be blocked.** Exit liveness depends on no operator, keeper, oracle update or pool interaction; penalties route through guarded one-way paths. | shipped |
+| Liquidation by an ordinary swing | **Stops sit at confirmed extremes.** A leveraged position's liquidation is placed by margin size at a price the market already printed and failed to regain — the confirmed low (longs) or peak (shorts) — never a stop order. Verified on every completed cycle: the structural stop was never touched, while a flat-`φ` position is liquidated by the +99–103 % bear rallies (shorts) or the −64 % COVID crash (longs). | **designed** (math + anchors shipped & tested; the vault-engine sizing is flat-`φ` pending the [§7b redo](AUDIT-2026-07-structural-leverage.md)) |
 
-The result is visible in the benchmark below: **every product beats buy-and-hold on return
-while drawing down less** — not because the protocol predicts price, but because it
-structurally refuses to hold through the phase that produces the damage.
+The five shipped protections are what make the benchmark below beat buy-and-hold — **B4, Pro
+and Pro Max return a multiple of `HODL` while drawing down materially less**, not by predicting
+price but by refusing to hold through the phase that produces the damage. (Mini holds `HODL`'s
+exposure by design, so it tracks `HODL`'s drawdown — its edge is the pool, not less risk.) The
+structural leverage that makes Pro Max's leverage *survivable* is specified and its math is
+tested, but the engine sizes flat-`φ` today — so Pro Max's benchmark leverage is the design
+target, not shipped behaviour.
 
 ## Documentation
 
