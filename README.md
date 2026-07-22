@@ -142,45 +142,67 @@ protocol's own function, bounded by the cycle's confirmed lows.
 forge test --match-path 'test/backtest/*' -vv
 ```
 
-**Return** by cycle, each starting at `1.0x`, against raw buy-and-hold (`HODL`). Returns
-include the Pool income (below). **Read the `vs deposit` column, not the return column** — it
-is the worst the position ever fell below the deposit:
+### Leaderboard — 3 complete cycles, compounded (2012-11-28 → 2024-04-20)
 
-| Cycle | Mini | B4 | Pro | Pro Max | HODL | Pro Max vs deposit |
-|---|---:|---:|---:|---:|---:|---:|
-| 2012→2016 | 52.9x | 145.1x | 193.1x | 471.0x | 52.3x | **−0.6 %** |
-| 2016→2020 | 13.8x | 40.3x | 54.2x | 209.9x | 13.6x | **−33.6 %** |
-| 2020→2024 | 7.4x | 21.4x | 28.7x | 150.6x | 7.3x | **−1.0 %** |
-| 2024→now\* | 1.0x | 1.7x | 2.1x | 3.7x | 1.0x | **−41.7 %** |
+More return **and** less drawdown than holding, in one table. `1.00x` = deposit.
 
-<sub>\* cycle in progress, one settlement so far. Pro Max entry leverage per cycle:
-1.6× / 2.5× / 2.7× / 2.2× — structural, not flat.</sub>
-
-**Less drawdown than holding.** HODL eats a 53–84 % top-to-bottom crash every cycle. B4 and
-Pro hold spot only through the *rise* and sit in **USDC through the fall**, so they sidestep
-the bear entirely — their max drawdown is intra-bull volatility, 10–25 pp below HODL's:
-
-| Cycle | HODL max DD | B4 / Pro | Pro Max | B4 vs HODL |
+| Strategy | Total return | Worst drawdown | Worst vs deposit | Pool income |
 |---|---:|---:|---:|---:|
-| 2012→2016 | 84.2 % | 73.9 % | 75.5 % | **−10.3 pp** |
-| 2016→2020 | 83.2 % | 64.2 % | 67.9 % | **−18.9 pp** |
-| 2020→2024 | 76.5 % | 53.1 % | 58.9 % | **−23.4 pp** |
-| 2024→now | 53.0 % | 28.2 % | 51.9 % | **−24.7 pp** |
+| `HODL` buy & hold | 5,214x | 84.2 % | −13.2 % | — |
+| Mini | 5,415x | 84.5 % | −13.2 % | ×1.09 |
+| **B4** | **125,149x** | **73.9 %** | −13.2 % | ×1.09 |
+| **Pro** | **300,473x** | **73.9 %** | −13.2 % | ×1.09 |
+| Pro Max | 14,893,463x | 75.5 % | −33.6 % | ×1.09 |
 
-<sub>Mini stays `1×` long through the bear (like HODL), so its drawdown tracks HODL's — the
-price of the simplest product. Pro Max's leverage lifts its drawdown back toward HODL's on the
-interim dips, which is why `vs deposit` is the number that matters for it.</sub>
+### Per cycle
 
-**Pool income — the core value capture.** Every return above already includes it: the
-assumption is **20 % of the cohort exits through the `q = 11.8 %` penalty door each cycle**,
-redistributed to the ~80 % who stay — **+0.25·q ≈ +2.95 % per cycle to every stayer**. Mini
-holds exactly HODL's exposure, so **Mini beating HODL (52.9x vs 52.3x) is nothing but the Pool
-income net of fees** — the mechanism by which stayers are paid by leavers, visible in isolation.
+| Cycle | | `HODL` | Mini | B4 | Pro | Pro Max |
+|---|---|---:|---:|---:|---:|---:|
+| **2012→2016** | return | 52.3x | 52.9x | 145.1x | 193.1x | 471.0x |
+| | max DD | 84.2 % | 84.5 % | 73.9 % | 73.9 % | 75.5 % |
+| | DD landed in | `FALL` | `FALL` | `GROWTH` | `GROWTH` | `GROWTH` |
+| **2016→2020** | return | 13.6x | 13.8x | 40.3x | 54.2x | 209.9x |
+| | max DD | 83.2 % | 83.4 % | 64.2 % | 64.2 % | 67.9 % |
+| | DD landed in | `FALL` | `FALL` | `RECOV` | `RECOV` | `RECOV` |
+| **2020→2024** | return | 7.3x | 7.4x | 21.4x | 28.7x | 150.6x |
+| | max DD | 76.5 % | 76.8 % | 53.1 % | 53.1 % | 58.9 % |
+| | DD landed in | `RECOV` | `RECOV` | `GROWTH` | `GROWTH` | `GROWTH` |
+| **2024→now**\* | return | 1.00x | 1.03x | 1.71x | 2.05x | 3.71x |
+| | max DD | 53.0 % | 53.3 % | 28.2 % | 28.2 % | 51.9 % |
+| | DD landed in | `FALL` | `FALL` | `GROWTH` | `GROWTH` | `GROWTH` |
 
-The point of the `vs deposit` column: B4's **max drawdown is ~74 % peak-to-trough** yet it
-sits at **−0.3 % vs the deposit** — the swing gives back *profit*, not principal, if you
-entered at the halving. Pro Max, by contrast, genuinely risks a third to a half of the
-deposit — leverage cuts both ways, and the demo shows it rather than hiding it.
+<sub>\* cycle in progress. Pro Max entry leverage per cycle: 1.6× / 2.5× / 2.7× / 2.2× —
+structural, not flat.</sub>
+
+**Where the drawdown comes from — and why it is not the bear.** B4/Pro sit in **USDC through
+the fall**, so they cannot draw down there at all. Their worst days land in `GROWTH`/`RECOV`
+— violent *intra-bull* crashes — while `HODL`'s worst days land in the phase B4 sits out:
+
+| Cycle | `HODL` worst day | | B4 worst day | |
+|---|---|---|---|---|
+| 2012→2016 | 2015-01-14 | `FALL` (bear bottom) | 2013-04-11 | `GROWTH` (April-2013 crash) |
+| 2016→2020 | 2018-12-15 | `FALL` (bear bottom) | 2020-03-16 | `RECOV` (COVID) |
+| 2020→2024 | 2022-11-21 | `RECOV` (FTX) | 2021-07-20 | `GROWTH` (May-2021 crash) |
+
+### Pool income — the core value capture
+
+**20 % of the cohort exits through the `q = 11.8 %` penalty door each cycle**, redistributed
+to the ~80 % who stay: **+0.25·q ≈ +2.95 % per cycle to every stayer**, included in every
+number above. Mini holds *exactly* `HODL`'s exposure, so the Mini−`HODL` gap **is** the pool:
+
+| Cycle | Mini | `HODL` | Pool share of Mini's profit |
+|---|---:|---:|---:|
+| 2012→2016 | 52.9x | 52.3x | 2.9 % |
+| 2016→2020 | 13.8x | 13.6x | 3.0 % |
+| 2020→2024 | 7.4x | 7.3x | 3.3 % |
+| 2024→now (flat cycle) | 1.03x | 1.00x | **92.9 %** |
+
+In a bull cycle the pool is a ~3 % bonus on top of price. In a **flat cycle it is essentially
+the entire return** — the protocol pays stayers when the market does not.
+
+**Drawdown ≠ loss.** B4 swings ~74 % peak-to-trough yet ends at **−0.3 % vs the deposit** —
+the swing gives back *profit*, not principal, if you entered at the halving. Pro Max genuinely
+risks a third to a half of the deposit; leverage cuts both ways and the table shows it.
 
 > [!IMPORTANT]
 > **Illustration of the mechanism — not evidence of edge, and not a forecast.** Three

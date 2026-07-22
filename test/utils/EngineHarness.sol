@@ -21,6 +21,25 @@ contract EngineHarness is B4VaultEngine {
         owner = msg.sender;
         slippageBps = 100;
         _initialized = true;
+        pool = address(this); // be our own anchor source: genesis (0,0) ⇒ flat base leverage
+    }
+
+    /// Stand-in for `B4Pool.anchors`. Defaults to genesis (0, 0) ⇒ the structural-leverage
+    /// path degrades to the flat base `g`; a test may `setAnchors` to exercise it.
+    uint256 public aFloor;
+    uint256 public aCap;
+
+    function setAnchors(uint256 floor_, uint256 cap_) external {
+        aFloor = floor_;
+        aCap = cap_;
+    }
+
+    function anchors(uint256) external view returns (uint256 floor, uint256 cap) {
+        return (aFloor, aCap);
+    }
+
+    function sizePxWad() external view returns (uint256) {
+        return _sizePxWad;
     }
 
     function setBuckets(
