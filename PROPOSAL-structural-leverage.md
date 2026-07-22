@@ -227,20 +227,19 @@ prevBottom)·θ` and `stop = min(p − (p − MinStop)·θ, B)` — the exact re
   long stop is never hit, exactly as the fall never returns to `C`. And the COVID −64% crash
   (cycle 2) **liquidates a flat-`φ` long** ($13,838→$4,953) while the structural stop at `B`
   ($3,153 < $4,953) survives — the mirror of the short's +99–103% bear-rally case.
-- **Catching the exact bottom does NOT matter — what matters is post-62 survival.** (This
-  corrects an earlier over-cautious note: the same point the owner already made for the peak
-  applies here.) The structural long stop sits ~**62% below** the entry (`0.382·B` at genesis),
-  and the further decline *after* the 62% pivot is shallow — verified `−7% / −12% / −22%`
-  (cycles 1/2/3) — so the bottom lands **+105% to +142% above the stop**. A `φ` opening survives
-  with enormous margin regardless of whether the window pins the exact low; a window off by a few
-  percent moves a stop that is already ~62% away, which changes nothing. (Only a grossly
-  mis-placed window far from the bottom would matter, which the calendar's `[0.618, 0.632]`
-  bracket prevents.) Entering *below* the window's recorded low simply boosts leverage
-  (`1.70× / 1.77× / 1.95×`), the exact mirror of the short entering above `C`. So the design
-  metric is the post-62 drawdown and `φ`-survival (both confirmed), not exact-extreme capture —
-  identical to the top. For reference the bottoms land at `0.532 / 0.608 / 0.632`, converging to
-  `0.632 = 0.618 + q²` (cycle 3 nails it, the reflection of the peak at `0.382 − q² = 0.368`;
-  both `0.5 ∓ (q + q²)`), but this precision is not load-bearing.
+- **`B` is the min of the 62-window `[0.618, 0.632]`, not a single bar** — the mirror of `C` as
+  the max of the peak window. This yields the canonical structural lows exactly:
+  `B = $222 / $3,504 / $16,499` (cycles 1/2/3), the same lows used throughout the spec/demo.
+- **Catching the exact bottom does NOT matter — what matters is post-62 survival.** With
+  `B` from the window, the structural long stop `0.382·B = $85 / $1,339 / $6,303` sits ~62%
+  below `B`, and after the window price dips only **−3% to −4%** below `B` — leaving the low
+  **+151% to +154% above the stop**. A `φ` opening survives with enormous margin regardless of
+  whether the window pins the exact low; a window off by a few percent moves a stop already ~62%
+  away. Entering *below* the window low simply boosts leverage (`≈ 1.65×`), the mirror of the
+  short entering above `C`. So the design metric is post-62 drawdown + `φ`-survival (both
+  confirmed and remarkably uniform across cycles), not exact-extreme capture — identical to the
+  top. (For reference the true bottoms land at `0.532 / 0.608 / 0.632`, converging to
+  `0.632 = 0.618 + q²`, the reflection of the peak at `0.368`; not load-bearing.)
 
 ## Execution plan on approval
 
