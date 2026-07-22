@@ -172,7 +172,7 @@ contract SettleTest is VaultTestBase {
         B4Vault v = createVault(address(pro));
         fundAndDeposit(v, 1e8, 10_000e6);
         warpTo(Calendar.P);
-        crankUntilIdle(v, 40); // short 1/φ open with margin
+        crankUntilIdle(v, 40); // short 1x open with margin
         assertLt(readSzi(address(v)), 0);
 
         warpTo(Calendar.T); // ClosingFall: free-exit zone

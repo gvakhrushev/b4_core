@@ -227,11 +227,20 @@ contract B4Pool {
         uint256 px = CoreReader.spotPxWad(_assets[i]);
         if (px == 0) revert ZeroPrice();
 
+        // Tag parity encodes the window kind: kind 0 (post-halving) ⇒ odd, kind 1
+        // (62-window bottom) ⇒ even. The halving flip may ONLY promote a cap that a
+        // 62-window confirmed (an even outgoing tag); if the previous cycle's 62-window went
+        // unsampled the cap still holds a post-halving low (odd tag), which is NOT a cycle
+        // bottom and must not become the floor. Skipping the promotion leaves floor at the
+        // prior confirmed low — the conservative direction (a lower floor ⇒ lower leverage),
+        // matching the documented flip-skip behaviour rather than poisoning the floor high.
         uint256 tag = oracle.epoch() * 2 + kind + 1; // +1 so 0 means "never sampled"
         Anchor storage a = _anchor[i];
         if (tag != a.windowTag) {
             // A new window opens.
-            if (kind == 0) a.floor = a.cap; // halving flip: last cap becomes the floor
+            if (kind == 0 && a.windowTag != 0 && a.windowTag % 2 == 0) {
+                a.floor = a.cap; // halving flip: a 62-window-confirmed cap becomes the floor
+            }
             a.cap = px; // reseed the ceiling to the first observation of this window
             a.windowTag = tag;
         } else if (px < a.cap) {

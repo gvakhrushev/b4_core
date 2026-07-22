@@ -96,8 +96,8 @@ Worked values for the reference ladder at scale `k = 1`:
 | `StrategyMini` | `(1, 1)` | both | `1` | `1` | `0` |
 | `StrategyB4` | `(1, 0)` | growth | `1` | `1` | `0` |
 | | | fall | `0` | `0` | `0` (all USDC) |
-| `StrategyPro` | `(1, −1/φ)` | growth | `1` | `1` | `0` |
-| | | fall | `−0.618033988749894848` | `0` | `−0.618033988749894848` |
+| `StrategyPro` | `(1, −1)` | growth | `1` | `1` | `0` |
+| | | fall | `−1` | `0` | `−1` (full short) |
 | `StrategyProMax` | `(φ, −φ)` | growth | `1.618033988749894848` | `1` | `+0.618033988749894848` |
 | | | fall | `−1.618033988749894848` | `0` | `−1.618033988749894848` |
 
@@ -112,11 +112,16 @@ Mid-transition example — `StrategyMini` at the same instant: same-sign path, `
 
 Strategies are **view-only**. `IStrategy.targets()` returns a pair of `int256`; a strategy holds no authority over funds and is never called again after selection.
 
-### Structural leverage (Pro Max long) — specified, engine wiring pending
+### Structural sizing — leverage bounded by confirmed extremes
 
-For a leveraged long (base `g = |growth| > 1`, i.e. Pro Max), the *effective* leverage is not a flat multiple. It is bounded by the cycle's confirmed structural lows: `L = min(g·p/(p−floor), p/(p−cap))`, where `floor`/`cap` are two ratcheted lows (the previous cycle bottom and the post-halving-window low). Leverage is highest near a structural low and decays toward `1×` for a late entry; the position is sized **once per regime and held**, not rebalanced to a moving NAV. This is [SPECIFICATION §7b](../spec/SPECIFICATION.md) and the pure math lives in [`StructuralLeverage.sol`](../src/libraries/StructuralLeverage.sol).
+A leveraged position's liquidation is placed at a *structurally confirmed* price — a level the market already printed and failed to regain — realized by **margin size** (`margin = notional/L`), never by stop orders. One reflected rule covers both sides ([SPECIFICATION §7b](../spec/SPECIFICATION.md); pure math in [`StructuralLeverage.sol`](../src/libraries/StructuralLeverage.sol)):
 
-> **Status:** implemented and tested. `B4VaultEngine._planPerpStep` sizes the perp from `StructuralLeverage` and **holds** it (the sizing price is frozen at entry, so a price move no longer re-trades the position — `test/unit/StructuralSizing.t.sol`), and `B4Pool.sampleAnchor` ratchets the two window lows (`test/unit/AnchorRatchet.t.sol`). Still funded-gate-blocked like the rest of the protocol, and the anchor sampling depends on a keeper each window. See [`../REPORT.md`](../REPORT.md).
+- **Long (bottom):** `stop = min(p − (p−floor)/g, cap)` — anchored to the confirmed lows (`floor` = previous cycle bottom, `cap` = most recent confirmed low, ratcheted by [`B4Pool.sampleAnchor`](../src/core/B4Pool.sol)). Leverage is highest near the confirmed low, decays for a late entry, refuses below the floor.
+- **Short (top):** `stop = max(p + (MaxStop−p)·(g−1), C)` with `MaxStop = C + (C−prevPeak)·(g−1)` — anchored to the confirmed highs (`C` = this cycle's peak-window max, `prevPeak` = the previous cycle's). Leverage decreases with entry depth, pins its stop to the confirmed peak, and deliberately sizes below `1×` deep in the fall — the small position with the far stop is what survives bear-market rallies.
+
+Positions are sized **once per regime and held** — the sizing price and its anchors are captured together and frozen; the calendar, not NAV drift, is the rebalance schedule. Verified on every completed cycle: the structural stop was never touched, while a flat-`φ` position is liquidated by the +99–103 % bear rallies (short) or the −64 % COVID crash (long).
+
+> **Status:** `StructuralLeverage` (both sides, unit-tested) and the low-side ratchet are on-chain; the engine sizing is flat-`φ` pending the §7b redo, whose requirements are bound by [`../AUDIT-2026-07-structural-leverage.md`](../AUDIT-2026-07-structural-leverage.md).
 
 ---
 
@@ -142,7 +147,7 @@ fallTarget   = rf;
 Consequences worth internalizing:
 
 - The core stores **no product names** — only two signed numbers. A strategy address is an input, not a dependency.
-- The hard cap is `|resolved| ≤ φ`. `StrategyProMax` already sits at `|φ|`, so **any** `scaleWad > 1e18` on ProMax reverts with `BadPolicy`. `StrategyPro` at `k = 1.5` resolves to `(1.5, −0.927…)` and is accepted.
+- The hard cap is `|resolved| ≤ φ`. `StrategyProMax` already sits at `|φ|`, so **any** `scaleWad > 1e18` on ProMax reverts with `BadPolicy`. `StrategyPro` (`{1, −1}`) at `k = 1.5` resolves to `(1.5, −1.5)` — a `1.5×` long / `1.5×` short — accepted because `1.5 < φ ≈ 1.618`.
 - A later `selectPolicy` (or a scale change) **rebalances this same vault in place**. It is never an exit and never a penalty; the resulting trades are ordinary sync steps. It is rejected while an exit is pending (`ExitPending`).
 
 ---

@@ -101,7 +101,10 @@ contract CalendarTest is Test {
         (s, p) = Calendar.decompose(5e17);
         assertEq(s, 5e17);
         assertEq(p, 0);
-        (s, p) = Calendar.decompose(-int256(Phi.INV_PHI)); // Pro fall
+        (s, p) = Calendar.decompose(-int256(Phi.WAD)); // Pro fall: full 1× short
+        assertEq(s, 0);
+        assertEq(p, -int256(Phi.WAD));
+        (s, p) = Calendar.decompose(-int256(Phi.INV_PHI)); // generic sub-unit short
         assertEq(s, 0);
         assertEq(p, -int256(Phi.INV_PHI));
     }

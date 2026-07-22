@@ -20,7 +20,7 @@ contract StrategyB4 is IStrategy {
 
 contract StrategyPro is IStrategy {
     function targets() external pure returns (int256, int256) {
-        return (int256(Phi.WAD), -int256(Phi.INV_PHI)); // hedge: short 1/φ in fall
+        return (int256(Phi.WAD), -int256(Phi.WAD)); // full short 1× in fall (mirror of the long)
     }
 }
 

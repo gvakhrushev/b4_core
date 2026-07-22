@@ -1,18 +1,33 @@
-# Proposal: structural leverage floor (v2 mechanism)
+# Design record: structural sizing — leverage bounded by confirmed extremes
 
-**Status (2026-07-21): specified, wired, and tested.** The mechanism is normative
-(`spec/SPECIFICATION.md` §7b + §3, `spec/HAZARDS.md` §C5) and fully implemented: the pure math
-(`src/libraries/StructuralLeverage.sol`), the on-chain anchor ratchet (`B4Pool.sampleAnchor`),
-and the engine sizing (`B4VaultEngine._planPerpStep` — sized once at the frozen price, held).
-230/230 green, B4Vault unchanged at 24,195 B, deep campaign 8/8, slither exit 0. This file is
-the design record; `REPORT.md` lists the residual items for the external audit. It still
-carries the pre-mainnet, unaudited, funded-gate caveats of the whole protocol.
+**Status (2026-07-22): mechanism fully specified for BOTH sides (spec §7b) and verified on
+all completed cycles; pure math + low-side ratchet shipped; engine sizing is flat-`φ` pending
+the §7b redo.** A first engine wiring was written, passed a shallow test set, was reported
+done — then a dedicated post-implementation adversarial audit (see
+[`AUDIT-2026-07-structural-leverage.md`](AUDIT-2026-07-structural-leverage.md)) found it unsafe
+and it was reverted. Two independent Critical/High clusters:
 
-**Decisions on the three open questions:** (1) structural `L` replaces the flat sizing for
-leveraged products, with the venue `maxLeverage` a hard technical ceiling on top; (2) the
-ratchet moves **up only** — a lower low across cycles does not raise leverage; (3) only
-Pro Max (base growth `> 1`) uses the multiplier — Pro's growth is `1` (plain spot) and shorts
-stay flat `φ`.
+1. **The safety half was never implemented (audit C6).** The engine kept the pre-mechanism
+   flat reserve `margin = notional·φ/maxLev` and only *amplified the size*. `StructuralLeverage`
+   changed how big the position is, never where it liquidates — so the venue liquidation stayed
+   ~4 % below entry, not at the structural stop. Every "survives COVID / survives May-2021"
+   claim below holds for the **math library only**, never for the shipped sizing. `stopWad` was
+   dead code. This is worse than not shipping: a bigger position at the same tight liquidation.
+2. **Frozen price × live anchors detonate a held position (audit C1/C4).** `_perpMultiplier`
+   read the live anchors every crank but the sizing price was frozen at entry; the two are only
+   valid captured together. At the halving flip a permissionless `sampleAnchor` raised `floor`
+   just below the frozen entry, the delta collapsed, computed leverage exploded to ~25×, and the
+   engine force-bought into the held position — near-instant liquidation of the whole reserve.
+
+The engine is back to flat-`φ` sizing (safe). The full mechanism — margin `= notional/L`, whole
+deposit deployed, frozen price captured *with* its anchors, refusal → spot-only — is a dedicated
+future round (spec §7b already describes the target; the wiring must match it and carry the
+mandated regressions). Pre-mainnet, unaudited, funded-gate caveats of the whole protocol still
+apply on top.
+
+All design decisions are settled — see **Decisions (settled by the owner)** below. The short
+side is symmetric (confirmed-high anchors), superseding the original "shorts flat `φ`"
+scoping.
 
 ## Problem being fixed
 
@@ -95,16 +110,18 @@ Once opened, notional is **not** recomputed against NAV. The next resize happens
 the calendar moves the target (a new zone, a deposit, or a policy change). This is the
 "set-and-forget within a zone" behaviour and the fix for defect 1.
 
-### Shorts, genesis, scope
+### Genesis and scope
 
-- **Shorts (fall regime): flat `φ`, no multiplier** in this version — there is no structural
-  ceiling above a short, so the floor mechanism is long-only for now.
+- **Shorts are structural too** — the symmetric top-side mechanism, derived and verified
+  2026-07-22, is specified in its own section below (this supersedes the original
+  "shorts flat `φ`, long-only for now" scoping).
 - **Genesis (first cycle): `floor = 0`, no `cap`** until the first window closes → the
-  formula degrades exactly to the current flat behaviour. No special-case code path.
-- **Scope: the multiplier is a property of the leveraged, perp-bearing products** (Pro Max;
-  Pro optionally). Mini/B4 never carry a perp and are untouched. The operator's route sets
-  the multiplier ceiling; the floor mechanism sets where it is *applicable* — together they
-  bound realized risk (the two-part framing).
+  formula degrades exactly to the flat behaviour. No special-case code path. Mirrored on the
+  short side: no confirmed `prevPeak` → flat base.
+- **Scope: the multiplier is a property of the leveraged products** (base `> 1`, i.e.
+  Pro Max on both sides). Mini/B4 never carry a perp; Pro's base is `1` on both sides and
+  stays flat. The operator's route sets the base; the structural anchors set where it is
+  *applicable* — together they bound realized risk.
 
 ## Verification against real data (already run)
 
@@ -120,34 +137,121 @@ The single raw-φ formula (no cap) would have been **liquidated in COVID** (stop
 low 3850); the cap is what saves it. This makes **"COVID-2020 survives"** and
 **"May-2021 survives"** mandatory regressions.
 
-## Open implementation questions (need your call — not re-opening the design)
+## Decisions (settled by the owner)
 
-1. **Reconciling with the existing safety reserve.** The shipped code sizes margin from a
-   fixed ratio: `notional ≤ margin·maxLeverage/φ`. The new mechanism sizes margin from the
-   stop distance. Proposal: the structural leverage `L` **replaces** the flat sizing for
-   leveraged products, and the venue `maxLeverage` remains a hard technical ceiling on top
-   (so near the floor, where the formula would give huge `L`, the venue's 50×/200× binds
-   first — your point 2). Confirm this is the intended relationship.
+1. **Structural `L` replaces the flat sizing** for leveraged products; the venue
+   `maxLeverage` remains the hard technical ceiling on top (near an anchor, where the
+   formula gives large `L`, the venue's limit binds first). *(2026-07-20)*
+2. **The `cap` ratchets up only** — a lower low across cycles does not raise leverage.
+   *(2026-07-20)*
+3. **Only base `> 1` products use the multiplier** — Pro (`{1, −1}`) stays flat on both
+   sides; the ladder is `{1,1}, {1,0}, {1,−1}, {φ,−φ}`. *(2026-07-21)*
+4. **The short side is symmetric** (section below): confirmed-high anchors, monotone
+   de-levering with depth, sub-`1×` deep entries kept (they are the safety), no far-future
+   leverage cap beyond the venue max — a new contract version ships per cycle. *(2026-07-22)*
+5. **Window entries are DCA slices** — one order per day across the opening half-window;
+   the calendar knows *when*, not *at what price*, so the entry is the window average, never
+   a limit order waiting for an extreme that may not print. *(2026-07-22)*
 
-2. **Monotonic ratchet guard.** If a cycle prints a structural low *below* the previous one
-   (a deeper bear than last cycle), the `cap` would move **down**. Safe default: the cap
-   ratchets **up only** — a lower new low does not raise leverage, it just isn't adopted as a
-   higher cap. Confirm, or specify that a lower low genuinely lowers the cap (also safe, just
-   different).
+## Symmetric short side (added 2026-07-22, owner-derived & verified)
 
-3. **Does `Pro` (not just `Pro Max`) get the multiplier?** Pro's growth target is `1`
-   (no leverage in growth) and its fall target is `−1/φ` (short). Under "shorts flat φ,
-   long-only multiplier," Pro is effectively untouched. Confirm Pro is out of scope and only
-   Pro Max (and any future `>1` growth product) uses it.
+The short side is no longer flat `φ`. It mirrors the long: bounded by the cycle's confirmed
+structural **highs** instead of lows. Owner-derived, verified on all four cycles.
 
-## Execution plan on approval
+### Anchors and the window
 
-1. `spec/SPECIFICATION.md` §7 + `spec/HAZARDS.md` new §C5 — the normative text above.
-2. Sizing bug fix: event-driven resize (entry / deposit / zone change), no NAV tracking.
-3. On-chain min-ratchet for the two windows; the structural-leverage sizing on top.
-4. Regressions: `COVID-2020 survives`, `May-2021 survives`, `entry-below-fresh-low opens`,
-   `position not resized mid-zone`, `stop realized by margin`, `genesis degrades to flat`.
-5. Rebuild `test/backtest/Backtest.t.sol` on the real mechanic (fixed-notional within a zone
-   removes the daily-rebalance volatility drag — the 2013 trough becomes ~8x of deposit, not
-   the ~3x the current daily-rebalanced model shows).
-6. Update `docs/11-backtest.md` and the whitepaper's risk framing.
+- `prevPeak` — the previous cycle's confirmed peak. `C` — this cycle's confirmed peak = the max
+  over the 20-day window ending at the 38.2% pivot.
+- **The 20-day window is structural, not tuned.** Width `= q² = (φ⁻³/2)²` of the cycle ≈ 20.3
+  days, where `q = φ⁻³/2 = 0.118034` is the same quantum that places the 38.2/61.8 pivots
+  (`0.5 ± q`). The cycle peak forms at `0.382 − q² ≈ 0.368`; verified on cycle 4 (base
+  2024-04-19/20): the 38.2% pivot lands ~2025-10-26/30 and the window max is the real ATH region.
+
+### The two regimes (because `C` is unknown until the window closes)
+
+Let `θ = φ − 1 = 1/φ = 0.618`.
+
+- **Opening window (days 11–20 of the peak window; longs close days 1–10, shorts open days
+  11–20 by daily DCA; `C` unknown).** Each slice at price `p`:
+  `stop = p + (p − prevPeak)·θ`, so `L = φ·p/(p − prevPeak)`. Anchor is `prevPeak` (known). The
+  last slice (`p ≈ C`) lands on `MaxStop`, joining the next regime.
+- **After 38.2 (`C` confirmed).** `MaxStop = C + (C − prevPeak)·θ`;
+  `stop = max( p + (MaxStop − p)·θ,  C )`. Leverage **decreases monotonically** as the entry
+  falls, exceeds `φ` only for an entry above `C`, and pins to `C` (the min stop) for deep
+  entries. (An earlier draft used the window formula here and produced a spurious mid-fall
+  leverage peak — corrected: the post-pivot anchor is `MaxStop` from above, not `prevPeak`.)
+
+Worked (cycle 4, `prevPeak = 67k`, `C = 115k`, `MaxStop = 144.7k`): entry 120k → `L 7.87×`
+(above `C`); 108k → `4.77×`; 97k → stop 126k, `3.29×`; 80k → `2.00×`; 60k → pinned `C`, `1.09×`;
+50k → `0.77×`. Per-cycle peak-entry boost over `φ` = `C/(C − prevPeak)`: +4% / +33% / +143%
+(cycles 2/3/4) — it grows as BTC matures (peak-over-peak growth shrinks). No far-future cap is
+specced: the venue `maxLeverage` is the technical ceiling, and a new contract version ships per
+cycle (owner decision, 2026-07-22).
+
+### Why it is sound — two verified facts
+
+1. **The structural stop is never hit.** Across all four cycles the fall's price never returns
+   to `C` (post-pivot max is 2–23% below `C`). So the short survives the entire fall (−49…−81%
+   price decline captured) with a stop that is never touched.
+2. **Flat-`φ` would be liquidated; the structural stop is why deep shorts de-lever.** The
+   biggest bear-market rally inside the fall was **+103%** (cycle 1, $152→$310) and **+99%**
+   (cycle 2, $5,921→$11,780) — both past the `+61.8%` that liquidates a flat-`φ` short. A deep
+   short pinned to the far `C` survives (cycle-1 $152 entry: `0.27×`, stop $712, the +103% bounce
+   costs only ~28% of margin). So a deep entry MUST de-lever below `φ` (and below `1×`); the
+   small size with a distant stop is the safety, not a defect. This retires the earlier
+   "refuse `L<1`" question — `L<1` is the mechanism, kept.
+
+### Symmetry / redo scope
+
+The long side (§7b top) is currently the *window* regime only (anchor `floor`, bounded by
+`cap`). The redo generalises **both** sides to the window + post-pivot pair above, so top and
+bottom are one reflected mechanism. The long's post-pivot regime uses `MinStop = B − (B −
+prevBottom)·θ` and `stop = min(p − (p − MinStop)·θ, B)` — the exact reflection.
+
+**Bottom side verified empirically (2026-07-22), mirror holds with one caveat:**
+
+| cycle | bottom `B` | frac of cycle | struct stop at `B` hit? | biggest recovery pullback | flat-`φ` long |
+|---|---:|---:|:--:|---:|---|
+| 1 | $181 | 0.532 | never | −48% | survives |
+| 2 | $3,153 | 0.608 | never | **−64%** (COVID) | **liquidated** |
+| 3 | $15,954 | 0.632 | never | −28% | survives |
+
+- **Clean mirror of the top, where it matters:** the recovery **never returns below the
+  confirmed bottom `B`** in any cycle (post-bottom low +1.1…+9.8% above `B`) — so the structural
+  long stop is never hit, exactly as the fall never returns to `C`. And the COVID −64% crash
+  (cycle 2) **liquidates a flat-`φ` long** ($13,838→$4,953) while the structural stop at `B`
+  ($3,153 < $4,953) survives — the mirror of the short's +99–103% bear-rally case.
+- **`B` is the min of the 62-window `[0.618, 0.632]`, not a single bar** — the mirror of `C` as
+  the max of the peak window. This yields the canonical structural lows exactly:
+  `B = $222 / $3,504 / $16,499` (cycles 1/2/3), the same lows used throughout the spec/demo.
+- **Catching the exact bottom does NOT matter — what matters is post-62 survival.** With
+  `B` from the window, the structural long stop `0.382·B = $85 / $1,339 / $6,303` sits ~62%
+  below `B`, and after the window price dips only **−3% to −4%** below `B` — leaving the low
+  **+151% to +154% above the stop**. A `φ` opening survives with enormous margin regardless of
+  whether the window pins the exact low; a window off by a few percent moves a stop already ~62%
+  away. Entering *below* the window low simply boosts leverage (`≈ 1.65×`), the mirror of the
+  short entering above `C`. So the design metric is post-62 drawdown + `φ`-survival (both
+  confirmed and remarkably uniform across cycles), not exact-extreme capture — identical to the
+  top. (For reference the true bottoms land at `0.532 / 0.608 / 0.632`, converging to
+  `0.632 = 0.618 + q²`, the reflection of the peak at `0.368`; not load-bearing.)
+
+## State of execution
+
+Done: spec §7b (both sides) + HAZARDS §C5; `StructuralLeverage` pure math for long AND short
+(`test/unit/StructuralLeverage.t.sol`, `StructuralLeverageShort.t.sol`); the low-side
+on-chain ratchet (`B4Pool.sampleAnchor`, `AnchorRatchet.t.sol`); the benchmark rebuilt on the
+held mechanic with structural sizing on both sides (`test/backtest/Backtest.t.sol`,
+`docs/11-backtest.md`).
+
+Remaining — the §7b engine redo, requirements bound by
+[`AUDIT-2026-07-structural-leverage.md`](AUDIT-2026-07-structural-leverage.md):
+
+1. `margin = notional/L`; assert the venue liquidation equals `stopWad`/`shortStopWad`
+   (regression on the *liquidation price*, not order size).
+2. Sizing price captured **with** its anchors, both frozen for the position's life; a
+   calendar zone change re-derives, never a silent re-lever at a stale price.
+3. Refusals: long `p ≤ floor` → spot-only; short `p ≥ MaxStop` → flat base; unconfirmed
+   anchors → flat base. Whole deposit deployed (no idle reserve); degradations explicit.
+4. The high-side ratchet (peak-window max, mirror of `sampleAnchor`).
+5. Tests MUST cross a halving with a held position and sample anchors mid-hold.
+6. A fresh post-implementation adversarial round before merge.
