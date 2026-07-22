@@ -51,13 +51,16 @@ peak-to-trough of `navWad()`.
 | **Pro** | **1,410,032x** | **268×** | **73.9 %** |
 | **Pro Max** | **9,728,705x** | **1,850×** | **73.9 %** |
 
-> **Pending audit.** The V6-M-2 fix that lets the short self-fund is regression-green (269/269)
-> but has not yet passed the adversarial fan-out audit our discipline requires for a core
-> money-routing change. Treat the Pro/Pro Max figures as pending that gate.
+> **Audit status.** The V6-M-2 fix passed its adversarial fan-out audit
+> ([AUDIT-V7](audits/AUDIT-V7.md)) — no Critical/High, every finding low and NAV-preserving. The
+> self-funded position sizes on strategy value net of the carved margin, landing a few percent
+> under `|perpF|·NAV` at the BTC perp's `maxLev = 40`.
 >
-> **Pro Max downside is understated twice:** the test venue models no liquidation (a `φ`-long
-> through a deep enough drawdown would be liquidated live), and `navWad` excludes unrealized perp
-> PnL (B3). The engine also sizes leverage flat-`φ`, not the structural stops below.
+> **Pro Max is 1× in the growth phase under BTC-only funding** — a leveraged long needs margin on
+> top of full spot, which selling spot cannot provide; its `φ` edge is the fall short and the
+> recovery long. Its downside is also understated: the test venue models no liquidation (a `φ` leg
+> through a deep drawdown would be liquidated live), and `navWad` excludes unrealized perp PnL (B3).
+> The engine sizes flat-`φ`, not the structural stops below.
 
 ## Per cycle
 
@@ -90,8 +93,8 @@ materially less than Mini every cycle.
 - **The short's edge is largest in the deepest fall (cycle 1) and compresses later** as the
   cycle falls get shallower — but it never inverts: Pro/Pro Max beat B4 in every cycle.
 - **Realizing at the exit matters for the leveraged legs.** Because `navWad` excludes unrealized
-  PnL (B3), Pro Max's recovery perp-long is invisible until the per-cycle exit realizes it — which
-  is why the realized cycle-1 figure (365.6×) is well above the unrealized mark.
+  perp PnL (B3), a leg's gain is invisible until the per-cycle exit realizes it — which is why
+  Pro Max's realized cycle-1 figure (365.6×) is well above the unrealized mark.
 
 ## The survival record — the *designed* structural sizing
 

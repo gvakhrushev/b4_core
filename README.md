@@ -218,17 +218,20 @@ profit), so it lands just under raw buy-and-hold (~5,200x) — see
 > shows the mechanism faithfully; it cannot promise a live keeper reproduces the multiple to the
 > digit.
 >
-> **The [V6-M-2](docs/audits/AUDIT-V6.md) engine fix that lets the short self-fund is
-> regression-green (269/269) but has not yet passed the adversarial fan-out audit our discipline
-> requires for a core money-routing change** — treat these Pro/Pro Max figures as pending that gate.
+> **The [V6-M-2](docs/audits/AUDIT-V6.md) engine fix that lets the short self-fund passed its
+> adversarial fan-out audit ([AUDIT-V7](docs/audits/AUDIT-V7.md)) with no Critical/High — every
+> finding is low and NAV-preserving** (no fund loss, no freeze). Known bounded edges: the
+> self-funded position sizes on strategy value net of the carved margin, so it lands a few percent
+> under `|perpF|·NAV` at the BTC perp's `maxLev = 40` (more at low `maxLev`); a mixed BTC+USDC
+> deposit has a NAV-neutral owner-margin/strategy accounting edge.
 >
-> **Two structural understatements of Pro Max's downside.** (1) The test venue models **no
-> liquidation**: a `φ`-leveraged long held through a deep enough drawdown would be liquidated on
-> the real venue, which the benchmark does not simulate — so Pro Max's *maxDD* rows understate its
-> true leveraged risk. (2) Drawdown is measured on `navWad`, which excludes unrealized perp PnL
-> (B3); between the per-cycle exits, a losing leg's mark is not in the number. The shipped engine
-> also sizes leverage **flat-`φ`** (structural leverage is designed, not wired — §7b), so Pro Max
-> is a flat 1.618×, not the confirmed-extreme stops the survival record below illustrates.
+> **Pro Max is not `φ`-levered for the whole cycle under BTC-only funding.** A leveraged *long*
+> needs margin *on top* of 100 % spot, which selling spot cannot provide — so Pro Max runs **1× in
+> the growth phase**; its `φ` edge is the fall short (funded by selling spot) and the recovery long
+> (funded by the closed short). Its downside is also understated twice: the test venue models **no
+> liquidation** (a `φ` leg through a deep drawdown would be liquidated live), and `navWad` excludes
+> unrealized perp PnL (B3). The engine sizes **flat-`φ`**, not the confirmed-extreme structural
+> stops the survival record below illustrates (§7b, designed-not-wired).
 
 ### The survival record — the safety mechanism, measured
 

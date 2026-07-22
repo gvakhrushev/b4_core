@@ -42,7 +42,10 @@ jobs:
         run: forge fmt --check
 
       - name: Run Forge build
-        run: forge build --sizes
+        # Size gate covers PRODUCTION contracts only. Test harnesses (e.g. EngineHarness)
+        # inherit the full engine for leg-level access and are never deployed, so EIP-170
+        # does not apply to them; skipping test/script keeps the gate meaningful.
+        run: forge build --sizes --skip 'test/**' --skip 'script/**'
 
       - name: Run Forge tests
         run: forge test -vvv
