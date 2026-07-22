@@ -33,7 +33,7 @@ Reference products at scale `1` (core derives `spot = clamp(target,0,1)`, `perp 
 | Mini | `1 spot` | `1 spot` | none after deposit |
 | B4 | `1 spot` | `1 USDC` | directional/USDC spot |
 | Pro | `1 spot` | `1 USDC − 1 perp` | spot + perp (separate margin) |
-| Pro Max | `1 spot + (φ−1) perp` | `1 USDC − φ perp` | spot + perp (separate margin) |
+| Pro Max | `1 spot + (L−1) perp` | `1 USDC − L perp` | spot + perp (separate margin); `L` structural per §7b (base `φ`) |
 
 - A **product is a `(growth, fall)` pair**; the core stores no product names. A strategy
   contract is read once at selection; later strategy mutation MUST NOT change stored targets

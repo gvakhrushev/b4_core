@@ -205,26 +205,32 @@ invariant campaign 512×256 green (8/8, 131,072 calls each, zero reverts), size 
 3. ~~Amend the specification package with the two errata~~ — done 2026-07-18
    (SPECIFICATION.md §4/§9, WHITEPAPER.md §4, HAZARDS.md §C decisions, TEST_PLAN.md §3b).
 
-## Structural leverage (2026-07-21): library + ratchet shipped; engine wiring REVERTED after audit
+## Structural sizing (2026-07-21/22): both sides specified + math shipped; engine wiring REVERTED after audit
 
-A sizing mechanism specified in `SPECIFICATION.md` §7b, `HAZARDS.md` §C5 and
-`PROPOSAL-structural-leverage.md`: a leveraged long's effective leverage is bounded by the
-cycle's confirmed structural lows — `L = min(g·p/(p−floor), p/(p−cap))` — the position is sized
-once per regime and **held**, and the posted margin equals `notional/L` so the venue liquidation
-sits at the structural stop. Preceded by a design + adversarial-critique round (which caught an
-inverted fail-safe claim in the spec). **Two of the three parts are on-chain and safe; the
-third — the engine sizing — was written, reported done, then failed a dedicated
+The mechanism specified in `SPECIFICATION.md` §7b, `HAZARDS.md` §C5 and
+`PROPOSAL-structural-leverage.md`: every leveraged position's liquidation sits at a
+*structurally confirmed* extreme, realized by margin size (`margin = notional/L`) — longs
+bounded by the confirmed lows (`stop = min(p − (p−floor)/g, cap)`), shorts by the confirmed
+highs (`stop = max(p + (MaxStop−p)·(g−1), C)`, `MaxStop = C + (C−prevPeak)·(g−1)`), sized once
+per regime and **held**. Verified on every completed cycle: the structural stop was never
+touched, while flat-`φ` is liquidated by the +99–103 % bear rallies (short) and the −64 %
+COVID crash (long). Preceded by a design + adversarial-critique round (which caught an
+inverted fail-safe claim in the spec). **The math and the low-side ratchet are on-chain and
+safe; the engine sizing was written, reported done, then failed a dedicated
 post-implementation audit and was reverted.**
 
 **On-chain now (safe, but unused by the engine):**
 
-1. `src/libraries/StructuralLeverage.sol` — the pure math; 8 unit tests pin the March-2020
-   survival case, May-2021, the post-halving flip, and genesis = flat φ. (Survival is a property
-   of the **math**; it is realized only if the engine posts `margin = notional/L`, which it does
-   not yet — see below.)
+1. `src/libraries/StructuralLeverage.sol` — the pure math, BOTH sides. Long: 8 unit tests pin
+   the March-2020 survival case, May-2021, the post-halving flip, and genesis = flat φ.
+   Short (added 2026-07-22): 11 unit tests pin the owner-verified window/post-pivot numbers,
+   monotone de-levering, the sub-1× deep entry, the +99 % 2018 rally survival, and all
+   refusal/genesis fallbacks. (Survival is a property of the **math**; it is realized only if
+   the engine posts `margin = notional/L`, which it does not yet — see below.)
 2. `B4Pool.sampleAnchor` / `anchors` — a permissionless, sampling-only min-ratchet over the
    62-window and the post-halving window, per directional asset; 7 tests. More sampling lowers
-   the anchor (⇒ lower leverage), so it depends on a keeper sampling each window.
+   the anchor (⇒ lower leverage), so it depends on a keeper sampling each window. The
+   symmetric max-ratchet (peak-window highs) is specified in §7b and is part of the redo.
 
 **Reverted (was `B4VaultEngine._planPerpStep`):** the engine currently sizes leveraged perps at
 flat `φ`, not structurally. The [2026-07-21 adversarial audit](AUDIT-2026-07-structural-leverage.md)
@@ -245,8 +251,10 @@ C7 ("whole deposit deployed" absent — USDC deposits sit idle, dir-only Pro Max
 silently), C9/C10 (demo errors, since fixed). The audit record lists all 10 plus 5 uncovered
 surfaces the critic flagged and pre-registers the attack surface for the redo.
 
-**Next round (not started):** the full mechanism — `margin = notional/L`, whole deposit deployed,
-frozen price captured *with* its anchors, refusal → spot-only, plus the mandated regressions and
-a test suite that actually crosses a halving with a held position and checks the venue liquidation
-against `stopWad`. Design-before-code, then a fresh adversarial pass. Until then the leverage
-figures in the demo and docs are the **design target, explicitly labelled, not shipped behaviour.**
+**Next round (not started):** the full symmetric mechanism — `margin = notional/L` on both
+sides, whole deposit deployed, sizing price captured *with* its anchors and both frozen,
+refusal → spot-only (long) / flat base (short), the high-side ratchet, plus the mandated
+regressions: a test suite that crosses a halving with a held position, samples anchors
+mid-hold, and checks the venue liquidation against `stopWad`/`shortStopWad`.
+Design-before-code, then a fresh adversarial pass. Until then the engine sizes flat-`φ` and
+the leverage figures in the demo and docs are the design target, labelled as such.

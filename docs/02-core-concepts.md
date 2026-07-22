@@ -112,11 +112,16 @@ Mid-transition example — `StrategyMini` at the same instant: same-sign path, `
 
 Strategies are **view-only**. `IStrategy.targets()` returns a pair of `int256`; a strategy holds no authority over funds and is never called again after selection.
 
-### Structural leverage (Pro Max long) — DESIGNED, engine wiring reverted after audit
+### Structural sizing — leverage bounded by confirmed extremes
 
-For a leveraged long (base `g = |growth| > 1`, i.e. Pro Max), the *effective* leverage is not a flat multiple. It is bounded by the cycle's confirmed structural lows: `L = min(g·p/(p−floor), p/(p−cap))`, where `floor`/`cap` are two ratcheted lows (the previous cycle bottom and the post-halving-window low). Leverage is highest near a structural low and decays toward `1×` for a late entry; the position is sized **once per regime and held**, not rebalanced to a moving NAV, and the posted margin equals `notional/L` so the venue liquidation sits at the structural stop. This is [SPECIFICATION §7b](../spec/SPECIFICATION.md) and the pure math lives in [`StructuralLeverage.sol`](../src/libraries/StructuralLeverage.sol).
+A leveraged position's liquidation is placed at a *structurally confirmed* price — a level the market already printed and failed to regain — realized by **margin size** (`margin = notional/L`), never by stop orders. One reflected rule covers both sides ([SPECIFICATION §7b](../spec/SPECIFICATION.md); pure math in [`StructuralLeverage.sol`](../src/libraries/StructuralLeverage.sol)):
 
-> **Status (2026-07-21): NOT wired into the engine.** The pure math ([`StructuralLeverage.sol`](../src/libraries/StructuralLeverage.sol)) and the anchor ratchet ([`B4Pool.sampleAnchor`](../src/core/B4Pool.sol), `test/unit/AnchorRatchet.t.sol`) are on-chain and safe. A first wiring of `B4VaultEngine._planPerpStep` was written and reported done, then **failed a dedicated adversarial audit and was reverted**: it amplified position *size* but never posted `margin = notional/L`, so the structural stop was never realized, and a held position re-levered at the halving flip. **The engine currently sizes leveraged perps flat-`φ`.** The full mechanism is a dedicated future round. See [`../AUDIT-2026-07-structural-leverage.md`](../AUDIT-2026-07-structural-leverage.md) and [`../REPORT.md`](../REPORT.md).
+- **Long (bottom):** `stop = min(p − (p−floor)/g, cap)` — anchored to the confirmed lows (`floor` = previous cycle bottom, `cap` = most recent confirmed low, ratcheted by [`B4Pool.sampleAnchor`](../src/core/B4Pool.sol)). Leverage is highest near the confirmed low, decays for a late entry, refuses below the floor.
+- **Short (top):** `stop = max(p + (MaxStop−p)·(g−1), C)` with `MaxStop = C + (C−prevPeak)·(g−1)` — anchored to the confirmed highs (`C` = this cycle's peak-window max, `prevPeak` = the previous cycle's). Leverage decreases with entry depth, pins its stop to the confirmed peak, and deliberately sizes below `1×` deep in the fall — the small position with the far stop is what survives bear-market rallies.
+
+Positions are sized **once per regime and held** — the sizing price and its anchors are captured together and frozen; the calendar, not NAV drift, is the rebalance schedule. Verified on every completed cycle: the structural stop was never touched, while a flat-`φ` position is liquidated by the +99–103 % bear rallies (short) or the −64 % COVID crash (long).
+
+> **Status:** `StructuralLeverage` (both sides, unit-tested) and the low-side ratchet are on-chain; the engine sizing is flat-`φ` pending the §7b redo, whose requirements are bound by [`../AUDIT-2026-07-structural-leverage.md`](../AUDIT-2026-07-structural-leverage.md).
 
 ---
 

@@ -6,25 +6,19 @@ import {Calendar} from "src/libraries/Calendar.sol";
 import {Phi} from "src/libraries/Phi.sol";
 import {StructuralLeverage} from "src/libraries/StructuralLeverage.sol";
 
-/// @title Historical demo — the calendar (shipped) + structural leverage (designed) over BTC.
+/// @title Historical benchmark — the calendar + the symmetric structural mechanism over BTC.
 /// @notice One benchmark table per cycle, HODL as the baseline row. A position is sized once
 ///         when the calendar rotates and then HELD (fixed units, equity linear in price — no
-///         rebalance drag).
+///         rebalance drag). Pro Max's leverage comes from `StructuralLeverage` on BOTH sides:
+///         longs bounded by the confirmed structural LOWS (floor/cap), shorts by the
+///         confirmed structural HIGHS (prevPeak / peak-window max) — the same library the
+///         engine consumes (SPECIFICATION §7b). Funding is charged on the full perp leg
+///         (a short is all-perp: fraction = L; a leveraged long's perp leg is L−1).
 ///
-///         **Two different maturity levels are shown together — read the disclaimer.** The
-///         calendar rotation (Mini/B4/Pro, and Pro Max's spot leg) is the SHIPPED mechanic.
-///         Pro Max's *leverage* column uses the DESIGNED structural-leverage mechanism
-///         (`StructuralLeverage` library + `B4Pool` anchor ratchet are on-chain, but the
-///         2026-07-21 audit found the vault-engine wiring unsafe — margin never realizes the
-///         structural stop, and a held position re-levers at the halving — so it was reverted;
-///         the engine currently sizes leveraged perps flat-φ, NOT structurally). The Pro Max
-///         leverage figures therefore illustrate the design target, not today's shipped code.
-///         See `REPORT.md` and `PROPOSAL-structural-leverage.md` for the wiring status.
-///
-///         **Illustration, not evidence of edge and not a forecast.** Three completed
-///         cycles is not a sample and never can be. Assumes entry at the halving, perfect
-///         calendar timing, infinite depth; omits slippage, market impact, trading fees
-///         and async execution delay.
+///         Status: the library and both anchor concepts are normative and tested; the
+///         vault-engine sizing is flat-φ pending the §7b redo (see REPORT.md). Illustration
+///         of the mechanism, not a forecast; three cycles is not a sample. Assumes entry at
+///         the pivots, infinite depth; omits slippage, impact, trading fees, async delay.
 ///
 ///         Run: `forge test --match-path 'test/backtest/*' -vv`
 contract BacktestTest is Test {
@@ -57,6 +51,8 @@ contract BacktestTest is Test {
         int256 floor_;
         int256 capG; // growth-long cap = post-halving-window low
         int256 capR; // recovery-long cap = 62-window low (re-seeded at T)
+        int256 peakC; // confirmed peak = max of the 20d window ending at the 38.2% pivot
+        int256 prevPeakC; // the previous cycle's confirmed peak (0 at genesis)
     }
 
     /// One row of the benchmark table.
@@ -153,6 +149,13 @@ contract BacktestTest is Test {
         if (m == type(int256).max) m = 0;
     }
 
+    /// Maximum close in `[a, b]` (the confirmed-peak windows of the short side).
+    function _windowMax(uint256 a, uint256 b) internal view returns (int256 m) {
+        for (uint256 i = 0; i < ts.length; i++) {
+            if (ts[i] >= a && ts[i] <= b && px[i] > m) m = px[i];
+        }
+    }
+
     // ------------------------------------------------------------------ the run
 
     function test_backtest_products() public {
@@ -188,11 +191,11 @@ contract BacktestTest is Test {
         view
         returns (Row[5] memory out)
     {
-        // Anchors, as B4Pool.sampleAnchor's ratchet would actually hold them (audit C10):
-        // floor = previous cycle's 62-window bottom (set by the halving flip, unchanged all
-        // cycle). The cap differs by regime, because the 62-window at T re-seeds it:
-        //  - growth long (opens at the halving): cap = this cycle's post-halving-window low;
-        //  - recovery long (opens at T): cap = this cycle's 62-window low (freshly re-seeded).
+        // Anchors, as the on-chain ratchets would hold them. LONG side (confirmed lows):
+        // floor = previous cycle's 62-window bottom; cap = post-halving-window low for the
+        // halving-entry long, 62-window low (re-seeded at T) for the recovery long.
+        // SHORT side (confirmed highs, mirror): peakC = this cycle's peak-window max (the
+        // 20 days ending at the 38.2% pivot); prevPeakC = the previous cycle's.
         Cyc memory k;
         k.frm = HALVINGS[c];
         k.nxt = c + 1 < 4 ? HALVINGS[c + 1] : ts[ts.length - 1];
@@ -203,6 +206,10 @@ contract BacktestTest is Test {
         k.capR = _windowMin(k.frm + Calendar.T, k.frm + Calendar.T + Calendar.W);
         k.pTop = _min(k.frm + Calendar.P, k.nxt);
         k.pBot = _min(k.frm + Calendar.T, k.nxt);
+        k.peakC = _windowMax(k.pTop - Calendar.W, k.pTop);
+        k.prevPeakC = c >= 1
+            ? _windowMax(HALVINGS[c - 1] + Calendar.P - Calendar.W, HALVINGS[c - 1] + Calendar.P)
+            : int256(0);
 
         console.log(
             string.concat(
@@ -220,19 +227,30 @@ contract BacktestTest is Test {
         out[0] = _hodl(k.frm, k.nxt);
         _print("  HODL   ", out[0], k.frm);
 
+        int256 shortLev;
         for (uint256 p = 0; p < 4; p++) {
             Acc memory a = Acc(WAD, WAD, WAD, 0, k.frm, WAD);
             // regime 1: long [frm, pTop] | regime 2: fall [pTop, pBot] | regime 3: long [pBot, nxt]
-            int256 lev = _regime(a, k.frm, k.pTop, prods[p].growth, k.floor_, k.capG);
-            _regime(a, k.pTop, k.pBot, prods[p].fall, k.floor_, k.capG); // short: cap unused
-            _regime(a, k.pBot, k.nxt, prods[p].growth, k.floor_, k.capR);
+            int256 lev = _regime(a, k.frm, k.pTop, prods[p].growth, k, false);
+            int256 levS = _regime(a, k.pTop, k.pBot, prods[p].fall, k, false);
+            _regime(a, k.pBot, k.nxt, prods[p].growth, k, true);
             // Pool income, credited once per cycle: the 20% penalised exits, redistributed.
             int256 pool = a.eq * POOL_U / WAD;
             a.eq += pool;
 
             out[p + 1] = Row(a.eq, a.maxDD, a.ddAt, a.low, pool, p == 3 ? lev : int256(0));
+            if (p == 3) shortLev = levS;
             _print(string.concat("  ", prods[p].name), out[p + 1], k.frm);
         }
+        console.log(
+            string.concat(
+                "  Pro Max structural leverage: long ",
+                _x(out[4].lev),
+                " at the halving, short ",
+                _x(shortLev),
+                " at the 38.2% pivot (stops at the confirmed lows/highs)"
+            )
+        );
         console.log("");
     }
 
@@ -272,8 +290,8 @@ contract BacktestTest is Test {
         uint256 from_,
         uint256 to_,
         int256 target,
-        int256 floor_,
-        int256 cap_
+        Cyc memory k,
+        bool recovery
     ) internal view returns (int256) {
         if (to_ <= from_) return WAD;
         Leg memory g;
@@ -281,19 +299,34 @@ contract BacktestTest is Test {
         g.dir = target >= 0 ? int256(1) : -int256(1);
         int256 mag = target >= 0 ? target : -target;
         if (target > WAD) {
-            // Leveraged long: structural leverage; a refusal (0) falls back to 1x spot.
+            // Leveraged long: structural leverage off the confirmed LOWS; a refusal (0)
+            // falls back to 1x spot.
             g.L = int256(
                 StructuralLeverage.leverageWad(
-                    uint256(g.entry), uint256(mag), uint256(floor_), uint256(cap_)
+                    uint256(g.entry),
+                    uint256(mag),
+                    uint256(k.floor_),
+                    uint256(recovery ? k.capR : k.capG)
                 )
             );
             if (g.L == 0) g.L = WAD;
+        } else if (target < -WAD) {
+            // Leveraged short: structural leverage off the confirmed HIGHS (post-pivot
+            // regime — the peak window has just closed at the 38.2% pivot). Genesis /
+            // unconfirmed (0) falls back to the flat base.
+            g.L = int256(
+                StructuralLeverage.shortLeverageWad(
+                    uint256(g.entry), uint256(mag), uint256(k.prevPeakC), uint256(k.peakC)
+                )
+            );
+            if (g.L == 0) g.L = mag;
         } else {
-            // target ∈ {0 flat/USDC, 1 spot, −1 or −φ short}: exposure = |target|, no
-            // structural amplification. A zero target is genuinely flat (exposure 0).
+            // target ∈ {0 flat/USDC, 1 spot, −1 short}: exposure = |target|, flat.
             g.L = mag;
         }
-        g.perp = g.L > WAD ? g.L - WAD : (target < 0 ? mag : int256(0));
+        // Funding accrues on the perp leg: a short is all-perp (fraction = L); a leveraged
+        // long's perp leg is L−1 on top of the 1x spot.
+        g.perp = target < 0 ? g.L : (g.L > WAD ? g.L - WAD : int256(0));
         g.eq0 = a.eq;
 
         for (uint256 i = 0; i < ts.length; i++) {

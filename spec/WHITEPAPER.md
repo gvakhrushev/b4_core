@@ -40,6 +40,15 @@ Each product is the previous one plus one more interior move at the two cycle pi
 much accepted holding risk to keep is the user's dial; the protocol takes no directional
 view on their behalf. `φ = 1.618033988749894848` (WAD).
 
+Where a product carries leverage, the leverage itself is a **safety mechanism**
+(`SPECIFICATION.md` §7b): the position's liquidation is placed by margin size at a
+*structurally confirmed* extreme — the cycle's confirmed low for a long, its confirmed peak
+for a short — a price the market has already printed and failed to regain. Across every
+completed cycle that stop was never touched, while a flat-`φ` position is liquidated by the
+recorded +99–103 % bear-market rallies (short side) or the −64 % COVID crash (long side).
+Deep entries deliberately de-lever rather than chase: the calendar knows *when*, never
+*at what price*.
+
 ## 3. The exposure equation
 
 For a signed target `n` (WAD directional beta), every product uses one decomposition:

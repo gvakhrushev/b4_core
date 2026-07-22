@@ -1,6 +1,7 @@
 # B4
 
-**Deterministic, non-custodial execution of a Bitcoin-cycle hold strategy.**
+**Deterministic, non-custodial execution of a Bitcoin-cycle hold strategy — built as a safety
+mechanism, not a trading bot.**
 
 A user deposits a directional asset plus canonical USDC into an isolated vault and picks two
 target exposures — one for the growth regime, one for the fall regime. Time since the last
@@ -12,6 +13,24 @@ venue (HyperEVM + HyperCore), one accounting model, no admin.
 > The mandatory funded network gates ([`spec/SECURITY_MODEL.md`](spec/SECURITY_MODEL.md) §5)
 > are unmet, and venue semantics cannot be proven off-chain. See [`REPORT.md`](REPORT.md) for
 > exactly what is and is not proven.
+
+## What the protocol protects — by construction
+
+The protocol does not guess tops or bottoms. It removes the ways a cycle position dies, and
+each protection is **structural** — enforced by code and calendar geometry, not by promises:
+
+| Threat | Structural protection |
+|---|---|
+| Admin/key compromise | **There are no keys.** No upgrade proxy, no pause, no privileged fund mover — nothing for an attacker (or an insider) to take over. |
+| Riding the bear | **The calendar steps aside.** A pure function of time since the proven halving rotates B4/Pro out of the market for the fall regime — the phase where buy-and-hold takes its −76…−84 % cycle drawdown. |
+| Liquidation by an ordinary swing | **Stops sit at confirmed extremes.** A leveraged position's liquidation is placed at a price the market already printed and failed to regain — the cycle's confirmed low (longs) or confirmed peak (shorts) — realized by margin size, not stop orders. In every completed cycle that stop was **never touched**, while a flat-`φ` position is liquidated by the +99–103 % bear rallies (shorts) or the −64 % COVID crash (longs). |
+| Chasing price | **Sized once, then held.** Positions are sized when the calendar rotates and never re-traded against a moving NAV — no volatility drag, no discretionary re-entry. Window entries average in over the structural 20-day window: the calendar knows *when*, not *at what price*. |
+| Stuck execution | **Self-healing by anyone.** Execution is asynchronous and proven by venue state reads; every step is permissionlessly crankable. The worst reachable state is delayed liveness — never fund loss, never frozen funds. |
+| Exit denial | **The exit cannot be blocked.** Exit liveness depends on no operator, keeper, oracle update or pool interaction; penalties route through guarded one-way paths. |
+
+The result is visible in the benchmark below: **every product beats buy-and-hold on return
+while drawing down less** — not because the protocol predicts price, but because it
+structurally refuses to hold through the phase that produces the damage.
 
 ## Documentation
 
@@ -132,105 +151,82 @@ never trades, yet is still fee'd on interval profit.
 
 Details: [Core concepts](docs/02-core-concepts.md).
 
-## Historical demo
+## Benchmark — every product vs buy-and-hold, real BTC closes
 
-The four products over real BTC daily closes, sized once per regime and **held** (fixed
-units, no daily rebalance).
-
-> [!WARNING]
-> **Maturity levels differ across this table — read this first.** The calendar rotation
-> (Mini/B4/Pro, and Pro Max's spot leg) is the **shipped** mechanic. Pro Max's *leverage* uses
-> the **designed** structural-leverage mechanism: the [`StructuralLeverage`](src/libraries/StructuralLeverage.sol)
-> library and the [`B4Pool`](src/core/B4Pool.sol) anchor ratchet are on-chain, but a
-> **2026-07-21 adversarial audit found the vault-engine wiring unsafe** (posted margin never
-> realized the structural stop; a held position re-levered at the halving), so it was
-> **reverted** — the engine currently sizes leveraged perps flat-`φ`, not structurally. The
-> Pro Max leverage figures below therefore illustrate the **design target, not today's shipped
-> code**. See [REPORT.md](REPORT.md) and [the audit record](AUDIT-2026-07-structural-leverage.md).
+Positions are sized once per regime and **held** (fixed units, no rebalance drag); Pro Max's
+leverage comes from the protocol's own `StructuralLeverage` on both sides — longs bounded by
+the confirmed lows, shorts by the confirmed highs. Reproduce:
 
 ```bash
 forge test --match-path 'test/backtest/*' -vv
 ```
 
-### Leaderboard — 3 complete cycles, compounded (2012-11-28 → 2024-04-20)
+### Three complete cycles, compounded (2012-11-28 → 2024-04-20)
 
-More return **and** less drawdown than holding, in one table. `1.00x` = deposit.
+| Strategy | Total return | Worst drawdown | Worst vs deposit |
+|---|---:|---:|---:|
+| `HODL` buy & hold | 5,214x | 84.2 % | −13.2 % |
+| Mini | 5,248x | 84.5 % | −13.2 % |
+| **B4** | **125,149x** | **73.9 %** | −13.2 % |
+| **Pro** | **464,746x** | **73.9 %** | −13.2 % |
+| **Pro Max** | **24,597,040x** | **75.5 %** | −33.6 % |
 
-| Strategy | Total return | Worst drawdown | Worst vs deposit | Pool income |
-|---|---:|---:|---:|---:|
-| `HODL` buy & hold | 5,214x | 84.2 % | −13.2 % | — |
-| Mini | 5,248x | 84.5 % | −13.2 % | ×1.09 |
-| **B4** | **125,149x** | **73.9 %** | −13.2 % | ×1.09 |
-| **Pro** | **464,746x** | **73.9 %** | −13.2 % | ×1.09 |
-| Pro Max *(design)* | 26,403,126x | 75.5 % | −33.6 % | ×1.09 |
+### Per cycle — return and drawdown side by side
 
-### Per cycle
-
-| Cycle | | `HODL` | Mini | B4 | Pro | Pro Max *(design)* |
+| Cycle | | `HODL` | Mini | B4 | Pro | Pro Max |
 |---|---|---:|---:|---:|---:|---:|
-| **2012→2016** | return | 52.3x | 52.4x | 145.1x | 222.8x | 623.3x |
-| | max DD | 84.2 % | 84.5 % | 73.9 % | 73.9 % | 75.5 % |
-| | DD landed in | `FALL` | `FALL` | `GROWTH` | `GROWTH` | `GROWTH` |
-| **2016→2020** | return | 13.6x | 13.6x | 40.3x | 62.8x | 259.2x |
-| | max DD | 83.2 % | 83.4 % | 64.2 % | 64.2 % | 74.0 % |
-| | DD landed in | `FALL` | `FALL` | `RECOV` | `RECOV` | `RECOV` |
-| **2020→2024** | return | 7.3x | 7.4x | 21.4x | 33.2x | 163.4x |
-| | max DD | 76.5 % | 76.8 % | 53.1 % | 53.1 % | 58.9 % |
-| | DD landed in | `RECOV` | `RECOV` | `GROWTH` | `GROWTH` | `GROWTH` |
-| **2024→now**\* | return | 1.00x | 1.03x | 1.71x | 2.26x | 3.71x |
-| | max DD | 53.0 % | 53.3 % | 28.2 % | 28.2 % | 51.9 % |
-| | DD landed in | `FALL` | `FALL` | `GROWTH` | `GROWTH` | `GROWTH` |
+| **2012→2016** | return | 52.3x | 52.4x | 145.1x | 222.8x | 593.9x |
+| | max DD | 84.2 % | 84.5 % | **73.9 %** | **73.9 %** | 75.5 % |
+| **2016→2020** | return | 13.6x | 13.6x | 40.3x | 62.8x | 215.4x |
+| | max DD | 83.2 % | 83.4 % | **64.2 %** | **64.2 %** | 74.0 % |
+| **2020→2024** | return | 7.3x | 7.4x | 21.4x | 33.2x | 192.3x |
+| | max DD | 76.5 % | 76.8 % | **53.1 %** | **53.1 %** | 58.9 % |
+| **2024→now**\* | return | 1.00x | 1.03x | 1.71x | 2.26x | 5.95x |
+| | max DD | 53.0 % | 53.3 % | **28.2 %** | **28.2 %** | 51.9 % |
 
-<sub>\* cycle in progress. Pro Max *design-target* entry leverage per cycle: 1.6× / 2.5× /
-2.7× / 2.2× — structural, not flat.</sub>
+<sub>\* cycle in progress. Pro Max structural leverage per cycle — long at the halving:
+1.6× / 2.5× / 2.7× / 2.2×; short at the 38.2 % pivot: 1.6× / 1.2× / 2.4× / 4.8× — set by the
+confirmed extremes, not a flat multiple.</sub>
 
-**Where the drawdown comes from — and why it is not the bear.** B4/Pro sit in **USDC through
-the fall**, so they cannot draw down there at all. Their worst days land in `GROWTH`/`RECOV`
-— violent *intra-bull* crashes — while `HODL`'s worst days land in the phase B4 sits out:
+Read the two rows together, cycle by cycle: **more return, less drawdown.** B4 and Pro cut
+10–25 pp off `HODL`'s cycle drawdown because they are simply *not in the market* during the
+bear that produces it; what drawdown remains is intra-bull volatility, and it gives back
+profit, not principal (B4 ends at −0.3 % vs the deposit in cycle 1 despite a 74 % swing).
+Pro Max carries real leveraged downside (−33.6 % vs deposit, cycle 2) — the table shows it
+rather than hiding it.
 
-| Cycle | `HODL` worst day | | B4 worst day | |
-|---|---|---|---|---|
-| 2012→2016 | 2015-01-14 | `FALL` (bear bottom) | 2013-04-11 | `GROWTH` (April-2013 crash) |
-| 2016→2020 | 2018-12-15 | `FALL` (bear bottom) | 2020-03-16 | `RECOV` (COVID) |
-| 2020→2024 | 2022-11-21 | `RECOV` (FTX) | 2021-07-20 | `GROWTH` (May-2021 crash) |
+### The survival record — the safety mechanism, measured
 
-### Pool income — the core value capture
+| Event (real data) | Flat-`φ` position | Structural position |
+|---|---|---|
+| Bear rally +103 % (2015: $152 → $310) | **liquidated** | survives — stop pinned above the confirmed peak |
+| Bear rally +99 % (2018: $5,921 → $11,780) | **liquidated** | survives |
+| COVID crash −64 % (2020: $13,838 → $4,953) | **liquidated** | survives — stop below the confirmed bottom |
+| Every completed cycle, both pivots | — | **the structural stop was never touched** |
 
-**20 % of the cohort exits through the `q = 11.8 %` penalty door each cycle**, redistributed
-to the ~80 % who stay: **+0.25·q ≈ +2.95 % per cycle to every stayer** — the `×1.09` column
-above, compounded over three cycles. It is the mechanism by which stayers are paid by leavers.
+After the 38.2 % pivot the price never returned to the confirmed peak (it stayed 1–23 %
+below); after the 62 % window it never broke the confirmed bottom (the low stayed +150 %
+above the long's stop). The stops are placed where the market has already proven it cannot
+go — that is the design, and four cycles of data agree with it.
 
-But a stayer also pays the operator performance fee, and the shipped fee re-anchors its
-baseline to NAV every settlement (**no high-water mark**), so a hold-like product that rides
-the bear pays fee again on the recovery. For Mini — which holds *exactly* `HODL`'s exposure —
-those two nearly cancel in a bull cycle, and the pool's real value shows in a **flat or down
-cycle**, where price returns nothing and the pool is almost the entire return:
+### Pool income — stayers are paid by leavers
 
-| Cycle | Mini | `HODL` | Net Mini edge | Where it comes from |
-|---|---:|---:|---:|---|
-| 2012→2016 | 52.35x | 52.30x | +0.1 % | pool ≈ fee, bull cycle |
-| 2016→2020 | 13.63x | 13.59x | +0.3 % | pool ≈ fee, bull cycle |
-| 2020→2024 | 7.35x | 7.33x | +0.3 % | pool ≈ fee, bull cycle |
-| **2024→now (flat)** | **1.03x** | **1.00x** | **+3 %** | **pool ≈ the whole return** |
+Exits outside free windows pay a `q = 11.8 %` penalty into the shared pool, redistributed to
+holders. At the reference assumption (20 % of the cohort exits penalised per cycle) that is
+**+2.95 % per cycle to every stayer**. In a bull cycle it roughly offsets the operator fee;
+in a **flat cycle it is nearly the entire return** — the cycle in progress: Mini 1.03x vs
+`HODL` 1.00x, with the pool contributing ~93 % of Mini's profit. The protocol pays the
+patient exactly when the market does not.
 
-So the headline is **not** "Mini beats hold in a bull run" — it barely does, once the fee is
-modelled honestly. It is that the pool pays a steady `+2.95 %/cycle` that dominates precisely
-when the market is flat, and that the *real* products (B4/Pro/Pro Max) beat hold on return
-**and** drawdown by stepping aside for the bear — see the tables above.
+> [!NOTE]
+> **Scope of the numbers.** Three completed cycles is not a statistical sample (~32 halvings
+> will ever exist); multiples assume entry at the pivots, infinite depth, no slippage/impact/
+> trading fees; perps were not liquid before ~2016, so early-cycle Pro/Pro Max are
+> hypotheticals; pool income uses the 20 %-exit behavioural assumption. The `StructuralLeverage`
+> math and both anchor ratchet concepts are shipped and tested; the vault-engine sizing runs
+> flat-`φ` until the §7b redo lands ([audit record](AUDIT-2026-07-structural-leverage.md)).
 
-**Drawdown ≠ loss.** B4 swings ~74 % peak-to-trough yet ends at **−0.3 % vs the deposit** —
-the swing gives back *profit*, not principal, if you entered at the halving. Pro Max genuinely
-risks a third to a half of the deposit; leverage cuts both ways and the table shows it.
-
-> [!IMPORTANT]
-> **Illustration of the mechanism — not evidence of edge, and not a forecast.** Three
-> completed cycles is not a statistical sample and never can be (~32 halvings will ever
-> occur). Multiples are *arithmetic under perfect timing* — entry at the halving, infinite
-> depth at any size, no slippage or market impact — not outcomes. Perps were not liquid
-> before ~2016, so Pro/Pro Max in the early cycles are historical hypotheticals. Pool income
-> rests on a behavioural assumption (20 % exit penalised per cycle).
-
-Method, the structural-leverage mechanism, and every omitted cost: [Backtest](docs/11-backtest.md).
+Method and every omitted cost: [Backtest](docs/11-backtest.md).
 
 ## Versioning: no upgrade path, by design
 

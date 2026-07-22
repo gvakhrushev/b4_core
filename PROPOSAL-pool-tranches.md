@@ -8,10 +8,12 @@ Pre-implementation design record. Sequencing: the structural-leverage §7b redo 
 **Design evolved (2026-07-21).** An earlier draft used *per-exit isolated tranches* with the
 exiter's *inherited stop*. Working through the small-penalty problem (below) with a multi-agent
 generate → adversarial-stress → synthesis pass (18 candidates, 3 killed on stop-attribution)
-overturned that: the dust problem *forces* aggregation, aggregation needs a *shared* stop, the
-only sound shared stop is a *far product-flat* one, and a far stop makes an in-regime shared
-stop-out nearly impossible — which removes the entire reason isolation existed. The owner
-accepted the reversal. The design is now a single standing pool short (SPS-1), no isolated tier.
+overturned that: the dust problem *forces* aggregation, aggregation needs a *shared* stop, and
+a shared far stop makes an in-regime shared stop-out nearly impossible — which removes the
+entire reason isolation existed. The owner accepted the reversal. The design is a single
+standing pool short (SPS-1), no isolated tier — and with §7b now defining the symmetric short
+side (2026-07-22), the shared stop is the **confirmed structural peak**, not a product-flat
+substitute.
 
 ## Problem being fixed — the fall-zone asymmetry
 
@@ -36,10 +38,10 @@ A penalty share is often too small to open a perp at all. Two distinct failure m
    tiny notional when the exiter was deep in profit — the inherited stop `s` sits far above `p`,
    so `L = p/(s−p)` is low and `notional = penalty·L < $10` (a `$30` penalty at `L=0.3` → `$9`).
 
-The second mode is caused by *stop inheritance itself*. Drop the inherited stop, size at the
-product-flat leverage, and it disappears: `$30` of penalty → `~$30` of notional regardless of
-the exiter's profit. That, plus the fact that dust *must* be aggregated to open at all, is why
-the design collapses to a single aggregate short.
+The second mode is caused by *per-exiter stop inheritance*. Drop it and size every increment
+at the §7b structural leverage for its own price, and the failure collapses into the ordinary
+dynamic openability check. That, plus the fact that dust *must* be aggregated to open at all,
+is why the design collapses to a single aggregate short.
 
 ## The mechanism — SPS-1
 
@@ -54,31 +56,37 @@ Every fall-zone penalty share — dust, low-L, or large — is an **O(1) scalar 
 vault's escrow accumulator; there is **no per-exit object at all**. A permissionless crank folds
 the accumulated escrow into the vault as margin/notional. Dust rides as soon as the cumulative
 escrow clears the keeper break-even threshold; below it, it stays staged (= passive) and reverts
-to passive at `T`. The low-L mode does not exist (notional is product-flat, not inheritance-tied).
+to passive at `T`. Each folded increment sizes at the §7b structural leverage for its price —
+no per-exiter stop inheritance, so the old low-L failure mode does not exist as a category.
 
 At `T` the calendar flips the vault's target to `0`; the engine flattens it by ordinary cranking
 even if no one calls anything. A permissionless `poolExit`, gated to `owner == pool` and
 `timeSinceHalving ≥ T`, finalizes; proceeds pay the pool, `capture()` accounts them, and they
 distribute to stayers pro-rata by weight at the settlement.
 
-### The aggregate stop — product-flat far ceiling (NOT the anchor)
+### The aggregate stop — the confirmed structural peak (§7b, updated 2026-07-22)
 
-**The structural anchors cannot ceiling a short.** They are confirmed structural *lows* (they
-bound a long's stop from below); a short's stop is *above* price. Spec §7b says so explicitly
-("no structural ceiling above a short"). Inheriting the anchor is unavailable without a new,
-symmetric confirmed-*high* ratchet — deferred (see "left on the table").
+**Superseded: this section originally used a product-flat far stop because "the structural
+anchors cannot ceiling a short."** That gap is closed: SPECIFICATION §7b now defines the
+symmetric short side — confirmed-high anchors `prevPeak` / `C` (the peak-window max), stop
+`= max(p + (MaxStop − p)·(g−1), C)` with `MaxStop = C + (C − prevPeak)·(g−1)`, verified on
+every completed cycle (the post-pivot price never returned to `C`; the +99–103 % bear rallies
+that liquidate a flat-`φ` short clear the structural stop).
 
-The sound, no-new-machinery substitute is the **product-flat far stop**: margin `= notional/L`
-at the product's own leverage, so venue liquidation sits at `1× short → 2·p` (Pro),
-`φ short → φ·p ≈ 1.618·p` (Pro Max). In the fall regime price is *falling* from the top, so this
-stop sits 60–100 % **above** entry — an in-regime shared stop-out essentially cannot occur, which
-is exactly what makes sharing one stop safe and dissolves the case for isolation.
+The pool short therefore sizes **exactly like any §7b short** — same library, same anchors, no
+tranche-specific stop rule:
 
-- **Cap-drift (mandatory).** A standing short topped up down the fall has a blended entry that
-  drifts down, dragging its realized liquidation down with it. Refuse any top-up that would pull
-  the aggregate's realized liquidation below the **fall-start price `P`**; route the overflow to
-  passive. This pins the stop above the top of the traversed range, so no counter-trend bounce
-  can hit it.
+- **All fall-zone tranches share the same structural stop region pinned at/above `C`** — a
+  price the fall has already proven it cannot regain. An in-regime shared stop-out is
+  structurally excluded, which is what makes sharing one stop safe and dissolves the case for
+  per-exit isolation.
+- **Drift is eliminated by construction, not by a rule.** The old design needed a "cap-drift"
+  refuse (the blended entry of a topped-up short dragged its liquidation down). With the stop
+  pinned to the fixed structural price `C`, top-ups at ever-lower prices do not move the
+  liquidation — each increment simply sizes at the §7b leverage for its price (monotone
+  de-levering with depth, sub-`1×` deep). The cap-drift rule is retired.
+- **Openability stays dynamic:** an increment opens only if `amount·L ≥ $10` (venue minimum)
+  after lot flooring, with `L` from §7b at the current price; otherwise it stays staged.
 
 ### Standing short vs generational fresh tranches — decide against the §7b code
 
@@ -102,11 +110,13 @@ invariant test asserting `balance ≥ liability + escrow` through every branch.
 
 ## Decisions
 
-**Settled (2026-07-21):**
+**Settled (2026-07-21, stop rule updated 2026-07-22):**
 - **Single-tier SPS-1, no isolated tier.** Isolation guarded against a shared stop-out that the
   far stop makes near-impossible; surrendering it is close to free. (Overturns the earlier lean.)
-- **Aggregate stop = product-flat far stop**, now. A market-confirmed high-ratchet is optional
-  future tightening, not a blocker.
+- **Aggregate stop = the §7b structural short stop** (confirmed peak `C` / `MaxStop`), same
+  library and anchors as every product short. Supersedes the interim product-flat far stop —
+  the confirmed-high ratchet is now specified, so the pool short is market-anchored and
+  drift-free by construction.
 - **Trigger threshold = keeper break-even**, not the `$10` venue minimum (opening at the bare
   minimum mints objects too small to profitably crank, which silently degrade to passive).
 - **Truly-unopenable residual stays passive** one interval (deferral, never loss) — the explicit,
@@ -140,8 +150,10 @@ invariant test asserting `balance ≥ liability + escrow` through every branch.
 3. **Held-position re-lever on top-up (C1/C4 redux)** — if SPS-1's standing short is chosen, the
    completion/retry key reads only self-moved balances (size, spot deltas), never PnL/withdrawable;
    the top-up re-size must be provably drift-bounded.
-4. **Blended-entry drift below `P`** — the cap-drift rule is load-bearing; without it a deep-fall
-   liquidation drifts into the traversed range and a bounce wipes the book.
+4. **Aggregate liquidation placement** — verify the standing short's realized liquidation
+   stays pinned at/above the confirmed peak `C` through arbitrary top-up sequences (the §7b
+   stop makes drift impossible by construction; the audit must confirm the implementation
+   preserves that, since a margin-accounting bug could re-introduce blended-entry drift).
 5. **Pool-as-owner initiative** — constrain the deposit/exit authority to fixed-parameter
    wrappers; prove no other owner power is reachable.
 6. **Standing vault in its own distribution** — bar the pool-owned short from
@@ -156,9 +168,8 @@ invariant test asserting `balance ≥ liability + escrow` through every branch.
 ## Value left on the table (honestly)
 
 - **Sub-threshold late-fall tail stays passive** and captures no fall alpha — the genuine residual
-  leak, largest in thin pools and late in deep falls.
-- **No market-confirmed short ceiling** — the product-flat stop is sound but product-defined, not
-  structurally anchored. A symmetric confirmed-high ratchet (mirror of `sampleAnchor`'s lows)
-  would market-justify the ceiling; net-new audited machinery, deferred.
-- **Per-exiter tailored stops are gone** — but the analysis shows those far tailored stops were
-  the *cause* of the low-leverage failure, not a feature worth preserving.
+  leak, largest in thin pools and late in deep falls (deep-fall §7b leverage is deliberately
+  sub-`1×`, so a small increment can sit under the venue minimum until more penalties arrive).
+- **Per-exiter tailored stops are gone** — but the analysis shows per-exiter inheritance was
+  the *cause* of the low-leverage failure, not a feature worth preserving; the §7b structural
+  stop is shared by construction.

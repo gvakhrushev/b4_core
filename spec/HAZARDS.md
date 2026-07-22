@@ -196,8 +196,16 @@ its effect must be proven by a later on-chain state read.
     honest failure mode is under-sampling (a keeper samples each window; the pool benefits). An
     unsampled window installs no cap, so a leveraged product falls back to the flat base `g`
     (pre-mechanism behaviour), never to a false ceiling. A lower low across cycles does not
-    raise leverage (advances only at the halving flip). Long-only; shorts keep
-    the flat base.
+    raise leverage (advances only at the halving flip).
+  - **Short side is symmetric (decided 2026-07-22).** Shorts are bounded by the confirmed
+    structural **highs** — `prevPeak` and this cycle's peak-window max `C` — via the mirrored
+    formula (`SPECIFICATION.md` §7b). Post-pivot leverage decreases monotonically with entry
+    depth and pins its stop to `C`, never below a price the fall already traversed; a deep
+    short deliberately sizes below `1×`. Verified on all completed cycles: the post-pivot
+    price never returned to `C`, and the +99–103% bear-market rallies of cycles 1–2 — which
+    liquidate a flat-`φ` short — clear the structural stop. The max ratchet has the same
+    directional safety as the min: an unconfirmed peak falls back to the flat base, and more
+    sampling raises the recorded high ⇒ a further stop ⇒ **less** leverage.
 
 ---
 

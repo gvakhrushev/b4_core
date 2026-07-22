@@ -124,86 +124,63 @@ subject to `HAZARDS.md`. Economic rationale is non-normative (`WHITEPAPER.md`).
 - Favorable overfill and donations remain unaccounted and separately recoverable (bounded,
   flat/idle, no accounting callback) for spot AND perp surplus.
 
-### 7b. Position sizing and structural leverage (long side)
+### 7b. Structural sizing — leverage bounded by confirmed extremes
 
-> **Implementation status (2026-07-21): this section is the normative TARGET; the engine does
-> not yet meet it.** The pure math (`StructuralLeverage`) and the anchor ratchet
-> (`B4Pool.sampleAnchor`) are shipped; the `B4VaultEngine` sizing that would consume them was
-> written, failed a dedicated adversarial audit (margin never realized the stop; a held position
-> re-levered at the halving) and was reverted. The engine currently sizes leveraged perps at
-> flat `φ`. See `AUDIT-2026-07-structural-leverage.md`. The MUSTs below bind the redo.
+The protocol's leverage is a **safety mechanism**, not a bet-sizing dial. Every leveraged
+position's liquidation MUST sit at a *structurally confirmed* price — a level the market has
+already printed and failed to regain — never at a distance an ordinary adverse swing can reach.
+The stop is realized by **margin size** (`margin = notional/L`, the venue's own liquidation is
+the stop; no stop orders, which would break the async fill-completion discipline). One reflected
+rule covers both sides:
 
-- **Sized once, then held.** A directional/perp position MUST be sized when it is opened or
-  materially re-targeted (an entry, a deposit, or a calendar zone change) and MUST NOT be
-  continuously re-sized against a moving NAV within a zone. The calendar is the rebalance
-  schedule; a running NAV-relative target is NOT. A tolerance band still suppresses dust
-  re-trades, but the trigger is a target change, not price drift.
-- **Structural leverage floor.** For a leveraged long product (base leverage `g = |growth| >
-  1`, e.g. Pro Max `g = φ`), the effective leverage at entry price `p` MUST be bounded by the
-  cycle's confirmed structural lows, not by a flat multiple:
+|  | **Long (bottom)** | **Short (top)** |
+|---|---|---|
+| Anchors | `floor` = previous confirmed bottom; `cap` = most recent confirmed bottom | `prevPeak` = previous confirmed peak; `C` = this cycle's confirmed peak |
+| Confirmation window | 62-window `[T, T+W]` and post-halving `[halving, halving+W]` (min close) | the `W` days ending at the 38.2% pivot (max close) |
+| Sizing | `stop = min(p − (p − floor)/g, cap)` | window: `stop = p + (p − prevPeak)·(g−1)` (DCA slices); after the pivot: `MaxStop = C + (C − prevPeak)·(g−1)`, `stop = max(p + (MaxStop − p)·(g−1), C)` |
+| Leverage | `L = p/(p − stop)`, clamped by the venue max | `L = p/(stop − p)`, clamped by the venue max, **no 1× floor** |
+| Depth behaviour | grows toward the confirmed low, decays for a late entry | decreases monotonically with depth; exceeds the base only above `C`; pins to `C` deep |
+| Refusal | `p ≤ floor` → un-leveraged spot leg | `p ≥ MaxStop` → flat base |
+| Genesis | `floor = 0` → flat base `g` | no `prevPeak` → flat base `g` |
 
-  ```
-  stop = min( p − (p − floor)/g ,  cap )
-  L    = p / (p − stop)          (then clamped by the venue maxLeverage)
-  ```
+`W ≈ 20 days` is structural, not tuned: `W = q²·cycle` with `q = φ⁻³/2 = 0.118` — the same
+quantum that places the 38.2/61.8 pivots (`0.5 ∓ q`); the peak forms at `0.382 − q² ≈ 0.368`
+of the cycle, the bottom at `0.618 + q² ≈ 0.632`.
 
-  where `floor` and `cap` are two ratcheted anchors (below). The uncapped stop sits `1/φ` of
-  the delta `(p − floor)` below `p` for `g = φ`, so `L = g·p/(p − floor)` uncapped — leverage
-  grows as the entry approaches the structural low and decays toward `1×` for a late entry.
-  Implementations MUST use the shared pure function (`StructuralLeverage`) so the sizing math
-  is identical to what is tested and demonstrated.
-- **`cap` limits maximum leverage, not the right to enter.** Any `p > floor` MAY open; `cap`
-  only lowers the stop (⇒ lower leverage). Only `p ≤ floor` MUST refuse a leveraged open
-  (fall back to the un-leveraged spot leg). `floor == 0` (genesis, before the first window
-  closes) MUST degrade to the flat base `L = g`.
-- **The stop is realized by margin size, not a stop order.** The posted perp margin MUST equal
-  `notional / L`, so the venue's own liquidation sits at `stop`. The whole deposit is deployed
-  (no split-out reserve). On a stop the perp margin is consumed but the spot leg survives, so
-  the position degrades to spot-only with `stop/p` of the directional retained — never zero.
-- **Anchors — two confirmed structural lows, ratcheted UP only.** The minimum directional
-  price is recorded by a permissionless ratchet within two calendar windows: the 62-window
-  `[T, T+W]` (the cycle bottom) and the post-halving window `[halving, halving+W]`. The
-  recorded minimum only moves down *within its own window*; across windows the pair
-  `(floor, cap)` ratchets up at each structural event — at the halving the previous `cap`
-  becomes the new `floor` and the post-halving low becomes the new `cap`. **Sampling more
-  lowers the anchors and therefore lowers leverage** — the recorded minimum is an *upper*
-  bound on the true low, so a diligently-sampled window records a lower anchor (larger delta,
-  less leverage) than an under-sampled one. Under-sampling is therefore NOT fail-safe on its
-  own; the mechanism depends on the low being sampled (a keeper does this each window, and
-  it is in the pool's interest). Until a window is sampled at all, a leveraged product MUST
-  fall back to the flat base leverage `g` (the pre-mechanism behaviour) rather than assume a
-  cap that does not exist. A new low observed WITHIN a window only lowers the anchor; across
-  windows the pair advances only at the halving flip (never sideways to a higher value).
-- **Short side (top) — symmetric to the long.** A short leg (fall regime) is bounded by the
-  cycle's confirmed structural **highs**, the exact mirror of the long's lows (min↔max,
-  −↔+, floor↔prevPeak, cap↔`C`). Two anchors: `prevPeak` (the previous cycle's confirmed peak)
-  and `C` (this cycle's confirmed peak = the max over the 20-day window ending at the 38.2%
-  pivot). The window width is structural: `q² = (φ⁻³/2)²` of the cycle ≈ 20 days, where the
-  quantum `q = φ⁻³/2 = 0.118` is the same one that places the 38.2/61.8 pivots (the cycle peak
-  historically forms at `0.382 − q² ≈ 0.368` of the cycle). Two regimes, because `C` is not
-  known until the window closes:
+**Normative rules (bind the engine sizing):**
 
-  - **Opening window (the 20 days to the pivot, `C` not yet confirmed).** Shorts open in daily
-    DCA slices; each slice at price `p` sizes to `stop = p + (p − prevPeak)·(φ−1)`, i.e.
-    `L = φ·p/(p − prevPeak)`. The anchor is `prevPeak` (known); the last slice (`p ≈ C`) lands
-    exactly on `MaxStop` below, so the two regimes join.
-  - **After the pivot (`C` confirmed).** `MaxStop = C + (C − prevPeak)·(φ−1)`; a short at price
-    `p` sizes to `stop = max( p + (MaxStop − p)·(φ−1),  C )`. Leverage **decreases** as the
-    entry falls (deeper = riskier = less leverage — monotone, not a mid-fall peak), rises above
-    `φ` only for an entry **above** `C`, and pins to `C` for deep entries: the minimum stop is
-    the confirmed peak `C`, never below a price the fall already traversed.
+- **Sized once, then held.** A position MUST be sized when opened or materially re-targeted
+  (entry, deposit, calendar zone change) and MUST NOT be re-sized against a moving NAV or a
+  moving anchor within a zone: the sizing price and its anchors are captured **together** and
+  frozen for the position's life. Window entries open in daily DCA slices (the extreme cannot
+  be caught; the window average is the entry — the calendar knows *when*, not *at what price*).
+- **`margin = notional/L`, whole deposit deployed.** No split-out reserve. On a long's stop the
+  perp margin is consumed but the spot leg survives (`stop/p` of the directional retained —
+  never zero). A deep short is deliberately sized below `1×`: the small position with its stop
+  pinned to the far confirmed peak is what survives the bear-market rallies that liquidate a
+  flat-`φ` short.
+- **One shared pure function.** Engine, tests and the historical benchmark MUST use
+  `StructuralLeverage` — the sizing math cannot drift from what is tested and demonstrated.
+- **Anchor ratchets are permissionless, sampling-only, and advance at structural events.**
+  Within a window the recorded extreme only improves (min down / max up); across windows the
+  long pair `(floor, cap)` advances at the halving flip. Sampling more makes the anchors more
+  accurate ⇒ **less** leverage; under-sampling is NOT fail-safe, so an unconfirmed anchor MUST
+  fall back to the flat base `g`, never to an assumed extreme.
 
-  The stop is realized by margin size, as for the long. Two facts make this sound, both verified
-  on all four cycles: (1) the fall's price never returns to `C` (the post-pivot max is 2–23%
-  below `C`), so the structural stop is never hit; (2) a flat-`φ` short would be **liquidated by
-  the +99–103% bear-market rallies of cycles 1–2** (a fall to $152/$5,921 then a bounce to
-  $310/$11,780) — the structural stop, pinned to the far `C`, survives them. This is why a deep
-  short MUST de-lever below `φ` (and below `1×`) rather than refuse: the reduced size with a
-  distant stop is the safety, not a defect.
-- **Symmetry / redo scope.** The long side above is the *window* regime (anchor `floor`, bounded
-  by `cap`); the redo generalises **both** sides to the window + post-pivot pair shown for the
-  short, so the top and bottom are one reflected mechanism. Full derivation, per-cycle leverage
-  curves and the empirical checks: `PROPOSAL-structural-leverage.md`.
+**Verified record (all completed cycles, real BTC closes — the safety claims are empirical,
+not aspirational):**
+
+1. **The structural stop was never hit.** After the 38.2% pivot the price never returned to
+   `C` (post-pivot maximum 2–23% below it); after the 62% window the price never broke the
+   confirmed bottom (post-window low 3–4% above the window min, +150% above the long's stop).
+2. **The flat alternative dies; the structural one survives.** A flat-`φ` short is liquidated
+   by the +99–103% bear-market rallies of cycles 1–2; a flat-`φ` long is liquidated by the
+   −64% COVID crash. The structurally-stopped position survives every one of these events.
+
+Implementation status: `StructuralLeverage` (both sides) and the low-side ratchet
+(`B4Pool.sampleAnchor`) are shipped and tested; the engine sizing is flat-`φ` pending the §7b
+redo (`AUDIT-2026-07-structural-leverage.md` binds it). Full derivation and per-cycle curves:
+`PROPOSAL-structural-leverage.md`.
 
 ## 8. Checkpoints, fees, reward weight
 
