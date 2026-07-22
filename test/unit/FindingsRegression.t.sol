@@ -486,7 +486,7 @@ contract FindingsRegressionTest is VaultTestBase {
         vm.stopPrank();
 
         // Fall regime: spot component is 0 ⇒ rotate the directional to USDC; the perp
-        // short (−1/φ) is inexpressible and simply skipped — no perp market ever touched.
+        // short (−1) is inexpressible and simply skipped — no perp market ever touched.
         warpTo(Calendar.P);
         crankUntilIdle(v, 30);
         assertEq(v.dirEvm(), 0);

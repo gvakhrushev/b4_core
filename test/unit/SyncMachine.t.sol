@@ -295,14 +295,14 @@ contract SyncMachineTest is VaultTestBase {
     // =====================================================================
 
     function test_margin_returns_when_target_zero_and_flat() public {
-        B4Vault v = createVault(address(pro)); // fall: −1/φ perp
+        B4Vault v = createVault(address(pro)); // fall: −1 (full 1x short) perp
         fundAndDeposit(v, 1e8, 10_000e6);
         crankUntilIdle(v, 30); // growth: no perp for Pro (perp target 0)
         assertEq(readPos(address(v)).szi, 0);
         assertEq(v.perpMargin6(), 0); // nothing was ever allocated
         assertEq(v.usdcMarginEvm(), 10_000e6);
 
-        warpTo(Calendar.P); // fall: opens short 1/φ with margin
+        warpTo(Calendar.P); // fall: opens a full 1x short with margin
         crankUntilIdle(v, 40);
         assertLt(readPos(address(v)).szi, 0);
         assertGt(uint256(v.perpMargin6()), 0);

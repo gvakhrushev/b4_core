@@ -110,7 +110,7 @@ Reference ladder (`src/periphery/ReferenceStrategies.sol`), as `(growth, fall)`:
 | --- | --- | --- |
 | `StrategyMini` | `1` | `1` |
 | `StrategyB4` | `1` | `0` |
-| `StrategyPro` | `1` | `−1/φ` |
+| `StrategyPro` | `1` | `−1` |
 | `StrategyProMax` | `φ` | `−φ` |
 
 Emits `VaultCreated(address indexed vault, address indexed owner, address indexed pool, bytes32 dirHash)` from the factory and `Initialized(owner, pool, dirDescriptorHash)` plus `PolicySelected(strategy, growth, fall, scaleWad)` from the vault.

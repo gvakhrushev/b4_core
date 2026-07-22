@@ -33,12 +33,23 @@ between):
 |---|---:|---:|---|
 | Mini | `1` | `1` | hold spot; earns shared-Pool yield, no trade |
 | B4 | `1` | `0` | a fall-regime rotation into USDC |
-| Pro | `1` | `-1/φ` | a hedge (short in fall) |
+| Pro | `1` | `-1` | a full `1×` short in fall |
 | Pro Max | `φ` | `-φ` | leveraged expression of the same signs |
 
 Each product is the previous one plus one more interior move at the two cycle pivots. How
 much accepted holding risk to keep is the user's dial; the protocol takes no directional
 view on their behalf. `φ = 1.618033988749894848` (WAD).
+
+Where a product carries leverage, the leverage is *designed* to be a **safety mechanism**
+(`SPECIFICATION.md` §7b): the position's liquidation is placed by margin size at a
+*structurally confirmed* extreme — the cycle's confirmed low for a long, its confirmed peak
+for a short — a price the market has already printed and failed to regain. Across every
+completed cycle that stop is never touched, while a flat-`φ` position is liquidated by the
+recorded +99–103 % bear-market rallies (short side) or the −64 % COVID crash (long side); deep
+entries deliberately de-lever rather than chase. **Implementation status:** the sizing math and
+the anchor mechanism are specified and unit-tested, but the vault-engine sizing currently uses
+the flat base `φ` — the structural sizing is the pending §7b redo, and until it lands a
+leveraged product's realized liquidation is the flat-base distance, not the structural stop.
 
 ## 3. The exposure equation
 

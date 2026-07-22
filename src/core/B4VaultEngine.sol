@@ -9,14 +9,8 @@ import {CoreTypes} from "../venue/CoreTypes.sol";
 import {CoreReader} from "../venue/CoreReader.sol";
 import {CoreWriterLib} from "../venue/CoreWriterLib.sol";
 import {DescriptorLib} from "../venue/DescriptorLib.sol";
-import {StructuralLeverage} from "../libraries/StructuralLeverage.sol";
 import {IERC20} from "../interfaces/IERC20.sol";
 import {IHalvingOracle} from "../interfaces/IHalvingOracle.sol";
-
-/// @dev Minimal view of B4Pool for the structural-leverage anchors (SPECIFICATION §7b).
-interface IB4PoolAnchors {
-    function anchors(uint256 assetIndex) external view returns (uint256 floor, uint256 cap);
-}
 
 /// @title B4VaultEngine — the asynchronous execution engine.
 /// @notice The core discipline (HAZARDS A):
@@ -87,11 +81,35 @@ abstract contract B4VaultEngine is B4VaultStorage {
         return CoreReader.withdrawable(address(this));
     }
 
-    /// CoreWriter order fields are fixed-point 1e8 (human value × 10⁸) — a DIFFERENT
-    /// convention from the szDecimals-scaled precompile reads. Live confirmation is a
-    /// funded gate (SECURITY_MODEL §5.4–5).
-    function _pxWadTo8(uint256 pxWad) internal pure returns (uint64) {
-        return uint64(pxWad / 1e10);
+    /// Quantize a WAD limit price to a valid HyperCore order price in the 1e8 writer
+    /// convention (SPEC §7: "prices rounded to venue price rules"). The venue REJECTS an
+    /// order whose price has more than 5 significant figures (integer prices exempt) or more
+    /// than `maxDecimals − szDecimals` decimal places (`maxDecimals` = 8 spot, 6 perp); an
+    /// un-quantized price freezes the vault (rejected order ⇒ zero delta ⇒ resend-forever,
+    /// H3). Rounds a BUY limit DOWN and a SELL limit UP so the executed price can never leave
+    /// the slippage envelope.
+    function _quantizePx8(uint256 pxWad, bool roundUp, uint8 szDec, bool isSpot)
+        internal
+        pure
+        returns (uint64)
+    {
+        uint256 px8 = pxWad / 1e10; // 1e8 writer convention
+        if (px8 == 0) return 0;
+        uint256 maxDec = isSpot ? 8 : 6;
+        uint256 dcap = maxDec > szDec ? maxDec - szDec : 0; // decimal places px may carry
+        uint256 step = 10 ** (8 - dcap); // px8 must be a multiple of this (dcap ≤ 8)
+        // 5-significant-figure rule, unless px is a whole integer (px8 a multiple of 1e8).
+        if (px8 % 1e8 != 0) {
+            uint256 digits;
+            for (uint256 t = px8; t != 0; t /= 10) {
+                digits++;
+            }
+            uint256 sigStep = digits > 5 ? 10 ** (digits - 5) : 1;
+            if (sigStep > step) step = sigStep;
+        }
+        uint256 q = (px8 / step) * step; // rounded DOWN to the coarsest valid grid
+        if (roundUp && q != px8) q += step; // SELL: round UP so we never sit below the floor
+        return uint64(q);
     }
 
     /// Read-convention perp px (6 − szDecimals decimals) — used for PnL notional math.
@@ -258,6 +276,7 @@ abstract contract B4VaultEngine is B4VaultStorage {
     ///         lot floors to zero and creates nothing (caller must not count it — M-1).
     function _startSpotOrder(bool isBuy, uint64 inputWei) internal returns (bool created) {
         uint256 pxWad = _livePxWad();
+        if (pxWad == 0) return false; // spot feed down: hold, never revert-loop (H3)
         uint64 sz;
         uint256 limitWad;
         if (isBuy) {
@@ -278,11 +297,11 @@ abstract contract B4VaultEngine is B4VaultStorage {
         // Reliable-balance snapshots of BOTH legs (A2).
         intent.snapSrcWei = _spotBal(isBuy ? _usdc.coreToken : _dir.coreToken);
         intent.snapAux = _spotBal(isBuy ? _dir.coreToken : _usdc.coreToken);
-        // Writer fields in fixed-1e8 units (px, size) — NOT the read/lot conventions.
+        // Writer fields in fixed-1e8 units (px quantized to venue price rules, size in lots).
         CoreWriterLib.iocOrder(
             CoreTypes.SPOT_ASSET_OFFSET + _dir.spotMarket,
             isBuy,
-            _pxWadTo8(limitWad),
+            _quantizePx8(limitWad, !isBuy, _dir.spotSzDecimals, true),
             _spotLotsToSz8(sz),
             false
         );
@@ -354,9 +373,13 @@ abstract contract B4VaultEngine is B4VaultStorage {
             // Snapshot the positive mark PnL for the harvest bound (SPEC §7).
             intent.claim6 = _positivePnl6(pos, markWad);
         }
-        // Writer fields in fixed-1e8 units (px, size) — NOT the read/lot conventions.
+        // Writer fields in fixed-1e8 units (px quantized to venue price rules, size in lots).
         CoreWriterLib.iocOrder(
-            _dir.perpMarket, isBuy, _pxWadTo8(limitWad), _perpLotsToSz8(szLots), reduceOnly
+            _dir.perpMarket,
+            isBuy,
+            _quantizePx8(limitWad, !isBuy, _dir.perpSzDecimals, false),
+            _perpLotsToSz8(szLots),
+            reduceOnly
         );
     }
 
@@ -708,7 +731,7 @@ abstract contract B4VaultEngine is B4VaultStorage {
         if (v > 0 && _planSpotStep(spotF, pxWad, v)) return true;
 
         // 5–6. Margin and perp sizing toward n − spot.
-        return _planPerpStep(perpF, pos);
+        return _planPerpStep(perpF, pos, v);
     }
 
     function _planSpotStep(int256 spotF, uint256 pxWad, uint256 v) internal returns (bool) {
@@ -767,38 +790,17 @@ abstract contract B4VaultEngine is B4VaultStorage {
         return false;
     }
 
-    /// @dev Multiplier on strategy value for the perp leg, at the frozen sizing price
-    ///      `pxSize`. A leveraged long (`perpF > 0`, base growth `g > 1`, i.e. Pro Max) is
-    ///      amplified by structural leverage; the amplification is scaled onto the
-    ///      interpolated `perpF` by `(L−1)/(g−1)` so a transition still interpolates and, at
-    ///      the full growth target, the leg is exactly `L−1`. Genesis / a refused open
-    ///      (`p ≤ floor`) fall back to the flat base `g`. A short (`perpF < 0`) is the flat
-    ///      `|perpF|` — no structural multiplier (long-only, SPEC §7b).
-    function _perpMultiplier(int256 perpF, uint256 pxSize) internal view returns (uint256) {
-        if (perpF <= 0) return uint256(-perpF);
-        uint256 g = uint256(Phi.abs(growthTarget));
-        if (g <= Phi.WAD) return uint256(perpF); // no base leverage (B4/Pro growth leg)
-        (uint256 floor_, uint256 cap_) = IB4PoolAnchors(pool).anchors(_dirAssetIndex);
-        uint256 lev = StructuralLeverage.leverageWad(pxSize, g, floor_, cap_);
-        if (lev <= Phi.WAD) lev = g; // refused (p ≤ floor) or genesis → flat base g
-        return Phi.mulDiv(uint256(perpF), lev - Phi.WAD, g - Phi.WAD);
-    }
-
-    function _planPerpStep(int256 perpF, CoreTypes.Position memory pos) internal returns (bool) {
+    function _planPerpStep(int256 perpF, CoreTypes.Position memory pos, uint256 v)
+        internal
+        returns (bool)
+    {
         // Spot-only descriptor (accepted NO_MARKET sentinel): a perp component of the
         // target is inexpressible — never touch perp precompiles or margin machinery.
         // The vault supports spot products (Mini/B4); a perp-bearing policy degrades to
         // its spot component (documented, ARCHITECTURE.md).
         if (_dir.perpMarket == CoreTypes.NO_MARKET) return false;
 
-        // Sized once, then HELD (SPEC §7b): freeze the directional price while a position is
-        // open, so a pure price move never re-trades the position; reset to live when flat.
-        if (pos.szi == 0 && _sizePxWad != 0) _sizePxWad = 0;
-        uint256 pxSize = _sizePxWad == 0 ? _livePxWad() : _sizePxWad;
-        if (pxSize == 0) return false;
-        uint256 vSize = _strategyValueWad(pxSize);
-
-        uint256 notionalTargetWad = Phi.wmul(vSize, _perpMultiplier(perpF, pxSize));
+        uint256 notionalTargetWad = Phi.wmul(v, Phi.abs(perpF));
         if (notionalTargetWad < MIN_ORDER_USD_WAD) notionalTargetWad = 0;
 
         if (notionalTargetWad == 0) {
@@ -846,26 +848,23 @@ abstract contract B4VaultEngine is B4VaultStorage {
             Phi.PHI
         );
         uint256 effTargetWad = Phi.min(notionalTargetWad, notionalCapWad);
-        if (CoreReader.perpPxWad(_dir, true) == 0) return false; // perp feed down: wait
-        // Size converts at the FROZEN spot price (held size). For a pure directional strategy
-        // the price cancels — szTarget = held tokens × multiplier — so a price move does not
-        // move the size; the position is held, not chased (SPEC §7b).
+        uint256 markWad = CoreReader.perpPxWad(_dir, true);
+        if (markWad == 0) return false;
         uint64 szTarget = uint64(
             Phi.mulDiv(
-                Phi.mulDiv(effTargetWad, Phi.WAD, pxSize), 10 ** _dir.perpSzDecimals, Phi.WAD
+                Phi.mulDiv(effTargetWad, Phi.WAD, markWad), 10 ** _dir.perpSzDecimals, Phi.WAD
             )
         );
         uint64 absNow = uint64(Phi.abs(pos.szi));
-        uint256 bandUsd = Phi.max(Phi.bps(vSize, TOLERANCE_BPS), MIN_ORDER_USD_WAD);
+        uint256 bandUsd = Phi.max(Phi.bps(v, TOLERANCE_BPS), MIN_ORDER_USD_WAD);
         uint256 diffUsdWad = Phi.mulDiv(
-            uint256(szTarget > absNow ? szTarget - absNow : absNow - szTarget) * pxSize,
+            uint256(szTarget > absNow ? szTarget - absNow : absNow - szTarget) * markWad,
             1,
             10 ** _dir.perpSzDecimals
         );
         if (diffUsdWad <= bandUsd) return false;
         bool targetLong = perpF > 0;
         if (szTarget > absNow) {
-            if (pos.szi == 0) _sizePxWad = pxSize; // capture the sizing price on a fresh open
             _startPerpOrder(targetLong, szTarget - absNow, false);
         } else {
             // Shrink toward target: reduce-only, opposite side.

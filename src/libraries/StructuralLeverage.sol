@@ -69,4 +69,71 @@ library StructuralLeverage {
         if (cap_ != 0 && stop > cap_) stop = cap_;
         return stop;
     }
+
+    // ---------------------------------------------------------------- short side (top)
+
+    /// @notice The SHORT stop — the exact mirror of the long, anchored to the cycle's
+    ///         confirmed structural HIGHS (min↔max, −↔+, floor↔prevPeak, cap↔peakC).
+    ///         `θ = g − 1` (0.618 for `g = φ`). Two regimes, because this cycle's peak `C`
+    ///         is unknown until the 20-day window ending at the 38.2% pivot closes:
+    ///
+    ///         Window (`peakC == 0`, DCA slices):  stop = p + (p − prevPeak)·θ
+    ///         After the pivot (`peakC` known):    maxStop = C + (C − prevPeak)·θ
+    ///                                             stop = max( p + (maxStop − p)·θ ,  C )
+    ///
+    ///         Post-pivot leverage DECREASES monotonically with depth of entry and pins to
+    ///         `C` for deep entries — the minimum stop is the confirmed peak, a price the fall
+    ///         already proved it cannot regain (verified on every completed cycle: the
+    ///         post-pivot price never returned to `C`). It exceeds the flat base `g` for every
+    ///         entry above `maxStop/2` — which sits BELOW `C` — because `g·(g−1) = 1` puts the
+    ///         `L = g` crossover exactly at `maxStop/2`; near `C` the leverage is well above
+    ///         `g` (e.g. cycle-4 pivot entry ≈ 4.8×). The venue `maxLeverage` is the hard
+    ///         ceiling on top. A deep short is deliberately sized BELOW 1× — the +99–103%
+    ///         bear-market rallies of cycles 1–2 liquidate a flat-`φ` short, while the small
+    ///         position with its stop pinned to the far `C` survives. Sub-1× is the safety,
+    ///         so `shortLeverageWad` has NO 1× floor (unlike the long).
+    ///
+    ///         WINDOW-REGIME CAVEAT: with `peakC == 0` the stop is `p + (p − prevPeak)·θ`, an
+    ///         EXTRAPOLATION from the *previous* cycle's peak, not a bound confirmed for this
+    ///         cycle. If this cycle tops close to `prevPeak` (a diminishing-returns cycle) the
+    ///         leverage grows large (unbounded as `p → prevPeak`), relying on the venue
+    ///         `maxLeverage` clamp; all completed cycles topped ≥ 1.53× the prior peak. The
+    ///         §7b redo MUST add a structural cap for that tail (bind: a diminishing cycle
+    ///         should de-lever, not over-lever).
+    ///
+    ///         Returns 0 (caller falls back to the flat base `g`) when the structure is not
+    ///         confirmed: no previous peak recorded (genesis), a `peakC` not above
+    ///         `prevPeak`, a window entry with no positive delta (`p <= prevPeak`), or a
+    ///         post-pivot entry at/above `maxStop`.
+    function shortStopWad(uint256 p, uint256 g, uint256 prevPeak, uint256 peakC)
+        internal
+        pure
+        returns (uint256)
+    {
+        if (g <= Phi.WAD || prevPeak == 0 || p == 0) return 0; // flat-base fallback
+        uint256 theta = g - Phi.WAD; // θ = g − 1  (1/φ for g = φ)
+        if (peakC == 0) {
+            // Window regime: C not yet confirmed; anchor is the previous confirmed peak.
+            if (p <= prevPeak) return 0; // no positive delta: flat-base fallback
+            return p + Phi.mulDiv(p - prevPeak, theta, Phi.WAD);
+        }
+        if (peakC <= prevPeak) return 0; // unconfirmed pair: flat-base fallback
+        uint256 maxStop = peakC + Phi.mulDiv(peakC - prevPeak, theta, Phi.WAD);
+        if (p >= maxStop) return 0; // refuse: entry at/above the maximum stop
+        uint256 stop = p + Phi.mulDiv(maxStop - p, theta, Phi.WAD);
+        return stop < peakC ? peakC : stop; // pin: never below the confirmed peak
+    }
+
+    /// @notice Effective SHORT leverage (WAD): `L = p / (stop − p)`. NO 1× floor — a deep
+    ///         entry is deliberately sized below 1× (see `shortStopWad`). Returns 0 when the
+    ///         stop is refused/unconfirmed — the caller falls back to the flat base `g`.
+    function shortLeverageWad(uint256 p, uint256 g, uint256 prevPeak, uint256 peakC)
+        internal
+        pure
+        returns (uint256)
+    {
+        uint256 stop = shortStopWad(p, g, prevPeak, peakC);
+        if (stop == 0 || stop <= p) return 0;
+        return Phi.mulDiv(p, Phi.WAD, stop - p);
+    }
 }

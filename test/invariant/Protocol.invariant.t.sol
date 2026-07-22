@@ -45,8 +45,32 @@ contract ProtocolHandler is VaultTestBase {
 
     // ------------------------------------------------------------------ time & price
 
+    function oracleTimeSinceHalving() external view returns (uint256) {
+        return oracle.timeSinceHalving();
+    }
+
     function warp(uint32 dt) external {
         vm.warp(block.timestamp + bound(uint256(dt), 1 hours, 30 days));
+    }
+
+    /// F12 (audit 2026-07-22): the small [1h, 30d] `warp` cannot reach the first calendar
+    /// boundary (~day 538) within a bounded run, so sign-flips, rotations, settlements and
+    /// pool distribution were fuzz-unreachable — every run stayed in Zone.Growth of epoch 0.
+    /// This jumps the clock to a calendar-significant instant (monotone, never rewinds) so the
+    /// campaign actually crosses transitions; subsequent crank/settle handlers then exercise
+    /// the fall short, the B4 USDC rotation and the settlement/claim path.
+    function warpPivot(uint8 sel) external {
+        uint256 t = oracle.timeSinceHalving();
+        uint256[6] memory marks = [
+            Calendar.P - Calendar.H - 1, // ClosingGrowth (growth→fall transition)
+            Calendar.P + 1, // OpeningFall — the fall short opens
+            Calendar.P + Calendar.H + 5 days, // deep Fall
+            Calendar.T - Calendar.H - 1, // ClosingFall (fall→growth transition)
+            Calendar.T + Calendar.H + 5 days, // Terminal growth after the flip
+            Calendar.T + Calendar.W + 60 days // deep terminal growth
+        ];
+        uint256 target = marks[sel % 6];
+        if (target > t) vm.warp(block.timestamp + (target - t)); // advance only
     }
 
     function movePrice(uint16 seed) external {
@@ -263,6 +287,25 @@ contract ProtocolInvariantTest is VaultTestBase {
         ubtc = handler.ubtc();
         pool = handler.pool();
         targetContract(address(handler));
+    }
+
+    /// F12 reachability proof (deterministic, not fuzzed): the `warpPivot` handler action the
+    /// fuzzer now has makes the fall regime — and the sign flip through it — reachable and
+    /// safe. Before this handler the [1h,30d] warp could not reach day ~538 in a bounded run,
+    /// so every campaign stayed in Zone.Growth of epoch 0 and the transition invariants were
+    /// vacuous. Here we drive the exact path the fuzzer can now explore and confirm the vault
+    /// crosses into the fall with a negative target and cranks without reverting.
+    function test_F12_fall_regime_reachable_via_pivot_handler() public {
+        // Start in growth: Pro Max target is a positive (leveraged long) exposure.
+        assertGt(handler.vA().growthTarget(), int256(0));
+        // The fuzzer's warpPivot(1) jumps to OpeningFall; crankA then rotates.
+        handler.warpPivot(1);
+        uint256 t = handler.oracleTimeSinceHalving();
+        assertGe(t, Calendar.P, "clock reached the fall regime (>= 38.2% pivot)");
+        assertLt(t, Calendar.T, "still before the 62% pivot");
+        assertLt(handler.vA().fallTarget(), int256(0), "Pro Max fall target is a short");
+        handler.crankA(6); // must not revert in the transition
+        assertFalse(handler.unexpectedCrankRevert(), "crank safe across the transition");
     }
 
     /// Invariants 3/4/5/6/17 (operational form): recorded books never exceed real assets

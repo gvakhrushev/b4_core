@@ -57,12 +57,19 @@ authority over funds. The core stores no product names — the pair is read once
 |---|---:|---:|---|
 | `StrategyMini` | `1` | `1` | hold spot in both regimes; earns shared-Pool yield, trades nothing |
 | `StrategyB4` | `1` | `0` | a fall-regime rotation into USDC |
-| `StrategyPro` | `1` | `-1/φ` | a hedge — short `1/φ` in fall |
+| `StrategyPro` | `1` | `-1` | a full `1×` short in fall — the mirror of the long |
 | `StrategyProMax` | `φ` | `-φ` | leveraged expression of the same signs, `\|n\| = φ` |
 
 `φ = 1.618033988749894848` (WAD). Each rung is the previous one plus one more interior move at
 the two cycle pivots. How much accepted holding risk to keep is your dial; the protocol takes no
 directional view on your behalf.
+
+Where a rung carries leverage, the leverage is *designed* to be a safety mechanism: the
+position's liquidation is placed by margin size at a *structurally confirmed* extreme — the
+cycle's confirmed low for a long, its confirmed peak for a short — never at a distance an
+ordinary swing can reach ([SPECIFICATION §7b](../spec/SPECIFICATION.md); the math and anchors
+are shipped and tested, but the engine sizes flat-`φ` pending the §7b redo — see
+[REPORT.md](../REPORT.md)).
 
 Every product uses the same decomposition for a signed WAD target `n`:
 

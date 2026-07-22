@@ -195,6 +195,65 @@ a `try this.*`). **Final verification state: 205/205 green**, `forge fmt --check
 invariant campaign 512×256 green (8/8, 131,072 calls each, zero reverts), size gate green
 (B4Vault 24,195 B), `slither . --fail-high` exit 0 (95 detectors, 131 results).
 
+## V5 audit round — full-tree re-audit (2026-07-22)
+
+A full-codebase adversarial audit (59 agents, 10 module-owner lenses → 3 verifiers per deduped
+finding → completeness critic) after the structural-sizing round and the Pro `{1,−1}` change.
+**16 findings, 1 correctly killed; the 15 confirmed are all fixed or recorded.** All are on the
+shipped code or the docs; none reopens a prior finding.
+
+**Fixed (code, with fail-before/pass-after — `test/unit/AuditV5Fixes.t.sol`, `AnchorRatchet.t.sol`):**
+
+- **F2 (High) — order limit prices were venue-invalid.** `_pxWadTo8` truncated the WAD price
+  with no quantization; HyperCore rejects a price with > 5 significant figures or too many
+  decimals, and SPECIFICATION §7 mandates "prices rounded to venue price rules." The engine
+  rounded sizes but not prices, so on the live venue every non-round-price order (rotation,
+  flatten, reduce-only, and the exit's flatten) is dropped → zero delta → resend-forever = an
+  H3 exit-freeze. Fix: `_quantizePx8` rounds to ≤ 5 sig figs and the per-market decimal cap,
+  buys down / sells up so the slippage envelope is preserved. Fuzz-proven always-valid.
+- **F1 (Medium) — the halving flip could poison the structural floor.** `sampleAnchor` promoted
+  `cap → floor` on any post-halving open, even when the previous 62-window went unsampled (cap
+  then holds a post-halving low, not a cycle bottom, which the market historically breaks). Fix:
+  promote only a 62-window-confirmed cap (even/kind-1 outgoing tag); an unsampled window
+  degrades conservatively (floor stays low). Latent today (engine flat-`φ`) but the ratchet is
+  the durable data the redo consumes.
+- **F3 (Medium) — a settlement token with < 6 wei-decimals bricked perp vaults** (usd6 exponent
+  underflow). Fix: `verifySettlement` now rejects `coreWeiDecimals < 6` at binding.
+- **F4 (Low) — the spot planner lacked the perp planner's zero-price guard** (revert-loop at a
+  halted feed instead of holding). Fix: `_startSpotOrder` returns false on `pxWad == 0`.
+
+**Fixed (docs/spec honesty — the user-facing safety claims):**
+
+- **F9 (High) — user docs sold the structural stop as shipped.** README/WHITEPAPER/docs/01 now
+  mark it *designed* (math + anchors shipped & tested; engine sizes flat-`φ` pending the redo),
+  with a per-row status column in the README protection table.
+- **F5/F6 (Medium) — false short-side claims corrected.** "Exceeds base only above `C`" was
+  false (crossover is `maxStop/2`, below `C`); the window regime's stop is an extrapolation from
+  the previous peak (unbounded as the top approaches `prevPeak`) — now stated, with a normative
+  redo requirement to cap that diminishing-returns tail structurally.
+- **F8/F10/F11 (Low) — stale/overclaimed demo docs fixed:** the scaled-Pro example, "all four
+  products less drawdown" (Mini tracks HODL by design), and the "no look-ahead" claim.
+
+**Fixed (test coverage):**
+
+- **F12 (High) — the invariant campaign never reached a calendar transition** ([1h,30d] warp,
+  first pivot ~day 538; every run stayed in Growth epoch 0, so the transition invariants were
+  vacuous). Fix: a `warpPivot` handler jumps to calendar-significant instants; a deterministic
+  reachability test (`test_F12_fall_regime_reachable_via_pivot_handler`) proves the fall flip is
+  now exercised and safe.
+- **F14/F15 — the benchmark now asserts its own claims** (each product vs HODL, Mini tracks
+  HODL, principal preserved) and the stale `−1/φ` Pro comments were corrected.
+
+**Recorded for the next round (critic surfaces + F13, not fixed here):** a pool claim is never
+paid to a real vault in an integration test (F13); `Keeper.crank` sweeps `count-2` before
+claiming `count-1` (value rolls forward via sweep, so deferral not loss — verify); the
+HalvingProver/Oracle LayerZero root-of-trust and the `opsSettle`/`_finalizeExit` phi-rounding
+waterfall were not deeply attacked; CoreReader read-side price normalization is asserted only by
+comment. These join the funded-gate list.
+
+**Verification: 245/245 green, fmt clean, B4Vault 24,239 B (337 B EIP-170 margin), deep
+invariant campaign 8/8, slither release gate in CI.**
+
 ## Recommended next steps
 
 1. **Independent external audit** with a dedicated round on the async completion/retry,
@@ -205,33 +264,56 @@ invariant campaign 512×256 green (8/8, 131,072 calls each, zero reverts), size 
 3. ~~Amend the specification package with the two errata~~ — done 2026-07-18
    (SPECIFICATION.md §4/§9, WHITEPAPER.md §4, HAZARDS.md §C decisions, TEST_PLAN.md §3b).
 
-## Structural leverage (specified and wired, 2026-07-21)
+## Structural sizing (2026-07-21/22): both sides specified + math shipped; engine wiring REVERTED after audit
 
-A sizing mechanism specified in `SPECIFICATION.md` §7b, `HAZARDS.md` §C5 and
-`PROPOSAL-structural-leverage.md`: a leveraged long's effective leverage is bounded by the
-cycle's confirmed structural lows — `L = min(g·p/(p−floor), p/(p−cap))` — and the position is
-sized once per regime and **held** (the sizing price is frozen at entry) rather than
-rebalanced against a moving NAV. Preceded by a design + adversarial-critique round (which
-caught an inverted fail-safe claim in an earlier draft of the spec) since it touches the
-most-audited async surface. Implemented in three pieces, all with tests:
+The mechanism specified in `SPECIFICATION.md` §7b, `HAZARDS.md` §C5 and
+`PROPOSAL-structural-leverage.md`: every leveraged position's liquidation sits at a
+*structurally confirmed* extreme, realized by margin size (`margin = notional/L`) — longs
+bounded by the confirmed lows (`stop = min(p − (p−floor)/g, cap)`), shorts by the confirmed
+highs (`stop = max(p + (MaxStop−p)·(g−1), C)`, `MaxStop = C + (C−prevPeak)·(g−1)`), sized once
+per regime and **held**. Verified on every completed cycle: the structural stop was never
+touched, while flat-`φ` is liquidated by the +99–103 % bear rallies (short) and the −64 %
+COVID crash (long). Preceded by a design + adversarial-critique round (which caught an
+inverted fail-safe claim in the spec). **The math and the low-side ratchet are on-chain and
+safe; the engine sizing was written, reported done, then failed a dedicated
+post-implementation audit and was reverted.**
 
-1. `src/libraries/StructuralLeverage.sol` — the pure math; 8 unit tests pin the March-2020
-   survival case (the cap is what saves a φ-long the flat formula liquidates), May-2021, the
-   post-halving flip, and genesis = flat φ.
+**On-chain now (safe, but unused by the engine):**
+
+1. `src/libraries/StructuralLeverage.sol` — the pure math, BOTH sides. Long: 8 unit tests pin
+   the March-2020 survival case, May-2021, the post-halving flip, and genesis = flat φ.
+   Short (added 2026-07-22): 11 unit tests pin the owner-verified window/post-pivot numbers,
+   monotone de-levering, the sub-1× deep entry, the +99 % 2018 rally survival, and all
+   refusal/genesis fallbacks. (Survival is a property of the **math**; it is realized only if
+   the engine posts `margin = notional/L`, which it does not yet — see below.)
 2. `B4Pool.sampleAnchor` / `anchors` — a permissionless, sampling-only min-ratchet over the
    62-window and the post-halving window, per directional asset; 7 tests. More sampling lowers
-   the anchor (⇒ lower leverage), so it depends on a keeper sampling each window — an
-   under-sampled window installs no cap and the product falls back to flat `g`.
-3. `B4VaultEngine._planPerpStep` — sizes the perp from `StructuralLeverage` at the frozen price
-   and holds it; 3 tests (structural leverage enlarges the perp; a price move does not resize
-   a held position; the sizing price resets when flat).
+   the anchor (⇒ lower leverage), so it depends on a keeper sampling each window. The
+   symmetric max-ratchet (peak-window highs) is specified in §7b and is part of the redo.
 
-Placement is EIP-170-safe: the engine sizing is reached from `B4Vault` only via the
-`opsPlanStep` delegatecall, so it lands in `B4VaultOps`; **B4Vault is unchanged at 24,195 B**.
-Genesis (no window sampled) degrades to flat `φ`, so all pre-existing leverage tests hold.
-Verification: 230/230 green, deep campaign 8/8 at 512×256, `slither --fail-high` exit 0.
+**Reverted (was `B4VaultEngine._planPerpStep`):** the engine currently sizes leveraged perps at
+flat `φ`, not structurally. The [2026-07-21 adversarial audit](AUDIT-2026-07-structural-leverage.md)
+(46 agents, 10 confirmed findings) found two blocking defects in the wiring:
 
-Open items on this mechanism, for the external audit: the anchor sampling is an operational
-dependency (a keeper must sample the low each window; under-sampling raises leverage, bounded
-by real observed prices); the spot/perp basis at the frozen price is ignored (it cancels for a
-pure-directional strategy); a deposit adds at the held leverage rather than re-sizing.
+- **C6 (Critical) — the safety half was never implemented.** The engine kept the flat reserve
+  `margin = notional·φ/maxLev` and only amplified position *size*. The structural stop was never
+  realized; `stopWad` was dead code. A bigger position at the same ~4 %-away liquidation — worse
+  than not shipping. The proposal's own mandated regression ("stop realized by margin") was never
+  written; the shipped `StructuralSizing.t.sol` pre-loaded margin and asserted only order size.
+- **C1/C4 (Critical) — held position detonates at the halving.** `_perpMultiplier` read live
+  anchors while the sizing price was frozen; at the halving flip a permissionless `sampleAnchor`
+  collapsed the delta and leverage exploded ~25×, force-buying into the held position →
+  near-instant liquidation of the reserve.
+
+Also confirmed: C5 (refusal `p ≤ floor` mapped to flat `g` instead of the un-leveraged spot leg),
+C7 ("whole deposit deployed" absent — USDC deposits sit idle, dir-only Pro Max runs unlevered
+silently), C9/C10 (demo errors, since fixed). The audit record lists all 10 plus 5 uncovered
+surfaces the critic flagged and pre-registers the attack surface for the redo.
+
+**Next round (not started):** the full symmetric mechanism — `margin = notional/L` on both
+sides, whole deposit deployed, sizing price captured *with* its anchors and both frozen,
+refusal → spot-only (long) / flat base (short), the high-side ratchet, plus the mandated
+regressions: a test suite that crosses a halving with a held position, samples anchors
+mid-hold, and checks the venue liquidation against `stopWad`/`shortStopWad`.
+Design-before-code, then a fresh adversarial pass. Until then the engine sizes flat-`φ` and
+the leverage figures in the demo and docs are the design target, labelled as such.

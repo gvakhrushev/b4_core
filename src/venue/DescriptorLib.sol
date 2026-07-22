@@ -60,6 +60,11 @@ library DescriptorLib {
 
     function verifySettlement(CoreTypes.AssetDescriptor memory s) internal view {
         if (!s.fixedUsd) revert BadSettlement();
+        // The engine's usd6 conversions compute 10 ** (coreWeiDecimals − PERP_USD_DECIMALS)
+        // in checked uint8 arithmetic; a settlement token with fewer than 6 wei decimals
+        // (venue-legal per-token) would underflow-panic every perp-bearing vault built on
+        // this factory. Reject it at binding.
+        if (s.coreWeiDecimals < CoreTypes.PERP_USD_DECIMALS) revert BadSettlement();
         _verifyToken(s);
     }
 
