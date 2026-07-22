@@ -169,25 +169,27 @@ forge test --match-path 'test/backtest/*' -vv
 
 ### Three complete cycles, compounded (2012-11-28 → 2024-04-20)
 
+Product mechanics only — the pool is a separate yield (below), so nothing is double-counted.
+
 | Strategy | Total return | Worst drawdown | Worst vs deposit |
 |---|---:|---:|---:|
 | `HODL` buy & hold | 5,214x | 84.2 % | −13.2 % |
-| Mini | 5,248x | 84.5 % | −13.2 % |
-| **B4** | **125,149x** | **73.9 %** | −13.2 % |
-| **Pro** | **464,746x** | **73.9 %** | −13.2 % |
-| **Pro Max** | **24,597,040x** | **75.5 %** | −33.6 % |
+| Mini | 4,809x | 84.5 % | −13.2 % |
+| **B4** | **114,693x** | **73.9 %** | −13.2 % |
+| **Pro** | **425,918x** | **73.9 %** | −13.2 % |
+| **Pro Max** | **22,542,031x** | **75.5 %** | −33.6 % |
 
 ### Per cycle — return and drawdown side by side
 
 | Cycle | | `HODL` | Mini | B4 | Pro | Pro Max |
 |---|---|---:|---:|---:|---:|---:|
-| **2012→2016** | return | 52.3x | 52.4x | 145.1x | 222.8x | 593.9x |
+| **2012→2016** | return | 52.3x | 50.9x | 140.9x | 216.4x | 576.8x |
 | | max DD | 84.2 % | 84.5 % | **73.9 %** | **73.9 %** | 75.5 % |
-| **2016→2020** | return | 13.6x | 13.6x | 40.3x | 62.8x | 215.4x |
+| **2016→2020** | return | 13.6x | 13.2x | 39.1x | 61.0x | 209.2x |
 | | max DD | 83.2 % | 83.4 % | **64.2 %** | **64.2 %** | 74.0 % |
-| **2020→2024** | return | 7.3x | 7.4x | 21.4x | 33.2x | 192.3x |
+| **2020→2024** | return | 7.3x | 7.1x | 20.8x | 32.3x | 186.8x |
 | | max DD | 76.5 % | 76.8 % | **53.1 %** | **53.1 %** | 58.9 % |
-| **2024→now**\* | return | 1.00x | 1.03x | 1.71x | 2.26x | 5.95x |
+| **2024→now**\* | return | 1.00x | 1.00x | 1.66x | 2.20x | 5.78x |
 | | max DD | 53.0 % | 53.3 % | **28.2 %** | **28.2 %** | 51.9 % |
 
 <sub>\* cycle in progress. Pro Max structural leverage per cycle — long at the halving:
@@ -199,7 +201,8 @@ Read the two rows together, cycle by cycle: **more return, less drawdown.** B4 a
 bear that produces it; what drawdown remains is intra-bull volatility, and it gives back
 profit, not principal (B4 ends at −0.3 % vs the deposit in cycle 1 despite a 74 % swing).
 Pro Max carries real leveraged downside (−33.6 % vs deposit, cycle 2) — the table shows it
-rather than hiding it.
+rather than hiding it. Mini holds `HODL`'s exposure and pays the operator fee, so its
+*product* return sits just under `HODL` — its edge is entirely the pool yield below.
 
 ### The survival record — the safety mechanism, measured
 
@@ -215,14 +218,29 @@ below); after the 62 % window it never broke the confirmed bottom (the low staye
 above the long's stop). The stops are placed where the market has already proven it cannot
 go — that is the design, and four cycles of data agree with it.
 
-### Pool income — stayers are paid by leavers
+### Pool yield — the forfeited penalties ride the halving cycle
 
-Exits outside free windows pay a `q = 11.8 %` penalty into the shared pool, redistributed to
-holders. At the reference assumption (20 % of the cohort exits penalised per cycle) that is
-**+2.95 % per cycle to every stayer**. In a bull cycle it roughly offsets the operator fee;
-in a **flat cycle it is nearly the entire return** — the cycle in progress: Mini 1.03x vs
-`HODL` 1.00x, with the pool contributing ~93 % of Mini's profit. The protocol pays the
-patient exactly when the market does not.
+Exits outside the free windows pay a `q = 11.8 %` penalty into the shared pool, redistributed
+to stayers. But the pool is **not** a flat percentage credit — it is a fund that holds that
+penalty **in kind** (BTC through the growth regime) and distributes it at the settlement points,
+so the early-cycle penalties, accrued when BTC is cheap and realized near the cycle peak,
+**appreciate with the halving**. Modelled daily on the real series — a `$100/day` cohort marks
+`r` of each day's inflow as penalty — the pool distributes a *multiple* of what it took in:
+
+| Cycle | BTC (halving → next) | penalty in (10 % / 20 %) | **distributed** (10 % / 20 %) | **yield** |
+|---|---|---:|---:|---:|
+| 2012→2016 | $12 → $642 | $13,190 / $26,380 | **$56,890 / $113,781** | **4.3×** |
+| 2016→2020 | $642 → $8,759 | $14,020 / $28,040 | **$69,561 / $139,123** | **5.0×** |
+| 2020→2024 | $8,759 → $64,895 | $14,400 / $28,800 | **$21,121 / $42,243** | **1.5×** |
+
+The multiple is **rate-independent** (linear) — going from 10 % to 20 % doubles the dollars,
+not the yield. The pool captures BTC's growth-regime appreciation on the accumulated inventory,
+which the old flat `+2.95 %/cycle` figure entirely missed. With the designed fall-short
+([tranches](PROPOSAL-pool-tranches.md)) the fall-regime penalties also gain, adding a further
+`+2…7 %`. In a flat market the yield collapses toward `1×` (no appreciation to capture) — but
+that is exactly when the *redistribution* matters most: a Mini stayer's product return there
+merely tracks `HODL` (both ≈ 1.0× in the cycle in progress), so the pool is the entire edge.
+Reproduce: `forge test --match-test test_pool_economics -vv`.
 
 > [!NOTE]
 > **Scope of the numbers.** Three completed cycles is not a statistical sample (~32 halvings

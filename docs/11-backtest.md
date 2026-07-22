@@ -35,67 +35,67 @@ no pool, no protocol):
   `L`; a leveraged long's perp leg is `L−1`); the operator performance fee exactly as the
   shipped contract charges it (≤ 38.19 % of the 4.5 % virtual fee, baseline re-anchored to
   NAV every settlement — **no high-water mark**, so a bear round-trip is charged again on
-  recovery); pool income at the reference behavioural assumption (20 % of the cohort exits
-  penalised per cycle ⇒ +0.25·q ≈ +2.95 %/cycle to stayers).
+  recovery). Pool yield is modelled separately (it applies to every stayer regardless of
+  product) — see [Pool yield](#pool-yield--the-penalties-ride-the-halving-cycle) below.
 
 ## Three complete cycles, compounded (2012-11-28 → 2024-04-20)
 
 Re-deposited each cycle. **B4/Pro/Pro Max return a multiple of `HODL` while drawing down less;**
 Mini holds `HODL`'s exposure by design, so it tracks `HODL`'s drawdown (its edge is the pool).
 
-| Strategy | Total return | Worst drawdown | Worst vs deposit | Pool factor |
-|---|---:|---:|---:|---:|
-| `HODL` buy & hold | 5,214x | 84.2 % | −13.2 % | — |
-| Mini | 5,248x | 84.5 % | −13.2 % | ×1.09 |
-| **B4** | **125,149x** | **73.9 %** | −13.2 % | ×1.09 |
-| **Pro** | **464,746x** | **73.9 %** | −13.2 % | ×1.09 |
-| **Pro Max** | **24,597,040x** | **75.5 %** | −33.6 % | ×1.09 |
+| Strategy | Total return | Worst drawdown | Worst vs deposit |
+|---|---:|---:|---:|
+| `HODL` buy & hold | 5,214x | 84.2 % | −13.2 % |
+| Mini | 4,809x | 84.5 % | −13.2 % |
+| **B4** | **114,693x** | **73.9 %** | −13.2 % |
+| **Pro** | **425,918x** | **73.9 %** | −13.2 % |
+| **Pro Max** | **22,542,031x** | **75.5 %** | −33.6 % |
 
 ## Per cycle
 
 `vs dep` = the worst the equity ever fell below the deposit — the number that separates a
-drawdown (giving back profit) from a loss of principal. `pool` = the share of that
-strategy's cycle profit contributed by the penalised leavers.
+drawdown (giving back profit) from a loss of principal. Returns are **product mechanics only**
+(no pool credit); the pool is the separate yield below.
 
 **Cycle 1 — 2012-11-28 → 2016-07-09** · structural leverage: long 1.61×, short 1.61× (genesis)
 
-| | Return | max DD | vs dep | pool |
-|---|---:|---:|---:|---:|
-| `HODL` | 52.3x | 84.2 % | −0.3 % | — |
-| Mini | 52.4x | 84.5 % | −0.3 % | 2.9 % |
-| **B4** | **145.1x** | **73.9 %** | −0.3 % | 2.8 % |
-| **Pro** | **222.8x** | **73.9 %** | −0.3 % | 2.8 % |
-| **Pro Max** | **593.9x** | 75.5 % | −0.6 % | 2.8 % |
+| | Return | max DD | vs dep |
+|---|---:|---:|---:|
+| `HODL` | 52.3x | 84.2 % | −0.3 % |
+| Mini | 50.9x | 84.5 % | −0.3 % |
+| **B4** | **140.9x** | **73.9 %** | −0.3 % |
+| **Pro** | **216.4x** | **73.9 %** | −0.3 % |
+| **Pro Max** | **576.8x** | 75.5 % | −0.6 % |
 
 **Cycle 2 — 2016-07-09 → 2020-05-11** · structural leverage: long 2.46×, short 1.17×
 
-| | Return | max DD | vs dep | pool |
-|---|---:|---:|---:|---:|
-| `HODL` | 13.6x | 83.2 % | −13.2 % | — |
-| Mini | 13.6x | 83.4 % | −13.2 % | 3.0 % |
-| **B4** | **40.3x** | **64.2 %** | −13.2 % | 2.9 % |
-| **Pro** | **62.8x** | **64.2 %** | −13.2 % | 2.9 % |
-| **Pro Max** | **215.4x** | 74.0 % | **−33.6 %** | 2.8 % |
+| | Return | max DD | vs dep |
+|---|---:|---:|---:|
+| `HODL` | 13.6x | 83.2 % | −13.2 % |
+| Mini | 13.2x | 83.4 % | −13.2 % |
+| **B4** | **39.1x** | **64.2 %** | −13.2 % |
+| **Pro** | **61.0x** | **64.2 %** | −13.2 % |
+| **Pro Max** | **209.2x** | 74.0 % | **−33.6 %** |
 
 **Cycle 3 — 2020-05-11 → 2024-04-20** · structural leverage: long 2.68×, short 2.42×
 
-| | Return | max DD | vs dep | pool |
-|---|---:|---:|---:|---:|
-| `HODL` | 7.3x | 76.5 % | −0.1 % | — |
-| Mini | 7.4x | 76.8 % | −0.1 % | 3.3 % |
-| **B4** | **21.4x** | **53.1 %** | −0.1 % | 3.0 % |
-| **Pro** | **33.2x** | **53.1 %** | −0.1 % | 2.9 % |
-| **Pro Max** | **192.3x** | 58.9 % | −1.0 % | 2.8 % |
+| | Return | max DD | vs dep |
+|---|---:|---:|---:|
+| `HODL` | 7.3x | 76.5 % | −0.1 % |
+| Mini | 7.1x | 76.8 % | −0.1 % |
+| **B4** | **20.8x** | **53.1 %** | −0.1 % |
+| **Pro** | **32.3x** | **53.1 %** | −0.1 % |
+| **Pro Max** | **186.8x** | 58.9 % | −1.0 % |
 
 **Cycle 4 — 2024-04-20 → 2026-07-20 (in progress)** · structural leverage: long 2.17×, short 4.82×
 
-| | Return | max DD | vs dep | pool |
-|---|---:|---:|---:|---:|
-| `HODL` | 1.00x | 53.0 % | −17.1 % | — |
-| Mini | 1.03x | 53.3 % | −17.1 % | **92.9 %** |
-| **B4** | **1.71x** | **28.2 %** | −17.1 % | 6.8 % |
-| **Pro** | **2.26x** | **28.2 %** | −17.1 % | 5.1 % |
-| **Pro Max** | **5.95x** | 51.9 % | −41.7 % | 3.4 % |
+| | Return | max DD | vs dep |
+|---|---:|---:|---:|
+| `HODL` | 1.00x | 53.0 % | −17.1 % |
+| Mini | 1.00x | 53.3 % | −17.1 % |
+| **B4** | **1.66x** | **28.2 %** | −17.1 % |
+| **Pro** | **2.20x** | **28.2 %** | −17.1 % |
+| **Pro Max** | **5.78x** | 51.9 % | −41.7 % |
 
 ## Reading the drawdown correctly
 
@@ -128,14 +128,30 @@ is what survives; pinned as unit tests in
 [`StructuralLeverageShort.t.sol`](../test/unit/StructuralLeverageShort.t.sol) and
 [`StructuralLeverage.t.sol`](../test/unit/StructuralLeverage.t.sol).
 
-## Pool income — stayers are paid by leavers
+## Pool yield — the penalties ride the halving cycle
 
 Exits outside free windows pay `q = 11.8 %` into the shared pool, redistributed to holders
-pro-rata by weight. At the reference assumption this is **+2.95 %/cycle to every stayer**
-(the ×1.09 pool factor over three cycles). Because the shipped performance fee re-anchors to
-NAV each settlement, a hold-like product's fee roughly cancels the pool credit in a bull
-cycle — Mini edges `HODL` by only +0.1…0.3 % there. The pool's value concentrates where
-price returns nothing: in the flat cycle in progress it is ~93 % of Mini's entire profit.
+pro-rata by weight. The pool is **not** a flat percentage — it holds the penalty **in kind**
+(BTC through the growth regime, USDC through the fall) and distributes it at the three
+settlement points (`P−H`, `T+H`, the cycle boundary), so penalties accrued when BTC is cheap
+and realized near the cycle peak **appreciate with the halving**. Modelled daily on the real
+series (`test_pool_economics`), a `$100/day` cohort marking `r` of each day's inflow as penalty:
+
+| Cycle | BTC (halving → next) | penalty in (10 % / 20 %) | distributed (10 % / 20 %) | yield |
+|---|---|---:|---:|---:|
+| 2012→2016 | $12 → $642 | $13,190 / $26,380 | $56,890 / $113,781 | **4.31×** |
+| 2016→2020 | $642 → $8,759 | $14,020 / $28,040 | $69,561 / $139,123 | **4.96×** |
+| 2020→2024 | $8,759 → $64,895 | $14,400 / $28,800 | $21,121 / $42,243 | **1.46×** |
+
+The multiple is **rate-independent** — 10 % → 20 % doubles the dollars distributed, not the
+yield (the yield is the BTC appreciation on the accrued inventory, which the earlier flat
+`+2.95 %/cycle` figure entirely missed). With the designed fall-short
+([tranches](../PROPOSAL-pool-tranches.md)) the fall-regime penalties also gain, adding `+2…7 %`
+(cycles 1/2/3). The yield collapses toward `1×` in a flat market — which is when the
+*redistribution* matters most (a Mini stayer's product return then merely tracks `HODL`, so the
+pool is the entire edge). **Model caveat:** this earmarks `r` of daily inflow as penalty held in kind
+from accrual to distribution; the exact realized yield depends on the exit timing distribution,
+which the model idealizes.
 
 ## Model and assumptions
 
@@ -148,7 +164,7 @@ price returns nothing: in the flat cycle in progress it is ~93 % of Mini's entir
 | Timing | Sized once per regime at the pivot price, held. The long-side `cap` anchor is the min of a 20-day window that can extend a few days past the entry — a small look-ahead the demo accepts (the on-chain ratchet samples in real time, so live sizing has none); it only tightens leverage, never loosens it |
 | Fee | Operator's cut of `Phi.FEE_F` (≤ 38.19 % of 4.5 %) on profit, baseline re-anchored to NAV each settlement, matching `opsSettle` |
 | Funding | 10 %/yr on the full perp leg (assumption) |
-| Pool income | 20 % of a cohort exits penalised per cycle (behavioural assumption) |
+| Pool yield | modelled separately (`test_pool_economics`): `r` of a $100/day cohort's inflow is penalty inventory held in kind; 10 % and 20 % shown (behavioural) |
 
 **Not modelled:** slippage, market impact, trading fees, async execution delay, the DCA
 window averaging of live entries (the demo enters at the pivot price in one order). Perps

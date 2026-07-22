@@ -29,10 +29,6 @@ contract BacktestTest is Test {
     // of it, B4VaultOps) is ever paid out in kind, so a holder loses ≤ ~1.72% of profit.
     // The rest of FEE_F is pool-weight accounting and never leaves NAV.
     int256 constant OP_FEE = int256(Phi.FEE_F) * 3819 / 10000; // ≈ 1.72% of profit
-    // Pool income to a stayer, per cycle: 20% of the cohort exits through the
-    // EXIT_Q = 11.8% (= φ⁻³/2) penalty door; the forfeited penalty is redistributed to the
-    // ~80% who stay ⇒ +0.20·q/0.80 = 0.25·q ≈ +2.95%/cycle. Behavioural assumption.
-    int256 constant POOL_U = int256(Phi.EXIT_Q) / 4;
 
     uint256[4] HALVINGS = [uint256(1354116278), 1468082773, 1589225023, 1713571767];
 
@@ -156,6 +152,129 @@ contract BacktestTest is Test {
         }
     }
 
+    // ------------------------------------------------------------------ pool economics
+
+    /// The pool is NOT a flat "+2.95%/cycle" credit — it is a fund that accrues forfeited
+    /// penalties IN KIND and distributes them at the settlement points. Because penalties
+    /// accrue as BTC through the growth regime and distribute near the cycle peak (and the
+    /// recovery inventory distributes near the next halving), the realized value is a MULTIPLE
+    /// of the nominal penalties — it captures the halving-cycle BTC appreciation the flat
+    /// model ignored. Modelled daily on the real series: a $100/day cohort marks `r` of each
+    /// day's inflow as penalty (10% and 20% shown); the multiple is rate-independent (linear),
+    /// the dollars scale with `r`.
+    struct Pool {
+        int256 btc; // WAD BTC held (long regimes)
+        int256 usd; // WAD USDC held (fall regime, in-kind)
+        int256 shortNotional; // WAD short notional (fall, tranche design)
+        int256 shortEntry; // size-weighted WAD entry price of the short book
+        int256 contributed;
+        int256 distributed;
+    }
+
+    function test_pool_economics() public {
+        _loadPrices();
+        console.log("");
+        console.log(
+            "================ POOL YIELD - forfeited penalties ride BTC in kind ================"
+        );
+        console.log(
+            "A $100/day cohort marks r pct of daily inflow as penalty; the pool accrues it in kind"
+        );
+        console.log(
+            "(BTC in the long regimes, riding price) and distributes at P-H, T+H and the cycle"
+        );
+        console.log(
+            "boundary. x = realized value over penalties in - the BTC appreciation the flat +2.95pct"
+        );
+        console.log(
+            "model missed. Multiple is rate-independent; dollars double from 10pct to 20pct."
+        );
+        console.log("");
+        console.log("  cycle    penalty in (10/20pct)     distributed (10/20pct)    x   +short");
+        for (uint256 c = 0; c < 3; c++) {
+            (int256 contrib, int256 dist) = _poolCycle(c, false);
+            (, int256 distS) = _poolCycle(c, true);
+            int256 mult = dist * 100 / contrib; // x100
+            int256 shortUp = (distS - dist) * 100 / dist; // %
+            console.log(
+                string.concat(
+                    "    ",
+                    vm.toString(c + 1),
+                    "     $",
+                    _usd(contrib / 2),
+                    " / $",
+                    _usd(contrib),
+                    "   $",
+                    _usd(dist / 2),
+                    " / $",
+                    _usd(dist),
+                    "  ",
+                    _twoDp(mult),
+                    "x  +",
+                    vm.toString(uint256(shortUp)),
+                    "%"
+                )
+            );
+            // The pool realizes MORE than it took in — every completed cycle, from BTC growth.
+            assertGt(dist, contrib, "pool distributes more than the nominal penalties");
+            assertGt(distS, dist, "the tranche fall-short adds to the in-kind pool");
+        }
+        console.log("");
+    }
+
+    /// One cycle of pool accrual + distribution. Penalty per day = $20 (the 20% case; the
+    /// 10% column is exactly half). Returns (contributed, distributed) in WAD dollars.
+    function _poolCycle(uint256 c, bool useShort) internal view returns (int256, int256) {
+        uint256 frm = HALVINGS[c];
+        uint256 nxt = c + 1 < 4 ? HALVINGS[c + 1] : ts[ts.length - 1];
+        uint256 pTop = frm + Calendar.P;
+        uint256 pBot = frm + Calendar.T;
+        uint256[3] memory dist = [frm + Calendar.P - Calendar.H, frm + Calendar.T + Calendar.H, nxt];
+        int256 pen = 20e18; // $20/day
+        Pool memory pl;
+        uint256 di;
+        for (uint256 i = 0; i < ts.length; i++) {
+            if (ts[i] < frm || ts[i] >= nxt) continue;
+            pl.contributed += pen;
+            if (ts[i] >= pTop && ts[i] < pBot) {
+                if (useShort) {
+                    // Blend the short book's entry price by notional.
+                    pl.shortEntry = pl.shortNotional + pen == 0
+                        ? px[i]
+                        : (pl.shortEntry * pl.shortNotional + px[i] * pen)
+                            / (pl.shortNotional + pen);
+                    pl.shortNotional += pen;
+                } else {
+                    pl.usd += pen; // in-kind: USDC, flat
+                }
+            } else {
+                pl.btc += pen * WAD / px[i]; // long regime: buy BTC at the day's price
+            }
+            if (di < 3 && ts[i] >= dist[di]) {
+                int256 shortVal = pl.shortEntry == 0
+                    ? int256(0)
+                    : pl.shortNotional * (2 * WAD - px[i] * WAD / pl.shortEntry) / WAD;
+                if (shortVal < 0) shortVal = 0;
+                pl.distributed += pl.btc * px[i] / WAD + pl.usd + shortVal;
+                pl.btc = 0;
+                pl.usd = 0;
+                pl.shortNotional = 0;
+                pl.shortEntry = 0;
+                di++;
+            }
+        }
+        return (pl.contributed, pl.distributed);
+    }
+
+    function _usd(int256 wad) internal pure returns (string memory) {
+        return _padTo(vm.toString(uint256(wad) / 1e18), 7);
+    }
+
+    function _twoDp(int256 x100) internal pure returns (string memory) {
+        uint256 w = uint256(x100);
+        return string.concat(vm.toString(w / 100), ".", _two(w % 100));
+    }
+
     // ------------------------------------------------------------------ the run
 
     function test_backtest_products() public {
@@ -176,7 +295,7 @@ contract BacktestTest is Test {
         console.log("ret = final equity (deposit = 1.00x).  maxDD = worst peak-to-trough.");
         console.log("zone = calendar phase the worst drawdown landed in (GROWTH [0,P] / FALL");
         console.log("[P,T] / RECOV [T,end]).  vs dep = worst value ever, against the deposit.");
-        console.log("pool = share of that strategy's profit paid by the penalised leavers.");
+        console.log("Product mechanics only; the pool is a separate yield (test_pool_economics).");
         console.log("");
 
         Row[5][4] memory all;
@@ -239,7 +358,7 @@ contract BacktestTest is Test {
                 c == 3 ? "   (IN PROGRESS)" : ""
             )
         );
-        console.log("  strategy      ret     maxDD   worst DD on   zone     vs dep    pool     lev");
+        console.log("  strategy      ret     maxDD   worst DD on   zone     vs dep      lev");
 
         out[0] = _hodl(k.frm, k.nxt);
         _print("  HODL   ", out[0], k.frm);
@@ -251,11 +370,10 @@ contract BacktestTest is Test {
             int256 lev = _regime(a, k.frm, k.pTop, prods[p].growth, k, false);
             int256 levS = _regime(a, k.pTop, k.pBot, prods[p].fall, k, false);
             _regime(a, k.pBot, k.nxt, prods[p].growth, k, true);
-            // Pool income, credited once per cycle: the 20% penalised exits, redistributed.
-            int256 pool = a.eq * POOL_U / WAD;
-            a.eq += pool;
-
-            out[p + 1] = Row(a.eq, a.maxDD, a.ddAt, a.low, pool, p == 3 ? lev : int256(0));
+            // NOTE: no pool credit here — the product return is the product's own mechanics
+            // (calendar + structural + fee + funding). The pool is a separate yield that
+            // applies to every stayer regardless of product — see test_pool_economics.
+            out[p + 1] = Row(a.eq, a.maxDD, a.ddAt, a.low, int256(0), p == 3 ? lev : int256(0));
             if (p == 3) shortLev = levS;
             _print(string.concat("  ", prods[p].name), out[p + 1], k.frm);
         }
@@ -383,7 +501,7 @@ contract BacktestTest is Test {
         console.log(
             "=========== 3 COMPLETE CYCLES COMPOUNDED (2012-11-28 -> 2024-04-20) ==========="
         );
-        console.log("  strategy          total ret   worst maxDD   worst vs dep   pool factor");
+        console.log("  strategy          total ret   worst maxDD   worst vs dep");
         for (uint256 s = 0; s < 5; s++) {
             int256 tot = WAD;
             int256 wdd;
@@ -392,13 +510,6 @@ contract BacktestTest is Test {
                 tot = tot * all[c][s].ret / WAD;
                 if (all[c][s].maxDD > wdd) wdd = all[c][s].maxDD;
                 if (all[c][s].low < wlow) wlow = all[c][s].low;
-            }
-            // Pool factor: (1 + u)^3 for a stayer, 1.00x for the outside baseline.
-            int256 pf = WAD;
-            if (s > 0) {
-                for (uint256 k = 0; k < 3; k++) {
-                    pf = pf * (WAD + POOL_U) / WAD;
-                }
             }
             console.log(
                 string.concat(
@@ -409,22 +520,17 @@ contract BacktestTest is Test {
                     "     ",
                     _pct(wdd),
                     "        ",
-                    _pctS(wlow - WAD),
-                    "        ",
-                    s == 0 ? "     -" : _x(pf)
+                    _pctS(wlow - WAD)
                 )
             );
         }
         console.log("");
+        console.log("Product returns are the product's own mechanics only (no pool credit); the");
         console.log(
-            "Assumptions: funding 10%/yr on the abs perp leg; operator fee <=1.72% of profit"
+            "pool is a separate yield (test_pool_economics). Assumptions: funding 10%/yr on"
         );
-        console.log(
-            "(max route); 20% penalised exits/cycle. NOT modelled: slippage, market impact,"
-        );
-        console.log(
-            "trading fees, async delay. Perfect calendar timing. Cycle 4 still in progress."
-        );
+        console.log("the abs perp leg; operator fee <=1.72% of profit. NOT modelled: slippage,");
+        console.log("market impact, trading fees, async delay. Cycle 4 still in progress.");
     }
 
     // ------------------------------------------------------------------ printing
@@ -432,10 +538,6 @@ contract BacktestTest is Test {
     function _print(string memory name, Row memory r, uint256 frm) internal pure {
         uint256 off = r.ddAt - frm;
         string memory zone = off < Calendar.P ? "GROWTH" : (off < Calendar.T ? "FALL  " : "RECOV ");
-        // Pool as a share of this strategy's profit (can exceed 100% in a flat cycle).
-        int256 profit = r.ret - WAD;
-        string memory poolCol =
-            r.pool == 0 ? "     -" : (profit <= 0 ? "  n/a " : _pctW(r.pool * WAD / profit));
         console.log(
             string.concat(
                 name,
@@ -449,8 +551,6 @@ contract BacktestTest is Test {
                 zone,
                 "   ",
                 _pctS(r.low - WAD),
-                "   ",
-                poolCol,
                 "   ",
                 r.lev == 0 ? "    -" : _x(r.lev)
             )
@@ -479,17 +579,6 @@ contract BacktestTest is Test {
         return _padTo(
             string.concat(vm.toString((w * 100) / 1e18), ".", _two((w * 10000 / 1e18) % 100), "%"),
             7
-        );
-    }
-
-    /// Unsigned percent, width 6, no decimals: "  2.9%".
-    function _pctW(int256 v) internal pure returns (string memory) {
-        uint256 w = uint256(v < 0 ? -v : v);
-        return _padTo(
-            string.concat(
-                vm.toString((w * 100) / 1e18), ".", vm.toString((w * 1000 / 1e18) % 10), "%"
-            ),
-            6
         );
     }
 
