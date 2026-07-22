@@ -157,61 +157,69 @@ never trades, yet is still fee'd on interval profit.
 
 Details: [Core concepts](docs/02-core-concepts.md).
 
-## Benchmark — every product vs buy-and-hold, real BTC closes
+## Benchmark — every product, driven through the real contracts
 
-Positions are sized once per regime and **held** (fixed units, no rebalance drag); Pro Max's
-leverage comes from the protocol's own `StructuralLeverage` on both sides — longs bounded by
-the confirmed lows, shorts by the confirmed highs. Reproduce:
+These numbers are **not** a parallel spreadsheet model. Every figure is `B4Vault.navWad()`
+read off the **actual deployed contracts** — real `B4Vault`/`B4VaultOps`/`B4Pool`/
+`HalvingOracle` and the reference `Strategy*` — cranked day by day across the real halving
+epochs, rotating and settling exactly as the on-chain keeper would. Source:
+[`test/backtest/BacktestReal.t.sol`](test/backtest/BacktestReal.t.sol). Reproduce:
 
 ```bash
-forge test --match-path 'test/backtest/*' -vv
+forge test --match-path 'test/backtest/BacktestReal.t.sol' -vv
 ```
 
-### Three complete cycles, compounded (2012-11-28 → 2024-04-20)
+Each vault starts from **$100k of BTC** ("BTC base"). Mini and B4 never short, so they post no
+margin. Pro and Pro Max short in the fall and therefore also post USDC **margin** (a short
+cannot be backed by the USDC from selling spot — it needs its own margin bucket); that margin
+is *additional* capital, reported separately, and the return multiple is taken on the $100k BTC
+base so all four products stay comparable.
 
-Two returns, kept **separate** so nothing is double-counted: **① the strategy** — the product's
-own mechanics (calendar + structural sizing − fee − funding), and **② the pool** — the
-redistributed exit penalties, a flat `×1.091` on any stayer's equity over the three cycles
-(20 % penalized exits; `×1.040` at 10 %). **Total = ① × ②.**
+### Three complete cycles + cycle 4 in progress (2012-11-28 → 2026-07-20)
 
-| Strategy | ① Strategy return | ② Pool | **Total** | Worst drawdown | Worst vs deposit |
-|---|---:|---:|---:|---:|---:|
-| `HODL` buy & hold | 5,214x | — | 5,214x | 84.2 % | −13.2 % |
-| Mini | 4,809x | ×1.091 | **5,247x** | 84.5 % | −13.2 % |
-| **B4** | 114,693x | ×1.091 | **125,130x** | **73.9 %** | −13.2 % |
-| **Pro** | 425,918x | ×1.091 | **464,677x** | **73.9 %** | −13.2 % |
-| **Pro Max** | 22,542,031x | ×1.091 | **24,593,356x** | **75.5 %** | −33.6 % |
-
-`HODL` is the raw baseline — no protocol, no pool. The strategy column is the product's own
-work; the pool column is the same transfer for everyone (it applies to a stayer's equity
-regardless of product). For B4/Pro/Pro Max the strategy dominates; for Mini the pool is
-decisive — see [below](#pool-yield--a-transfer-not-a-btc-multiple).
+| Product | Total return (BTC base) | Worst cycle drawdown | Extra margin posted |
+|---|---:|---:|---:|
+| Mini (spot hold — the baseline) | 4,930x | 84.5 % | — |
+| **B4** | **353,850x** | **73.9 %** | — |
+| **Pro** | **369,138x** | **73.3 %** | $15k |
+| **Pro Max** | **625,543x** | **72.9 %** | $25k |
 
 ### Per cycle — return and drawdown side by side
 
-| Cycle | | `HODL` | Mini | B4 | Pro | Pro Max |
-|---|---|---:|---:|---:|---:|---:|
-| **2012→2016** | return | 52.3x | 50.9x | 140.9x | 216.4x | 576.8x |
-| | max DD | 84.2 % | 84.5 % | **73.9 %** | **73.9 %** | 75.5 % |
-| **2016→2020** | return | 13.6x | 13.2x | 39.1x | 61.0x | 209.2x |
-| | max DD | 83.2 % | 83.4 % | **64.2 %** | **64.2 %** | 74.0 % |
-| **2020→2024** | return | 7.3x | 7.1x | 20.8x | 32.3x | 186.8x |
-| | max DD | 76.5 % | 76.8 % | **53.1 %** | **53.1 %** | 58.9 % |
-| **2024→now**\* | return | 1.00x | 1.00x | 1.66x | 2.20x | 5.78x |
-| | max DD | 53.0 % | 53.3 % | **28.2 %** | **28.2 %** | 51.9 % |
+| Cycle | | Mini | B4 | Pro | Pro Max |
+|---|---|---:|---:|---:|---:|
+| **2012→2016** | return | 51.0x | 137.6x | 143.7x | **231.8x** |
+| | max DD | 84.5 % | **73.9 %** | **73.3 %** | **72.9 %** |
+| **2016→2020** | return | 13.4x | 52.6x | 52.5x | **55.3x** |
+| | max DD | 83.4 % | **64.0 %** | **64.0 %** | **64.1 %** |
+| **2020→2024** | return | 7.3x | 29.2x | 29.2x | 29.1x |
+| | max DD | 76.8 % | **53.0 %** | **53.0 %** | **53.0 %** |
+| **2024→now**\* | return | 0.99x | 1.68x | 1.68x | 1.68x |
+| | max DD | 53.7 % | **28.2 %** | **28.2 %** | **28.2 %** |
 
-<sub>\* cycle in progress. Pro Max structural leverage per cycle — long at the halving:
-1.6× / 2.5× / 2.7× / 2.2×; short at the 38.2 % pivot: 1.6× / 1.2× / 2.4× / 4.8× — set by the
-confirmed extremes, not a flat multiple.</sub>
+<sub>\* cycle in progress, read at the last available price date.</sub>
 
-Read the two rows together, cycle by cycle: **more return, less drawdown.** B4 and Pro cut
-10–25 pp off `HODL`'s cycle drawdown because they are simply *not in the market* during the
-bear that produces it; what drawdown remains is intra-bull volatility, and it gives back
-profit, not principal (B4 ends at −0.3 % vs the deposit in cycle 1 despite a 74 % swing).
-Pro Max carries real leveraged downside (−33.6 % vs deposit, cycle 2) — the table shows it
-rather than hiding it. Mini holds `HODL`'s exposure and pays the operator fee, so its
-*strategy* return sits just under `HODL` (4,809x vs 5,214x); the pool ② is what carries it
-back above (5,247x) — its edge is entirely the pool.
+Read the two rows together: **more return, less drawdown.** B4/Pro/Pro Max cut ~10 pp off
+Mini's cycle drawdown because they step out of the market (into USDC or a short) during the
+bear that produces it. The short's edge is concentrated in cycle 1 — the biggest fall — and
+fades in later cycles: with a *fixed* margin, the short's notional shrinks relative to a
+compounding NAV, so Pro and B4 converge (a real property the old idealized model hid; scaling
+margin with NAV would keep the short's contribution, at the cost of more capital at risk). Mini
+holds spot in both regimes and pays only the operator's real cut (≈ 1.72 % of profit), so it
+lands just under raw buy-and-hold (~5,200x over the same span) — see
+[Pool weight](#pool-weight--not-a-backtestable-number) for what the fee's larger remainder buys.
+
+> [!NOTE]
+> **These numbers depend on operational assumptions**, and moving them moves the result: the
+> keeper cadence (this run cranks at each calendar transition and the two settlements, not every
+> block), the margin a short product posts (more margin → larger short → more fall capture and
+> more risk), and — because NAV excludes unrealized PnL by design (engine invariant B3) — the
+> exact point at which a short is closed and its gain realized. A held single-vault backtest can
+> show the mechanism faithfully; it cannot promise a live keeper reproduces the multiple to the
+> digit. An **earlier hand-rolled model** (a parallel equity calculator, now deleted) reported
+> e.g. Pro Max 22,542,031x — it applied compounding structural leverage every cycle that the
+> shipped flat-`φ` engine never delivers, overstating Pro Max ~36×. This is the corrected,
+> contract-sourced replacement.
 
 ### The survival record — the safety mechanism, measured
 
@@ -227,33 +235,38 @@ below); after the 62 % window it never broke the confirmed bottom (the low staye
 above the long's stop). The stops are placed where the market has already proven it cannot
 go — that is the design, and four cycles of data agree with it.
 
-### Pool yield — a transfer, not a BTC multiple
+### Pool weight — not a backtestable number
 
-Exits outside the free windows forfeit `q = 11.8 %` of their position into the shared pool,
-redistributed to the stayers. The pool holds it **in kind** (BTC through the growth regimes, a
-short in the fall) — **but so does every stayer's own book**, so BTC's appreciation sits on
-*both sides* of the ratio and cancels. The pool return is therefore a pure **transfer**,
-`r·q/(1−r)` of a stayer's equity per cycle, independent of how far BTC ran. Modelled daily on
-the real series (a `$100/day` DCA book, `test_pool_economics`), the per-cycle boost is
-**identical** across three cycles that grew 52×, 14× and 7×:
+This section went through two wrong models before landing here — both are recorded below
+because the mistakes are instructive about what the pool actually is.
 
-| Penalized exits (per cycle) | Pool return / cycle | Over three cycles |
-|---|---:|---:|
-| 10 % | +1.31 % | **×1.040** |
-| 20 % | +2.95 % | **×1.091** |
+**How a claim is actually earned.** At every settlement, the vault computes `virtualFee = 4.5 %`
+of that interval's profit. Only the operator's slice of it (`≤ 38.19 %`, i.e. `≤ ~1.72 %` of
+profit) is ever paid out — that's the only amount that leaves your equity, and it's exactly what
+the benchmark above deducts. The rest — `≥ 2.79 %` of profit, the **client share** — is *not*
+lost: it's added to your vault's `rewardBaseWad`, a running balance that never resets except
+when you partially exit (scaled down by what you withdrew). Every settlement, your vault reports
+its current `rewardBaseWad` to `B4Pool` as your **weight** for that interval.
 
-The designed fall-short ([tranches](PROPOSAL-pool-tranches.md)) lets the fall-regime penalties
-gain instead of sitting flat — a small addition on top; this transfer is the floor. The yield is
-modest **by construction**: it is a redistribution *among* holders, not new BTC exposure. It
-matters most in a flat market, where a Mini stayer's strategy return merely tracks `HODL`
-(both ≈ 1.0× in the cycle in progress), so the pool is the entire edge.
-Reproduce: `forge test --match-test test_pool_economics -vv`.
+**How a claim is paid.** The pool's basket for an interval is whatever exit penalties (`q = 11.8 %`
+of a penalized exit's position) landed in it before that interval closed. Distribution is pro
+rata by weight: `your_share = bucket × your_weight / total_weight_of_everyone_who_settled_that_interval`.
 
-> [!NOTE]
-> **Correction.** An earlier version of this section reported a "4–5× pool yield," modelling the
-> penalty as accrued at daily cost and distributed grown. That double-counted the halving
-> appreciation a stayer's *own* book already captures — the two sides of the transfer both ride
-> BTC, so the relative boost cannot be a BTC multiple. The honest figure is the transfer above.
+**Why no multiplier is given here.** Your weight is *your own* accumulated performance-fee
+share — it scales with how much dollar profit your vault generates (Pro Max's absolute profit
+dwarfs Mini's, so Pro Max earns disproportionately more weight per dollar deposited, not the same
+cut everyone else gets). Both the numerator (penalty volume) and the denominator (`total_weight`,
+the sum of every *other* participating vault's own weight) depend on who else is using the
+protocol at the time — a population this repo has no way to assume without inventing one. A
+flat "×1.09" applied equally to every product, which an earlier draft of this section claimed
+(and before that, a wrongly-compounded "4–5× yield" — both fabricated, both removed), was simply
+not a real number.
+
+What *is* real and code-grounded: the worked settlement/exit examples in
+[docs/07-fee-routing.md §6](docs/07-fee-routing.md#6-worked-numeric-example), pinned by
+`Settle.t.sol`, `Exit.t.sol`, `V3Acct_SettleBasketFee.t.sol`. The mechanism is real and the
+client share is never destroyed — but its dollar payoff is an ecosystem property, not a
+strategy property, so it stays out of this benchmark's return figures.
 
 > [!NOTE]
 > **Scope of the numbers.** Three completed cycles is not a statistical sample (~32 halvings

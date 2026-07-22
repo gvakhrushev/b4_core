@@ -239,9 +239,9 @@ prevBottom)·θ` and `stop = min(p − (p − MinStop)·θ, B)` — the exact re
 
 Done: spec §7b (both sides) + HAZARDS §C5; `StructuralLeverage` pure math for long AND short
 (`test/unit/StructuralLeverage.t.sol`, `StructuralLeverageShort.t.sol`); the low-side
-on-chain ratchet (`B4Pool.sampleAnchor`, `AnchorRatchet.t.sol`); the benchmark rebuilt on the
-held mechanic with structural sizing on both sides (`test/backtest/Backtest.t.sol`,
-`docs/11-backtest.md`).
+on-chain ratchet (`B4Pool.sampleAnchor`, `AnchorRatchet.t.sol`); the benchmark now drives the
+real contracts end-to-end (`test/backtest/BacktestReal.t.sol`, `docs/11-backtest.md`) — flat-`φ`,
+since the engine does not yet consume `StructuralLeverage`.
 
 Remaining — the §7b engine redo, requirements bound by
 [`AUDIT-2026-07-structural-leverage.md`](AUDIT-2026-07-structural-leverage.md):

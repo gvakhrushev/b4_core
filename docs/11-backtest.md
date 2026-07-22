@@ -1,121 +1,98 @@
-# Benchmark: the calendar + structural sizing over real BTC data
+# Benchmark: every product driven through the real contracts
 
-Every product against buy-and-hold across the completed Bitcoin cycles — run through the
-**protocol's own libraries** (`Calendar` for the regime, `StructuralLeverage` for both sides
-of the leverage), not a re-implementation.
+Every figure here is `B4Vault.navWad()` read off the **actual deployed contracts** — the real
+`B4Vault`/`B4VaultOps`/`B4Pool`/`HalvingOracle` and the reference `Strategy*` — cranked day by
+day across the real halving epochs, rotating and settling exactly as the on-chain keeper would.
+It is **not** a parallel spreadsheet model. (An earlier hand-rolled equity calculator that this
+replaces overstated Pro Max by ~36× and mis-stated every product; see the note at the end.)
 
 ```bash
-forge test --match-path 'test/backtest/*' -vv
+forge test --match-path 'test/backtest/BacktestReal.t.sol' -vv
 ```
 
-Source: [`test/backtest/Backtest.t.sol`](../test/backtest/Backtest.t.sol) ·
-math: [`src/libraries/StructuralLeverage.sol`](../src/libraries/StructuralLeverage.sol) ·
+Source: [`test/backtest/BacktestReal.t.sol`](../test/backtest/BacktestReal.t.sol) ·
 data: [`data/btcusd_daily.csv`](../data/btcusd_daily.csv)
 
 ## What is being measured
 
-The protocol's claim is a **safety** claim: the calendar removes the bear, and structural
-stops make leverage survivable. The benchmark therefore reads on three axes at once —
-return, drawdown, and survival — always against the same baseline, `HODL` (raw buy-and-hold,
-no pool, no protocol):
+The protocol's claim is a **safety** claim: the calendar removes the bear, and stepping out of
+the market (into USDC or a short) during the fall makes the position survive it. The benchmark
+reads on three axes — return, drawdown, and survival — with Mini (spot held in both regimes,
+the protocol's buy-and-hold) as the baseline:
 
-- **Sized once per regime, then held.** Fixed units; equity is linear in price
-  (`eq·(1 + dir·L·(px/entry − 1))`) — no daily-rebalance volatility drag, no compounding
-  artifacts. This is the shipped "held" mechanic (SPECIFICATION §7b).
-- **Leverage from the protocol's own function, both sides.** Longs:
-  `StructuralLeverage.leverageWad(entry, φ, floor, cap)` off the confirmed lows. Shorts:
-  `StructuralLeverage.shortLeverageWad(entry, φ, prevPeak, C)` off the confirmed highs
-  (post-pivot regime — the peak window has just closed at the fall entry). Genesis anchors
-  degrade to flat `φ` with no special path.
-- **Anchors as the on-chain ratchets hold them.** Long side: `floor` = previous cycle's
-  62-window bottom; `cap` = post-halving-window low for the halving-entry long, the
-  62-window low for the recovery long. Short side: `C` = max of the 20-day window ending at
-  the 38.2 % pivot; `prevPeak` = the previous cycle's. All read from the same daily series.
-- **Costs modelled:** funding 10 %/yr on the full perp leg (a short is all-perp, fraction
-  `L`; a leveraged long's perp leg is `L−1`); the operator performance fee exactly as the
-  shipped contract charges it (≤ 38.19 % of the 4.5 % virtual fee, baseline re-anchored to
-  NAV every settlement — **no high-water mark**, so a bear round-trip is charged again on
-  recovery). Pool yield is modelled separately (it applies to every stayer regardless of
-  product) — see [Pool yield](#pool-yield--a-transfer-not-a-btc-multiple) below.
+- **Real engine, real keeper.** A vault is deposited once, then `crank()`-ed at each calendar
+  transition and `settle()`-d at the two settlement points (`P−H`, `T+H`) every epoch — the same
+  calls the permissionless keeper makes. Equity is `navWad()`, nothing else.
+- **BTC base + separate margin.** Each vault starts from **$100k of BTC**. Mini and B4 never
+  short, so they post no margin. Pro and Pro Max short in the fall and therefore also post USDC
+  **margin** — a short cannot be backed by the USDC from selling spot; it needs its own margin
+  bucket. That margin is additional capital, reported separately; returns are taken on the $100k
+  BTC base so all four products stay comparable.
+- **Flat-`φ` sizing.** The shipped engine sizes perps at the flat base `φ`, not structural
+  leverage (the `StructuralLeverage` library is designed and tested but not wired — see
+  [audit record](../AUDIT-2026-07-structural-leverage.md)). Pro Max's edge here is the `φ`
+  base target, not a structural amplification.
+- **Costs charged by the contract itself:** the operator performance fee exactly as `opsSettle`
+  takes it (≤ 38.19 % of the 4.5 % virtual fee, baseline re-anchored to NAV every settlement —
+  **no high-water mark**), and perp funding as the venue applies it. The shared-pool client-share
+  weight is **not** included — see [Pool weight](#pool-weight--not-a-backtestable-number).
 
-## Three complete cycles, compounded (2012-11-28 → 2024-04-20)
+## Three complete cycles + cycle 4 in progress (2012-11-28 → 2026-07-20)
 
-Re-deposited each cycle. A stayer's return has **two parts kept separate** so nothing is
-double-counted: **① the strategy** (the product's own mechanics) and **② the pool** (the
-redistributed penalties — a flat `×1.091` on equity over the three cycles at 20 % penalized
-exits, `×1.040` at 10 %; see [Pool yield](#pool-yield--a-transfer-not-a-btc-multiple)).
-**Total = ① × ②.** B4/Pro/Pro Max return a multiple of `HODL` on the strategy alone while
-drawing down less; Mini holds `HODL`'s exposure by design, so its strategy tracks `HODL` and the
-pool is its whole edge.
+Return is the compounded multiple on the $100k BTC base; drawdown is the worst cycle
+peak-to-trough of `navWad()`.
 
-| Strategy | ① Strategy return | ② Pool | **Total** | Worst drawdown | Worst vs deposit |
-|---|---:|---:|---:|---:|---:|
-| `HODL` buy & hold | 5,214x | — | 5,214x | 84.2 % | −13.2 % |
-| Mini | 4,809x | ×1.091 | **5,247x** | 84.5 % | −13.2 % |
-| **B4** | 114,693x | ×1.091 | **125,130x** | **73.9 %** | −13.2 % |
-| **Pro** | 425,918x | ×1.091 | **464,677x** | **73.9 %** | −13.2 % |
-| **Pro Max** | 22,542,031x | ×1.091 | **24,593,356x** | **75.5 %** | −33.6 % |
+| Product | Total return (BTC base) | Worst cycle drawdown | Extra margin posted |
+|---|---:|---:|---:|
+| Mini (spot hold — baseline) | 4,930x | 84.5 % | — |
+| **B4** | **353,850x** | **73.9 %** | — |
+| **Pro** | **369,138x** | **73.3 %** | $15k |
+| **Pro Max** | **625,543x** | **72.9 %** | $25k |
 
 ## Per cycle
 
-`vs dep` = the worst the equity ever fell below the deposit — the number that separates a
-drawdown (giving back profit) from a loss of principal. Returns are **product mechanics only**
-(no pool credit); the pool is the separate yield below.
+Return is the cycle's own multiple; `max DD` is the worst peak-to-trough of `navWad()` inside
+the cycle. B4/Pro/Pro Max are in USDC or a short during the bear, so they draw down materially
+less than Mini every cycle.
 
-**Cycle 1 — 2012-11-28 → 2016-07-09** · structural leverage: long 1.61×, short 1.61× (genesis)
+| Cycle | | Mini | B4 | Pro | Pro Max |
+|---|---|---:|---:|---:|---:|
+| **2012→2016** | return | 51.0x | 137.6x | 143.7x | **231.8x** |
+| | max DD | 84.5 % | **73.9 %** | **73.3 %** | **72.9 %** |
+| **2016→2020** | return | 13.4x | 52.6x | 52.5x | **55.3x** |
+| | max DD | 83.4 % | **64.0 %** | **64.0 %** | **64.1 %** |
+| **2020→2024** | return | 7.3x | 29.2x | 29.2x | 29.1x |
+| | max DD | 76.8 % | **53.0 %** | **53.0 %** | **53.0 %** |
+| **2024→now**\* | return | 0.99x | 1.68x | 1.68x | 1.68x |
+| | max DD | 53.7 % | **28.2 %** | **28.2 %** | **28.2 %** |
 
-| | Return | max DD | vs dep |
-|---|---:|---:|---:|
-| `HODL` | 52.3x | 84.2 % | −0.3 % |
-| Mini | 50.9x | 84.5 % | −0.3 % |
-| **B4** | **140.9x** | **73.9 %** | −0.3 % |
-| **Pro** | **216.4x** | **73.9 %** | −0.3 % |
-| **Pro Max** | **576.8x** | 75.5 % | −0.6 % |
+<sub>\* cycle in progress, read at the last available price date.</sub>
 
-**Cycle 2 — 2016-07-09 → 2020-05-11** · structural leverage: long 2.46×, short 1.17×
+## Reading the result correctly
 
-| | Return | max DD | vs dep |
-|---|---:|---:|---:|
-| `HODL` | 13.6x | 83.2 % | −13.2 % |
-| Mini | 13.2x | 83.4 % | −13.2 % |
-| **B4** | **39.1x** | **64.2 %** | −13.2 % |
-| **Pro** | **61.0x** | **64.2 %** | −13.2 % |
-| **Pro Max** | **209.2x** | 74.0 % | **−33.6 %** |
+- **B4/Pro/Pro Max draw down ~10 pp less than Mini every cycle** — they are in USDC (B4) or a
+  short (Pro/Pro Max) through the fall, so the cycle bear that takes Mini to −76…−84 %
+  contributes far less to them. The drawdown that remains is intra-bull volatility, and it gives
+  back accumulated *profit*, not principal.
+- **The short's edge is concentrated in cycle 1 and fades.** Cycle 1 (the largest fall, 2012→16)
+  separates the products most: Pro Max 231.8x vs B4 137.6x. By cycles 3–4 they converge (29x,
+  1.68x) — with a *fixed* margin, the short's notional shrinks relative to a compounding NAV, so
+  it moves the needle less. Scaling margin with NAV would keep the short's contribution, at the
+  cost of more capital posted (and at risk). The old idealized model hid this by re-applying full
+  leverage every cycle.
+- **Pro/Pro Max are on the BTC base**, so the margin they also post ($15k/$25k) is not credited
+  into the multiple. The margin is preserved (plus the short's realized PnL) and returned; on a
+  total-capital basis their multiple is lower than B4's (the idle margin drags it) — which is why
+  the BTC-base view is the fair cross-product comparison.
 
-**Cycle 3 — 2020-05-11 → 2024-04-20** · structural leverage: long 2.68×, short 2.42×
+## The survival record — the *designed* structural sizing
 
-| | Return | max DD | vs dep |
-|---|---:|---:|---:|
-| `HODL` | 7.3x | 76.5 % | −0.1 % |
-| Mini | 7.1x | 76.8 % | −0.1 % |
-| **B4** | **20.8x** | **53.1 %** | −0.1 % |
-| **Pro** | **32.3x** | **53.1 %** | −0.1 % |
-| **Pro Max** | **186.8x** | 58.9 % | −1.0 % |
-
-**Cycle 4 — 2024-04-20 → 2026-07-20 (in progress)** · structural leverage: long 2.17×, short 4.82×
-
-| | Return | max DD | vs dep |
-|---|---:|---:|---:|
-| `HODL` | 1.00x | 53.0 % | −17.1 % |
-| Mini | 1.00x | 53.3 % | −17.1 % |
-| **B4** | **1.66x** | **28.2 %** | −17.1 % |
-| **Pro** | **2.20x** | **28.2 %** | −17.1 % |
-| **Pro Max** | **5.78x** | 51.9 % | −41.7 % |
-
-## Reading the drawdown correctly
-
-- **B4/Pro's drawdown is not the bear.** They sit in USDC (B4) or short (Pro) through the
-  fall, so the cycle bear — where `HODL` takes its −76…−84 % — contributes nothing. Their
-  remaining drawdown is intra-bull volatility (April-2013, COVID, May-2021), and it gives
-  back accumulated *profit*, not principal: B4 swings ~74 % peak-to-trough in cycle 1 yet
-  ends −0.3 % vs the deposit.
-- **Cycle-by-cycle, the ordering never breaks:** B4/Pro draw down 10–25 pp less than `HODL`
-  in every cycle, while returning a multiple of it.
-- **Pro Max carries real leveraged downside and the table shows it** (−33.6 % / −41.7 % vs
-  deposit in cycles 2/4). Its *drawdown* still stays below `HODL`'s in every cycle — the
-  structural stops keep the leverage survivable (next section).
-
-## The survival record — the safety mechanism, measured
+This section is about the `StructuralLeverage` library — **designed and unit-tested, not yet
+wired into the engine** (the benchmark above runs flat-`φ`). It motivates the §7b redo: it shows
+that a flat-`φ` leveraged position would have been liquidated by these historical counter-moves,
+whereas a structurally-sized one — stop pinned at a confirmed extreme — survives. Pinned by
+[`StructuralLeverageShort.t.sol`](../test/unit/StructuralLeverageShort.t.sol) and
+[`StructuralLeverage.t.sol`](../test/unit/StructuralLeverage.t.sol).
 
 | Event (real data) | Flat-`φ` position | Structural position |
 |---|---|---|
@@ -133,54 +110,70 @@ is what survives; pinned as unit tests in
 [`StructuralLeverageShort.t.sol`](../test/unit/StructuralLeverageShort.t.sol) and
 [`StructuralLeverage.t.sol`](../test/unit/StructuralLeverage.t.sol).
 
-## Pool yield — a transfer, not a BTC multiple
+## Pool weight — not a backtestable number
 
-Exits outside free windows forfeit `q = 11.8 %` of their position into the shared pool,
-redistributed to the stayers pro-rata by weight. The pool holds it **in kind** (BTC through the
-growth regimes, a short in the fall) — **but so does every stayer's own book**, so BTC's
-appreciation is on *both sides* of the ratio and cancels. The pool return is therefore a pure
-**transfer**, `r·q/(1−r)` of a stayer's equity per cycle, independent of how far BTC ran.
-Modelled daily on the real series (`test_pool_economics`, a `$100/day` DCA book), the per-cycle
-boost is **identical** across three cycles that grew 52×, 14× and 7× — the proof that it does
-not ride BTC:
+This section carried two wrong models before landing here. Both are recorded, because the
+mistakes are the useful part: they show exactly what the pool is not.
 
-| Penalized exits (per cycle) | Pool return / cycle | Over three cycles |
-|---|---:|---:|
-| 10 % | +1.31 % | **×1.040** |
-| 20 % | +2.95 % | **×1.091** |
+**How a claim is earned.** At every settlement, the vault computes `virtualFee = 4.5 %` of
+that interval's profit. Only the operator's slice (`≤ 38.19 %`, i.e. `≤ ~1.72 %` of profit)
+is ever paid out — that is the only amount deducted from equity, and it's exactly what the
+benchmark above charges. The remainder — `≥ 2.79 %` of profit, the **client share** — is not
+lost: `B4VaultOps.opsSettle` adds it to `rewardBaseWad`, a balance that never resets except on
+a partial exit (scaled down by the withdrawn fraction). Every settlement, the vault reports its
+current `rewardBaseWad` to `B4Pool` as that interval's **weight**.
 
-The designed fall-short ([tranches](../PROPOSAL-pool-tranches.md)) lets the fall-regime
-penalties gain instead of sitting flat — a small addition on top; this transfer is the floor.
-The yield is modest **by construction**: it is a redistribution *among* holders, not new BTC
-exposure. It matters most in a flat market, where a Mini stayer's strategy return merely tracks
-`HODL` (both ≈ 1.0× in the cycle in progress), so the pool is the entire edge. **Model caveat:**
-the transfer takes `r` as the fraction of the standing book that exits penalized per cycle; the
-realized figure depends on the exit-timing distribution, which the model idealizes.
+**How a claim is paid.** The pool's basket for an interval is whatever exit penalties
+(`q = 11.8 %` of a penalized exit's position) landed before the interval closed. Distribution
+is pro rata by weight: `your_share = bucket × your_weight / total_weight`, where `total_weight`
+is the sum of every vault that settled and reported into that same interval.
 
-> **Correction.** An earlier version of this section reported a "4–5× pool yield," modelling the
-> penalty as accrued at daily cost and distributed grown. That double-counted the halving
-> appreciation a stayer's own book already captures — the two sides of the transfer both ride
-> BTC, so the relative boost cannot be a BTC multiple. The honest figure is the transfer above.
+**Why no multiplier is given here.** Weight is *your own* accumulated performance-fee share —
+it scales with your vault's dollar profit (Pro Max generates far more absolute profit than
+Mini at the same starting deposit, so it accrues disproportionately more weight, not an equal
+cut). Both the basket (penalty volume) and `total_weight` (every *other* vault's own weight)
+depend on who else is using the protocol concurrently — a population this backtest has no
+grounds to assume. Two earlier drafts of this section put a number on it anyway: first a
+"4–5× yield" (accrued penalties at cost, distributed them grown — double-counted the halving
+appreciation a stayer's own book already captures), then a "flat ×1.09 transfer, identical for
+every product" (ignored that weight is profit-proportional, not presence-proportional). Both
+were fabrications dressed as backtest output; neither is in this repo anymore.
+
+What is real and code-grounded: the worked settlement/exit numbers in
+[docs/07-fee-routing.md §6](07-fee-routing.md#6-worked-numeric-example), pinned by
+`Settle.t.sol`, `Exit.t.sol`, `V3Acct_SettleBasketFee.t.sol`. The mechanism is real and the
+client share is never destroyed — its dollar payoff is an ecosystem property, so it stays out
+of this benchmark's return figures.
 
 ## Model and assumptions
 
 | | |
 |---|---|
-| Data | Daily closes, 2012-01-01 → 2026-07-20; simulation starts at the first halving in range |
-| Halvings | Real block timestamps |
-| Regime | `Calendar` pivots `P`, `T`; three held segments per cycle (long → fall → long) |
-| Leverage | `StructuralLeverage`, both sides; genesis/unconfirmed anchors → flat base |
-| Timing | Sized once per regime at the pivot price, held. The long-side `cap` anchor is the min of a 20-day window that can extend a few days past the entry — a small look-ahead the demo accepts (the on-chain ratchet samples in real time, so live sizing has none); it only tightens leverage, never loosens it |
-| Fee | Operator's cut of `Phi.FEE_F` (≤ 38.19 % of 4.5 %) on profit, baseline re-anchored to NAV each settlement, matching `opsSettle` |
-| Funding | 10 %/yr on the full perp leg (assumption) |
-| Pool yield | modelled separately (`test_pool_economics`): a transfer of `q = 11.8 %` of a penalized exit's position to the stayers, `r·q/(1−r)` of equity per cycle; `r` = 10 % / 20 % of the standing book exiting penalized (behavioural) |
+| Engine | The real `B4Vault`/`B4VaultOps`/`B4Pool`/`HalvingOracle`, cranked and settled like the live keeper. Equity = `navWad()`. |
+| Data | Daily closes, 2012-01-01 → 2026-07-20; each run starts at the first halving in range |
+| Halvings | Real block timestamps, accepted through the oracle at each epoch boundary |
+| Sizing | Flat base `φ` — the shipped engine. `StructuralLeverage` is designed and unit-tested but not wired ([audit record](../AUDIT-2026-07-structural-leverage.md)) |
+| Fee | Operator's cut of `Phi.FEE_F` (≤ 38.19 % of 4.5 %) on profit, no high-water mark — charged by `opsSettle` itself, not modelled |
+| Margin | Pro/Pro Max post USDC margin for the fall short (this run: $15k/$25k on the $100k BTC base); Mini/B4 post none |
+| Pool weight | not included — realized yield depends on ecosystem-wide participation (see [Pool weight](#pool-weight--not-a-backtestable-number)) |
 
-**Not modelled:** slippage, market impact, trading fees, async execution delay, the DCA
-window averaging of live entries (the demo enters at the pivot price in one order). Perps
-were not liquid before ~2016, so Pro/Pro Max in cycles 1–2 are historical hypotheticals.
-Three completed cycles is not a statistical sample and never can be (~32 halvings will ever
-exist). The `StructuralLeverage` math is shipped and tested; the vault-engine sizing runs
-flat-`φ` until the §7b redo lands ([audit record](../AUDIT-2026-07-structural-leverage.md)).
+**Operational assumptions that move the result:** the keeper cadence (this run cranks at each
+calendar transition and the two settlements, not every block); the margin a short product posts
+(more margin → larger short → more fall capture and more risk); and — because NAV excludes
+unrealized PnL by design (invariant B3) — the point at which a short is closed and its gain
+realized. A single-vault backtest shows the mechanism faithfully; it cannot promise a live
+keeper reproduces the multiple to the digit.
+
+**Not modelled:** slippage, market impact, trading fees, async execution delay, the DCA window
+averaging of live entries. Perps were not liquid before ~2016, so Pro/Pro Max in cycles 1–2 are
+historical hypotheticals. Three completed cycles is not a statistical sample and never can be
+(~32 halvings will ever exist).
+
+> **Superseded model.** An earlier `Backtest.t.sol` computed returns in a parallel equity
+> calculator instead of the contracts. It re-applied compounding `StructuralLeverage` every cycle
+> — leverage the shipped flat-`φ` engine never delivers — reporting e.g. Pro Max 22,542,031x
+> (~36× the real 625,543x) and B4 114,693x (vs the real 353,850x). It has been deleted; the
+> numbers above are the contract-sourced replacement.
 
 ## Data provenance
 
