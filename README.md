@@ -216,14 +216,11 @@ profit), so it lands just under raw buy-and-hold (~5,200x) — see
 > per-cycle exit — not every block), and the exit timing inside the free window (NAV excludes
 > unrealized PnL by design, B3, so *when* a leg is realized matters). A single-vault backtest
 > shows the mechanism faithfully; it cannot promise a live keeper reproduces the multiple to the
-> digit. Two earlier models are **deleted**: a hand-rolled equity calculator (reported Pro Max
-> 22,542,031x — compounding leverage the flat-`φ` engine never delivers) and a first
-> real-contract pass that required a separate margin deposit (a workaround for the
-> [V6-M-2](docs/audits/AUDIT-V6.md) routing bug, now fixed so the short self-funds).
+> digit.
 >
-> **The V6-M-2 engine fix that makes the short self-fund is regression-green (269/269) but has
-> not yet passed the adversarial fan-out audit our discipline requires for a core money-routing
-> change** — treat these Pro/Pro Max figures as pending that gate.
+> **The [V6-M-2](docs/audits/AUDIT-V6.md) engine fix that lets the short self-fund is
+> regression-green (269/269) but has not yet passed the adversarial fan-out audit our discipline
+> requires for a core money-routing change** — treat these Pro/Pro Max figures as pending that gate.
 >
 > **Two structural understatements of Pro Max's downside.** (1) The test venue models **no
 > liquidation**: a `φ`-leveraged long held through a deep enough drawdown would be liquidated on
@@ -249,36 +246,29 @@ go — that is the design, and four cycles of data agree with it.
 
 ### Pool weight — not a backtestable number
 
-This section went through two wrong models before landing here — both are recorded below
-because the mistakes are instructive about what the pool actually is.
-
-**How a claim is actually earned.** At every settlement, the vault computes `virtualFee = 4.5 %`
-of that interval's profit. Only the operator's slice of it (`≤ 38.19 %`, i.e. `≤ ~1.72 %` of
-profit) is ever paid out — that's the only amount that leaves your equity, and it's exactly what
-the benchmark above deducts. The rest — `≥ 2.79 %` of profit, the **client share** — is *not*
-lost: it's added to your vault's `rewardBaseWad`, a running balance that never resets except
-when you partially exit (scaled down by what you withdrew). Every settlement, your vault reports
-its current `rewardBaseWad` to `B4Pool` as your **weight** for that interval.
+**How a claim is earned.** At every settlement the vault computes `virtualFee = 4.5 %` of that
+interval's profit. Only the operator's slice (`≤ 38.19 %`, i.e. `≤ ~1.72 %` of profit) is ever
+paid out — the only amount that leaves your equity, and exactly what the benchmark above deducts.
+The rest — `≥ 2.79 %` of profit, the **client share** — is *not* lost: it is added to your vault's
+`rewardBaseWad`, a running balance that never resets except when you partially exit (scaled by
+what you withdrew). Every settlement the vault reports its current `rewardBaseWad` to `B4Pool` as
+your **weight** for that interval.
 
 **How a claim is paid.** The pool's basket for an interval is whatever exit penalties (`q = 11.8 %`
 of a penalized exit's position) landed in it before that interval closed. Distribution is pro
-rata by weight: `your_share = bucket × your_weight / total_weight_of_everyone_who_settled_that_interval`.
+rata by weight: `your_share = bucket × your_weight / total_weight`, where `total_weight` sums every
+vault that settled into that interval.
 
-**Why no multiplier is given here.** Your weight is *your own* accumulated performance-fee
-share — it scales with how much dollar profit your vault generates (Pro Max's absolute profit
-dwarfs Mini's, so Pro Max earns disproportionately more weight per dollar deposited, not the same
-cut everyone else gets). Both the numerator (penalty volume) and the denominator (`total_weight`,
-the sum of every *other* participating vault's own weight) depend on who else is using the
-protocol at the time — a population this repo has no way to assume without inventing one. A
-flat "×1.09" applied equally to every product, which an earlier draft of this section claimed
-(and before that, a wrongly-compounded "4–5× yield" — both fabricated, both removed), was simply
-not a real number.
-
-What *is* real and code-grounded: the worked settlement/exit examples in
+**Why no multiplier is given.** Weight is *your own* accumulated performance-fee share — it scales
+with your vault's dollar profit (Pro Max's absolute profit dwarfs Mini's, so it earns
+disproportionately more weight, not the same cut). Both the numerator (penalty volume) and the
+denominator (every *other* participating vault's weight) depend on who else uses the protocol at
+the time — a population a single-vault backtest cannot assume. The mechanism is real and the
+client share is never destroyed, but its dollar payoff is an **ecosystem property, not a strategy
+property**, so it stays out of the benchmark's return figures. The code-grounded numbers are the
+worked settlement/exit examples in
 [docs/07-fee-routing.md §6](docs/07-fee-routing.md#6-worked-numeric-example), pinned by
-`Settle.t.sol`, `Exit.t.sol`, `V3Acct_SettleBasketFee.t.sol`. The mechanism is real and the
-client share is never destroyed — but its dollar payoff is an ecosystem property, not a
-strategy property, so it stays out of this benchmark's return figures.
+`Settle.t.sol`, `Exit.t.sol`, `V3Acct_SettleBasketFee.t.sol`.
 
 > [!NOTE]
 > **Scope of the numbers.** Three completed cycles is not a statistical sample (~32 halvings

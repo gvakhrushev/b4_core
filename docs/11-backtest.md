@@ -3,8 +3,7 @@
 Every figure here is `B4Vault.navWad()` read off the **actual deployed contracts** — the real
 `B4Vault`/`B4VaultOps`/`B4Pool`/`HalvingOracle` and the reference `Strategy*` — cranked day by
 day across the real halving epochs, rotating and settling exactly as the on-chain keeper would.
-It is **not** a parallel spreadsheet model. (An earlier hand-rolled equity calculator that this
-replaces overstated Pro Max by ~36× and mis-stated every product; see the note at the end.)
+It is **not** a parallel spreadsheet model.
 
 ```bash
 forge test --match-path 'test/backtest/BacktestReal.t.sol' -vv
@@ -121,9 +120,6 @@ is what survives; pinned as unit tests in
 
 ## Pool weight — not a backtestable number
 
-This section carried two wrong models before landing here. Both are recorded, because the
-mistakes are the useful part: they show exactly what the pool is not.
-
 **How a claim is earned.** At every settlement, the vault computes `virtualFee = 4.5 %` of
 that interval's profit. Only the operator's slice (`≤ 38.19 %`, i.e. `≤ ~1.72 %` of profit)
 is ever paid out — that is the only amount deducted from equity, and it's exactly what the
@@ -142,11 +138,7 @@ it scales with your vault's dollar profit (Pro Max generates far more absolute p
 Mini at the same starting deposit, so it accrues disproportionately more weight, not an equal
 cut). Both the basket (penalty volume) and `total_weight` (every *other* vault's own weight)
 depend on who else is using the protocol concurrently — a population this backtest has no
-grounds to assume. Two earlier drafts of this section put a number on it anyway: first a
-"4–5× yield" (accrued penalties at cost, distributed them grown — double-counted the halving
-appreciation a stayer's own book already captures), then a "flat ×1.09 transfer, identical for
-every product" (ignored that weight is profit-proportional, not presence-proportional). Both
-were fabrications dressed as backtest output; neither is in this repo anymore.
+grounds to assume, so no multiple is quoted.
 
 What is real and code-grounded: the worked settlement/exit numbers in
 [docs/07-fee-routing.md §6](07-fee-routing.md#6-worked-numeric-example), pinned by
@@ -180,12 +172,6 @@ benchmark cannot show). Perps were not liquid before ~2016, so Pro/Pro Max in cy
 historical hypotheticals. Three completed cycles is not a statistical sample (~32 halvings will
 ever exist). The base is $1,000 of BTC (small enough that the most-leveraged product's ~10⁷×
 compounded NAV stays inside the mock's uint64 accounting; multiples are scale-invariant).
-
-> **Superseded models (both deleted).** (1) A hand-rolled parallel equity calculator
-> (`Backtest.t.sol`) re-applied compounding `StructuralLeverage` every cycle the flat-`φ` engine
-> never delivers — Pro Max 22,542,031x. (2) A first real-contract pass required a separate USDC
-> margin deposit — a workaround for the V6-M-2 routing bug, which is now fixed so the short
-> self-funds. The numbers above are the current, contract-sourced result.
 
 ## Data provenance
 
