@@ -154,120 +154,112 @@ contract BacktestTest is Test {
 
     // ------------------------------------------------------------------ pool economics
 
-    /// The pool is NOT a flat "+2.95%/cycle" credit — it is a fund that accrues forfeited
-    /// penalties IN KIND and distributes them at the settlement points. Because penalties
-    /// accrue as BTC through the growth regime and distribute near the cycle peak (and the
-    /// recovery inventory distributes near the next halving), the realized value is a MULTIPLE
-    /// of the nominal penalties — it captures the halving-cycle BTC appreciation the flat
-    /// model ignored. Modelled daily on the real series: a $100/day cohort marks `r` of each
-    /// day's inflow as penalty (10% and 20% shown); the multiple is rate-independent (linear),
-    /// the dollars scale with `r`.
-    struct Pool {
-        int256 btc; // WAD BTC held (long regimes)
-        int256 usd; // WAD USDC held (fall regime, in-kind)
-        int256 shortNotional; // WAD short notional (fall, tranche design)
-        int256 shortEntry; // size-weighted WAD entry price of the short book
-        int256 contributed;
-        int256 distributed;
-    }
-
+    /// POOL YIELD is a TRANSFER, not a BTC play. A penalized exit forfeits `q = Phi.EXIT_Q`
+    /// (11.8 %) of its position to the stayers. The pool holds that in kind (BTC through the
+    /// growth regimes, a short in the fall) — but every stayer's own book rides BTC too, so
+    /// BTC's appreciation sits on BOTH sides of the ratio and cancels. The boost is therefore
+    /// `r·q/(1−r)` of a stayer's equity per cycle, independent of the cycle's BTC multiple. This
+    /// is demonstrated below on a $100/day DCA book: the per-cycle boost is identical across
+    /// three cycles that grew 52×, 14× and 7×.
+    ///
+    /// (An earlier model here accrued the penalty at daily cost and distributed it grown,
+    /// reporting a "4–5× yield". That double-counted the halving appreciation the stayer's own
+    /// book already captures — the two sides of the transfer both ride BTC, so the *relative*
+    /// boost cannot be a BTC multiple. This function is the correction.)
     function test_pool_economics() public {
         _loadPrices();
         console.log("");
         console.log(
-            "================ POOL YIELD - forfeited penalties ride BTC in kind ================"
+            "================ POOL YIELD - redistributed exit penalties (a transfer) ==========="
         );
         console.log(
-            "A $100/day cohort marks r pct of daily inflow as penalty; the pool accrues it in kind"
+            "A penalized exit forfeits q = 11.8pct of its position to the stayers. Held in kind, but"
         );
         console.log(
-            "(BTC in the long regimes, riding price) and distributes at P-H, T+H and the cycle"
+            "the stayer's own book rides BTC too, so growth cancels: the boost is r*q/(1-r) of a"
         );
         console.log(
-            "boundary. x = realized value over penalties in - the BTC appreciation the flat +2.95pct"
-        );
-        console.log(
-            "model missed. Multiple is rate-independent; dollars double from 10pct to 20pct."
+            "stayer's equity per cycle - identical whatever BTC did. $100/day DCA book, verified:"
         );
         console.log("");
-        console.log("  cycle    penalty in (10/20pct)     distributed (10/20pct)    x   +short");
+        console.log("  cycle   BTC growth   pool return  (10pct / 20pct penalized exits)");
+        int256 comp10 = WAD;
+        int256 comp20 = WAD;
         for (uint256 c = 0; c < 3; c++) {
-            (int256 contrib, int256 dist) = _poolCycle(c, false);
-            (, int256 distS) = _poolCycle(c, true);
-            int256 mult = dist * 100 / contrib; // x100
-            int256 shortUp = (distS - dist) * 100 / dist; // %
+            int256 b10 = _poolBoost(c, 0.1e18);
+            int256 b20 = _poolBoost(c, 0.2e18);
+            comp10 = comp10 * (WAD + b10) / WAD;
+            comp20 = comp20 * (WAD + b20) / WAD;
             console.log(
                 string.concat(
                     "    ",
                     vm.toString(c + 1),
-                    "     $",
-                    _usd(contrib / 2),
-                    " / $",
-                    _usd(contrib),
-                    "   $",
-                    _usd(dist / 2),
-                    " / $",
-                    _usd(dist),
-                    "  ",
-                    _twoDp(mult),
-                    "x  +",
-                    vm.toString(uint256(shortUp)),
-                    "%"
+                    "     ",
+                    _twoDp(_btcGrowth(c)),
+                    "x     ",
+                    _pctS(b10),
+                    " / ",
+                    _pctS(b20)
                 )
             );
-            // The pool realizes MORE than it took in — every completed cycle, from BTC growth.
-            assertGt(dist, contrib, "pool distributes more than the nominal penalties");
-            assertGt(distS, dist, "the tranche fall-short adds to the in-kind pool");
+            // The transfer is exactly r*q/(1-r): BTC level cancels out of the ratio.
+            assertApproxEqRel(
+                b10, int256(0.1e18) * int256(Phi.EXIT_Q) / int256(0.9e18), 1e13, "10pct transfer"
+            );
+            assertApproxEqRel(
+                b20, int256(0.2e18) * int256(Phi.EXIT_Q) / int256(0.8e18), 1e13, "20pct transfer"
+            );
         }
         console.log("");
+        console.log(
+            string.concat(
+                "  three cycles compounded:   ",
+                _pctS(comp10 - WAD),
+                " (10pct)    ",
+                _pctS(comp20 - WAD),
+                " (20pct)"
+            )
+        );
+        console.log(
+            "  The designed fall-short (tranches) adds a little in the fall; this transfer is the floor."
+        );
+        console.log("");
+        // A modest, honest transfer — more penalized exits redistribute more, but it is never a
+        // BTC multiple (< 1.2x over three cycles even at 20pct).
+        assertGt(comp20, comp10, "more penalized exits -> more redistributed to stayers");
+        assertLt(comp20 - WAD, 2e17, "pool return is a modest transfer, not a BTC multiple");
     }
 
-    /// One cycle of pool accrual + distribution. Penalty per day = $20 (the 20% case; the
-    /// 10% column is exactly half). Returns (contributed, distributed) in WAD dollars.
-    function _poolCycle(uint256 c, bool useShort) internal view returns (int256, int256) {
+    /// Per-cycle pool boost to a stayer: `r` of the standing $100/day DCA book exits penalized
+    /// and forfeits `q` of its CURRENT value to the `(1−r)` stayers. The book units and the
+    /// settlement price cancel in the ratio, so the result is exactly `r·q/(1−r)` — the
+    /// demonstration that the yield does NOT ride BTC.
+    function _poolBoost(uint256 c, int256 r) internal view returns (int256) {
         uint256 frm = HALVINGS[c];
         uint256 nxt = c + 1 < 4 ? HALVINGS[c + 1] : ts[ts.length - 1];
-        uint256 pTop = frm + Calendar.P;
-        uint256 pBot = frm + Calendar.T;
-        uint256[3] memory dist = [frm + Calendar.P - Calendar.H, frm + Calendar.T + Calendar.H, nxt];
-        int256 pen = 20e18; // $20/day
-        Pool memory pl;
-        uint256 di;
+        int256 bookUnits; // WAD BTC held by the standing cohort
         for (uint256 i = 0; i < ts.length; i++) {
             if (ts[i] < frm || ts[i] >= nxt) continue;
-            pl.contributed += pen;
-            if (ts[i] >= pTop && ts[i] < pBot) {
-                if (useShort) {
-                    // Blend the short book's entry price by notional.
-                    pl.shortEntry = pl.shortNotional + pen == 0
-                        ? px[i]
-                        : (pl.shortEntry * pl.shortNotional + px[i] * pen)
-                            / (pl.shortNotional + pen);
-                    pl.shortNotional += pen;
-                } else {
-                    pl.usd += pen; // in-kind: USDC, flat
-                }
-            } else {
-                pl.btc += pen * WAD / px[i]; // long regime: buy BTC at the day's price
-            }
-            if (di < 3 && ts[i] >= dist[di]) {
-                int256 shortVal = pl.shortEntry == 0
-                    ? int256(0)
-                    : pl.shortNotional * (2 * WAD - px[i] * WAD / pl.shortEntry) / WAD;
-                if (shortVal < 0) shortVal = 0;
-                pl.distributed += pl.btc * px[i] / WAD + pl.usd + shortVal;
-                pl.btc = 0;
-                pl.usd = 0;
-                pl.shortNotional = 0;
-                pl.shortEntry = 0;
-                di++;
-            }
+            bookUnits += int256(100e18) * WAD / px[i]; // $100/day buys BTC at the day's price
         }
-        return (pl.contributed, pl.distributed);
+        int256 exitingUnits = bookUnits * r / WAD;
+        int256 forfeitUnits = exitingUnits * int256(Phi.EXIT_Q) / WAD;
+        int256 stayerUnits = bookUnits - exitingUnits;
+        return forfeitUnits * WAD / stayerUnits; // = r*q/(1-r), price-independent
     }
 
-    function _usd(int256 wad) internal pure returns (string memory) {
-        return _padTo(vm.toString(uint256(wad) / 1e18), 7);
+    /// BTC growth over cycle `c`, ×100 (first close in the cycle → last close).
+    function _btcGrowth(uint256 c) internal view returns (int256) {
+        uint256 frm = HALVINGS[c];
+        uint256 nxt = c + 1 < 4 ? HALVINGS[c + 1] : ts[ts.length - 1];
+        int256 first;
+        int256 last;
+        for (uint256 i = 0; i < ts.length; i++) {
+            if (ts[i] < frm || ts[i] >= nxt) continue;
+            if (first == 0) first = px[i];
+            last = px[i];
+        }
+        return last * 100 / first; // x100
     }
 
     function _twoDp(int256 x100) internal pure returns (string memory) {

@@ -169,15 +169,23 @@ forge test --match-path 'test/backtest/*' -vv
 
 ### Three complete cycles, compounded (2012-11-28 → 2024-04-20)
 
-Product mechanics only — the pool is a separate yield (below), so nothing is double-counted.
+Two returns, kept **separate** so nothing is double-counted: **① the strategy** — the product's
+own mechanics (calendar + structural sizing − fee − funding), and **② the pool** — the
+redistributed exit penalties, a flat `×1.091` on any stayer's equity over the three cycles
+(20 % penalized exits; `×1.040` at 10 %). **Total = ① × ②.**
 
-| Strategy | Total return | Worst drawdown | Worst vs deposit |
-|---|---:|---:|---:|
-| `HODL` buy & hold | 5,214x | 84.2 % | −13.2 % |
-| Mini | 4,809x | 84.5 % | −13.2 % |
-| **B4** | **114,693x** | **73.9 %** | −13.2 % |
-| **Pro** | **425,918x** | **73.9 %** | −13.2 % |
-| **Pro Max** | **22,542,031x** | **75.5 %** | −33.6 % |
+| Strategy | ① Strategy return | ② Pool | **Total** | Worst drawdown | Worst vs deposit |
+|---|---:|---:|---:|---:|---:|
+| `HODL` buy & hold | 5,214x | — | 5,214x | 84.2 % | −13.2 % |
+| Mini | 4,809x | ×1.091 | **5,247x** | 84.5 % | −13.2 % |
+| **B4** | 114,693x | ×1.091 | **125,130x** | **73.9 %** | −13.2 % |
+| **Pro** | 425,918x | ×1.091 | **464,677x** | **73.9 %** | −13.2 % |
+| **Pro Max** | 22,542,031x | ×1.091 | **24,593,356x** | **75.5 %** | −33.6 % |
+
+`HODL` is the raw baseline — no protocol, no pool. The strategy column is the product's own
+work; the pool column is the same transfer for everyone (it applies to a stayer's equity
+regardless of product). For B4/Pro/Pro Max the strategy dominates; for Mini the pool is
+decisive — see [below](#pool-yield--a-transfer-not-a-btc-multiple).
 
 ### Per cycle — return and drawdown side by side
 
@@ -202,7 +210,8 @@ bear that produces it; what drawdown remains is intra-bull volatility, and it gi
 profit, not principal (B4 ends at −0.3 % vs the deposit in cycle 1 despite a 74 % swing).
 Pro Max carries real leveraged downside (−33.6 % vs deposit, cycle 2) — the table shows it
 rather than hiding it. Mini holds `HODL`'s exposure and pays the operator fee, so its
-*product* return sits just under `HODL` — its edge is entirely the pool yield below.
+*strategy* return sits just under `HODL` (4,809x vs 5,214x); the pool ② is what carries it
+back above (5,247x) — its edge is entirely the pool.
 
 ### The survival record — the safety mechanism, measured
 
@@ -218,29 +227,33 @@ below); after the 62 % window it never broke the confirmed bottom (the low staye
 above the long's stop). The stops are placed where the market has already proven it cannot
 go — that is the design, and four cycles of data agree with it.
 
-### Pool yield — the forfeited penalties ride the halving cycle
+### Pool yield — a transfer, not a BTC multiple
 
-Exits outside the free windows pay a `q = 11.8 %` penalty into the shared pool, redistributed
-to stayers. But the pool is **not** a flat percentage credit — it is a fund that holds that
-penalty **in kind** (BTC through the growth regime) and distributes it at the settlement points,
-so the early-cycle penalties, accrued when BTC is cheap and realized near the cycle peak,
-**appreciate with the halving**. Modelled daily on the real series — a `$100/day` cohort marks
-`r` of each day's inflow as penalty — the pool distributes a *multiple* of what it took in:
+Exits outside the free windows forfeit `q = 11.8 %` of their position into the shared pool,
+redistributed to the stayers. The pool holds it **in kind** (BTC through the growth regimes, a
+short in the fall) — **but so does every stayer's own book**, so BTC's appreciation sits on
+*both sides* of the ratio and cancels. The pool return is therefore a pure **transfer**,
+`r·q/(1−r)` of a stayer's equity per cycle, independent of how far BTC ran. Modelled daily on
+the real series (a `$100/day` DCA book, `test_pool_economics`), the per-cycle boost is
+**identical** across three cycles that grew 52×, 14× and 7×:
 
-| Cycle | BTC (halving → next) | penalty in (10 % / 20 %) | **distributed** (10 % / 20 %) | **yield** |
-|---|---|---:|---:|---:|
-| 2012→2016 | $12 → $642 | $13,190 / $26,380 | **$56,890 / $113,781** | **4.3×** |
-| 2016→2020 | $642 → $8,759 | $14,020 / $28,040 | **$69,561 / $139,123** | **5.0×** |
-| 2020→2024 | $8,759 → $64,895 | $14,400 / $28,800 | **$21,121 / $42,243** | **1.5×** |
+| Penalized exits (per cycle) | Pool return / cycle | Over three cycles |
+|---|---:|---:|
+| 10 % | +1.31 % | **×1.040** |
+| 20 % | +2.95 % | **×1.091** |
 
-The multiple is **rate-independent** (linear) — going from 10 % to 20 % doubles the dollars,
-not the yield. The pool captures BTC's growth-regime appreciation on the accumulated inventory,
-which the old flat `+2.95 %/cycle` figure entirely missed. With the designed fall-short
-([tranches](PROPOSAL-pool-tranches.md)) the fall-regime penalties also gain, adding a further
-`+2…7 %`. In a flat market the yield collapses toward `1×` (no appreciation to capture) — but
-that is exactly when the *redistribution* matters most: a Mini stayer's product return there
-merely tracks `HODL` (both ≈ 1.0× in the cycle in progress), so the pool is the entire edge.
+The designed fall-short ([tranches](PROPOSAL-pool-tranches.md)) lets the fall-regime penalties
+gain instead of sitting flat — a small addition on top; this transfer is the floor. The yield is
+modest **by construction**: it is a redistribution *among* holders, not new BTC exposure. It
+matters most in a flat market, where a Mini stayer's strategy return merely tracks `HODL`
+(both ≈ 1.0× in the cycle in progress), so the pool is the entire edge.
 Reproduce: `forge test --match-test test_pool_economics -vv`.
+
+> [!NOTE]
+> **Correction.** An earlier version of this section reported a "4–5× pool yield," modelling the
+> penalty as accrued at daily cost and distributed grown. That double-counted the halving
+> appreciation a stayer's *own* book already captures — the two sides of the transfer both ride
+> BTC, so the relative boost cannot be a BTC multiple. The honest figure is the transfer above.
 
 > [!NOTE]
 > **Scope of the numbers.** Three completed cycles is not a statistical sample (~32 halvings

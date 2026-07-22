@@ -36,20 +36,25 @@ no pool, no protocol):
   shipped contract charges it (≤ 38.19 % of the 4.5 % virtual fee, baseline re-anchored to
   NAV every settlement — **no high-water mark**, so a bear round-trip is charged again on
   recovery). Pool yield is modelled separately (it applies to every stayer regardless of
-  product) — see [Pool yield](#pool-yield--the-penalties-ride-the-halving-cycle) below.
+  product) — see [Pool yield](#pool-yield--a-transfer-not-a-btc-multiple) below.
 
 ## Three complete cycles, compounded (2012-11-28 → 2024-04-20)
 
-Re-deposited each cycle. **B4/Pro/Pro Max return a multiple of `HODL` while drawing down less;**
-Mini holds `HODL`'s exposure by design, so it tracks `HODL`'s drawdown (its edge is the pool).
+Re-deposited each cycle. A stayer's return has **two parts kept separate** so nothing is
+double-counted: **① the strategy** (the product's own mechanics) and **② the pool** (the
+redistributed penalties — a flat `×1.091` on equity over the three cycles at 20 % penalized
+exits, `×1.040` at 10 %; see [Pool yield](#pool-yield--a-transfer-not-a-btc-multiple)).
+**Total = ① × ②.** B4/Pro/Pro Max return a multiple of `HODL` on the strategy alone while
+drawing down less; Mini holds `HODL`'s exposure by design, so its strategy tracks `HODL` and the
+pool is its whole edge.
 
-| Strategy | Total return | Worst drawdown | Worst vs deposit |
-|---|---:|---:|---:|
-| `HODL` buy & hold | 5,214x | 84.2 % | −13.2 % |
-| Mini | 4,809x | 84.5 % | −13.2 % |
-| **B4** | **114,693x** | **73.9 %** | −13.2 % |
-| **Pro** | **425,918x** | **73.9 %** | −13.2 % |
-| **Pro Max** | **22,542,031x** | **75.5 %** | −33.6 % |
+| Strategy | ① Strategy return | ② Pool | **Total** | Worst drawdown | Worst vs deposit |
+|---|---:|---:|---:|---:|---:|
+| `HODL` buy & hold | 5,214x | — | 5,214x | 84.2 % | −13.2 % |
+| Mini | 4,809x | ×1.091 | **5,247x** | 84.5 % | −13.2 % |
+| **B4** | 114,693x | ×1.091 | **125,130x** | **73.9 %** | −13.2 % |
+| **Pro** | 425,918x | ×1.091 | **464,677x** | **73.9 %** | −13.2 % |
+| **Pro Max** | 22,542,031x | ×1.091 | **24,593,356x** | **75.5 %** | −33.6 % |
 
 ## Per cycle
 
@@ -128,30 +133,34 @@ is what survives; pinned as unit tests in
 [`StructuralLeverageShort.t.sol`](../test/unit/StructuralLeverageShort.t.sol) and
 [`StructuralLeverage.t.sol`](../test/unit/StructuralLeverage.t.sol).
 
-## Pool yield — the penalties ride the halving cycle
+## Pool yield — a transfer, not a BTC multiple
 
-Exits outside free windows pay `q = 11.8 %` into the shared pool, redistributed to holders
-pro-rata by weight. The pool is **not** a flat percentage — it holds the penalty **in kind**
-(BTC through the growth regime, USDC through the fall) and distributes it at the three
-settlement points (`P−H`, `T+H`, the cycle boundary), so penalties accrued when BTC is cheap
-and realized near the cycle peak **appreciate with the halving**. Modelled daily on the real
-series (`test_pool_economics`), a `$100/day` cohort marking `r` of each day's inflow as penalty:
+Exits outside free windows forfeit `q = 11.8 %` of their position into the shared pool,
+redistributed to the stayers pro-rata by weight. The pool holds it **in kind** (BTC through the
+growth regimes, a short in the fall) — **but so does every stayer's own book**, so BTC's
+appreciation is on *both sides* of the ratio and cancels. The pool return is therefore a pure
+**transfer**, `r·q/(1−r)` of a stayer's equity per cycle, independent of how far BTC ran.
+Modelled daily on the real series (`test_pool_economics`, a `$100/day` DCA book), the per-cycle
+boost is **identical** across three cycles that grew 52×, 14× and 7× — the proof that it does
+not ride BTC:
 
-| Cycle | BTC (halving → next) | penalty in (10 % / 20 %) | distributed (10 % / 20 %) | yield |
-|---|---|---:|---:|---:|
-| 2012→2016 | $12 → $642 | $13,190 / $26,380 | $56,890 / $113,781 | **4.31×** |
-| 2016→2020 | $642 → $8,759 | $14,020 / $28,040 | $69,561 / $139,123 | **4.96×** |
-| 2020→2024 | $8,759 → $64,895 | $14,400 / $28,800 | $21,121 / $42,243 | **1.46×** |
+| Penalized exits (per cycle) | Pool return / cycle | Over three cycles |
+|---|---:|---:|
+| 10 % | +1.31 % | **×1.040** |
+| 20 % | +2.95 % | **×1.091** |
 
-The multiple is **rate-independent** — 10 % → 20 % doubles the dollars distributed, not the
-yield (the yield is the BTC appreciation on the accrued inventory, which the earlier flat
-`+2.95 %/cycle` figure entirely missed). With the designed fall-short
-([tranches](../PROPOSAL-pool-tranches.md)) the fall-regime penalties also gain, adding `+2…7 %`
-(cycles 1/2/3). The yield collapses toward `1×` in a flat market — which is when the
-*redistribution* matters most (a Mini stayer's product return then merely tracks `HODL`, so the
-pool is the entire edge). **Model caveat:** this earmarks `r` of daily inflow as penalty held in kind
-from accrual to distribution; the exact realized yield depends on the exit timing distribution,
-which the model idealizes.
+The designed fall-short ([tranches](../PROPOSAL-pool-tranches.md)) lets the fall-regime
+penalties gain instead of sitting flat — a small addition on top; this transfer is the floor.
+The yield is modest **by construction**: it is a redistribution *among* holders, not new BTC
+exposure. It matters most in a flat market, where a Mini stayer's strategy return merely tracks
+`HODL` (both ≈ 1.0× in the cycle in progress), so the pool is the entire edge. **Model caveat:**
+the transfer takes `r` as the fraction of the standing book that exits penalized per cycle; the
+realized figure depends on the exit-timing distribution, which the model idealizes.
+
+> **Correction.** An earlier version of this section reported a "4–5× pool yield," modelling the
+> penalty as accrued at daily cost and distributed grown. That double-counted the halving
+> appreciation a stayer's own book already captures — the two sides of the transfer both ride
+> BTC, so the relative boost cannot be a BTC multiple. The honest figure is the transfer above.
 
 ## Model and assumptions
 
@@ -164,7 +173,7 @@ which the model idealizes.
 | Timing | Sized once per regime at the pivot price, held. The long-side `cap` anchor is the min of a 20-day window that can extend a few days past the entry — a small look-ahead the demo accepts (the on-chain ratchet samples in real time, so live sizing has none); it only tightens leverage, never loosens it |
 | Fee | Operator's cut of `Phi.FEE_F` (≤ 38.19 % of 4.5 %) on profit, baseline re-anchored to NAV each settlement, matching `opsSettle` |
 | Funding | 10 %/yr on the full perp leg (assumption) |
-| Pool yield | modelled separately (`test_pool_economics`): `r` of a $100/day cohort's inflow is penalty inventory held in kind; 10 % and 20 % shown (behavioural) |
+| Pool yield | modelled separately (`test_pool_economics`): a transfer of `q = 11.8 %` of a penalized exit's position to the stayers, `r·q/(1−r)` of equity per cycle; `r` = 10 % / 20 % of the standing book exiting penalized (behavioural) |
 
 **Not modelled:** slippage, market impact, trading fees, async execution delay, the DCA
 window averaging of live entries (the demo enters at the pivot price in one order). Perps
