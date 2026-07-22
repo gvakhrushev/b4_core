@@ -44,16 +44,21 @@ the protocol's buy-and-hold) as the baseline:
 Return is the realized, compounded multiple on the BTC deposit; drawdown is the worst cycle
 peak-to-trough of `navWad()`.
 
-| Product | Total return | Worst cycle drawdown |
-|---|---:|---:|
-| Mini (spot hold — baseline) | 4,814x | 84.5 % |
-| **B4** | **345,052x** | **73.9 %** |
-| **Pro** | **1,410,032x** | **73.9 %** |
-| **Pro Max** | **9,728,705x** | **73.9 %** |
+| Product | Total return | vs HODL | Worst cycle drawdown |
+|---|---:|---:|---:|
+| HODL (raw BTC, no vault, no fee) | 5,261x | 1.0× | ~84 % |
+| Mini (spot hold — tracks HODL) | 4,814x | 0.9× | 84.5 % |
+| **B4** | **345,052x** | **66×** | **73.9 %** |
+| **Pro** | **1,410,032x** | **268×** | **73.9 %** |
+| **Pro Max** | **9,728,705x** | **1,850×** | **73.9 %** |
 
 > **Pending audit.** The V6-M-2 fix that lets the short self-fund is regression-green (269/269)
 > but has not yet passed the adversarial fan-out audit our discipline requires for a core
 > money-routing change. Treat the Pro/Pro Max figures as pending that gate.
+>
+> **Pro Max downside is understated twice:** the test venue models no liquidation (a `φ`-long
+> through a deep enough drawdown would be liquidated live), and `navWad` excludes unrealized perp
+> PnL (B3). The engine also sizes leverage flat-`φ`, not the structural stops below.
 
 ## Per cycle
 
@@ -61,16 +66,16 @@ Return is the cycle's realized multiple; `max DD` is the worst peak-to-trough of
 inside the cycle. B4/Pro/Pro Max are in USDC or a short during the bear, so they draw down
 materially less than Mini every cycle.
 
-| Cycle | | Mini | B4 | Pro | Pro Max |
-|---|---|---:|---:|---:|---:|
-| **2012→2016** | return | 50.8x | 137.2x | 216.6x | **365.6x** |
-| | max DD | 84.5 % | **73.9 %** | **73.9 %** | **73.9 %** |
-| **2016→2020** | return | 13.2x | 51.9x | 82.2x | **154.5x** |
-| | max DD | 83.4 % | **64.0 %** | **63.6 %** | **63.5 %** |
-| **2020→2024** | return | 7.1x | 28.5x | 46.7x | **97.5x** |
-| | max DD | 76.8 % | **53.0 %** | **52.9 %** | **50.4 %** |
-| **2024→now**\* | return | 1.00x | 1.70x | 1.69x | 1.77x |
-| | max DD | 53.3 % | **28.2 %** | **28.1 %** | **21.8 %** |
+| Cycle | | HODL | Mini | B4 | Pro | Pro Max |
+|---|---|---:|---:|---:|---:|---:|
+| **2012→2016** | return | 52.3x | 50.8x | 137.2x | 216.6x | **365.6x** |
+| | max DD | — | 84.5 % | **73.9 %** | **73.9 %** | **73.9 %** |
+| **2016→2020** | return | 13.6x | 13.2x | 51.9x | 82.2x | **154.5x** |
+| | max DD | — | 83.4 % | **64.0 %** | **63.6 %** | **63.5 %** |
+| **2020→2024** | return | 7.3x | 7.1x | 28.5x | 46.7x | **97.5x** |
+| | max DD | — | 76.8 % | **53.0 %** | **52.9 %** | **50.4 %** |
+| **2024→now**\* | return | 1.01x | 1.00x | 1.70x | 1.69x | 1.77x |
+| | max DD | — | 53.3 % | **28.2 %** | **28.1 %** | **21.8 %** |
 
 <sub>\* cycle in progress: not yet exited, so read as an unrealized `navWad` mark.</sub>
 

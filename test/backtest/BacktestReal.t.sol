@@ -430,9 +430,26 @@ contract BacktestRealTest is VenueTestBase {
         console.log("  COMPOUNDED return x1000 (BTC base):", res.compoundedX1000);
     }
 
+    /// HODL baseline: raw BTC hold, no vault, no fee — the BTC price ratio at the exact halving
+    /// timestamps the benchmark reads, per cycle and compounded over the three complete cycles.
+    function _logHodl() internal view {
+        console.log("=== HODL (raw BTC hold, no vault) ===");
+        int256 comp = 1000;
+        for (uint256 c = 0; c < 4; c++) {
+            uint256 endTs = c + 1 < 4 ? HALVING_TS[c + 1] : ts[ts.length - 1];
+            int256 x1000 = _pxAt(endTs) * 1000 / _pxAt(HALVING_TS[c]);
+            comp = comp * x1000 / 1000;
+            console.log(string.concat("  cycle ", vm.toString(c + 1), " return x1000:"));
+            console.logInt(x1000);
+        }
+        console.log("  COMPOUNDED HODL x1000:");
+        console.logInt(comp);
+    }
+
     function test_real_all_products() public {
+        _logHodl();
         address op = address(0x0FE0);
-        // All products funded with $100k BTC ONLY (V6-M-2 fixed): Pro/Pro Max fund their fall
+        // All products funded with BTC ONLY (V6-M-2 fixed): Pro/Pro Max fund their fall
         // short by selling the spot BTC into USDC — no separate margin deposit needed.
         ProductResult memory mn = _runProduct("=== Mini ===", address(new StrategyMini()), op, 0);
         ProductResult memory b = _runProduct("=== B4 ===", address(new StrategyB4()), op, 0);
