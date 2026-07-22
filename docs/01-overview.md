@@ -7,7 +7,7 @@ external anchors it is forced into, and how little authority anyone holds over y
 > Several venue semantics (CoreWriter action atomicity, fresh-account activation, precompile
 > behavior and gas) are not provable off-chain and are mandatory funded release gates —
 > see [`../spec/SECURITY_MODEL.md`](../spec/SECURITY_MODEL.md) §5 and
-> [`../REPORT.md`](../REPORT.md).
+> [`../REPORT.md`](audits/REPORT.md).
 
 ## What B4 is
 
@@ -69,7 +69,7 @@ position's liquidation is placed by margin size at a *structurally confirmed* ex
 cycle's confirmed low for a long, its confirmed peak for a short — never at a distance an
 ordinary swing can reach ([SPECIFICATION §7b](../spec/SPECIFICATION.md); the math and anchors
 are shipped and tested, but the engine sizes flat-`φ` pending the §7b redo — see
-[REPORT.md](../REPORT.md)).
+[REPORT.md](audits/REPORT.md)).
 
 Every product uses the same decomposition for a signed WAD target `n`:
 
@@ -158,6 +158,6 @@ permanently removed before production (`renounceDelegate()`).
   [`../spec/TEST_PLAN.md`](../spec/TEST_PLAN.md) — requirements and the mandatory regression plan.
 - [`../ARCHITECTURE.md`](../ARCHITECTURE.md) — contract map, async discipline, design decisions.
 - [`../INVARIANTS.md`](../INVARIANTS.md) — invariant → test traceability, with honest gaps.
-- [`../REPORT.md`](../REPORT.md) — the security dossier: what is proven locally vs. what remains
+- [`../REPORT.md`](audits/REPORT.md) — the security dossier: what is proven locally vs. what remains
   a funded gate, plus the internal audit history.
-- [`../SLITHER.md`](../SLITHER.md) — static-analysis triage.
+- [`../SLITHER.md`](audits/SLITHER.md) — static-analysis triage.

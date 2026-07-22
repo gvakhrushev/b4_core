@@ -11,7 +11,7 @@ venue (HyperEVM + HyperCore), one accounting model, no admin.
 > [!WARNING]
 > **Pre-mainnet. Not externally audited. Do not use with real funds.**
 > The mandatory funded network gates ([`spec/SECURITY_MODEL.md`](spec/SECURITY_MODEL.md) §5)
-> are unmet, and venue semantics cannot be proven off-chain. See [`REPORT.md`](REPORT.md) for
+> are unmet, and venue semantics cannot be proven off-chain. See [`REPORT.md`](docs/audits/REPORT.md) for
 > exactly what is and is not proven.
 
 ## What the protocol protects — by construction
@@ -19,7 +19,7 @@ venue (HyperEVM + HyperCore), one accounting model, no admin.
 The protocol does not guess tops or bottoms. It removes the ways a cycle position dies. Each
 protection is **structural** — enforced by code and calendar geometry, not by promises — and
 the table marks what is live in the shipped contracts versus specified-and-tested but pending
-the leverage-sizing redo (full status: [REPORT.md](REPORT.md)):
+the leverage-sizing redo (full status: [REPORT.md](docs/audits/REPORT.md)):
 
 | Threat | Structural protection | Status |
 |---|---|---|
@@ -28,7 +28,7 @@ the leverage-sizing redo (full status: [REPORT.md](REPORT.md)):
 | Chasing price | **Sized once, then held.** Positions are sized when the calendar rotates and never re-traded against a moving NAV — no volatility drag, no discretionary re-entry. | shipped |
 | Stuck execution | **Self-healing by anyone.** Async execution is proven by venue state reads; every step is permissionlessly crankable. Worst reachable state is delayed liveness — never fund loss, never frozen funds. | shipped |
 | Exit denial | **The exit cannot be blocked.** Exit liveness depends on no operator, keeper, oracle update or pool interaction; penalties route through guarded one-way paths. | shipped |
-| Liquidation by an ordinary swing | **Stops sit at confirmed extremes.** A leveraged position's liquidation is placed by margin size at a price the market already printed and failed to regain — the confirmed low (longs) or peak (shorts) — never a stop order. Verified on every completed cycle: the structural stop was never touched, while a flat-`φ` position is liquidated by the +99–103 % bear rallies (shorts) or the −64 % COVID crash (longs). | **designed** (math + anchors shipped & tested; the vault-engine sizing is flat-`φ` pending the [§7b redo](AUDIT-2026-07-structural-leverage.md)) |
+| Liquidation by an ordinary swing | **Stops sit at confirmed extremes.** A leveraged position's liquidation is placed by margin size at a price the market already printed and failed to regain — the confirmed low (longs) or peak (shorts) — never a stop order. Verified on every completed cycle: the structural stop was never touched, while a flat-`φ` position is liquidated by the +99–103 % bear rallies (shorts) or the −64 % COVID crash (longs). | **designed** (math + anchors shipped & tested; the vault-engine sizing is flat-`φ` pending the [§7b redo](docs/audits/AUDIT-2026-07-structural-leverage.md)) |
 
 The five shipped protections are what make the benchmark below beat buy-and-hold — **B4, Pro
 and Pro Max return a multiple of `HODL` while drawing down materially less**, not by predicting
@@ -53,8 +53,8 @@ implementation is judged against lives in [`spec/`](spec/) — citations of the 
 `HAZARDS A2` or `SPECIFICATION §4` refer to it.
 
 Implementation records: [`ARCHITECTURE.md`](ARCHITECTURE.md) (design decisions) ·
-[`REPORT.md`](REPORT.md) (security dossier + audit history) ·
-[`SLITHER.md`](SLITHER.md) (static-analysis triage).
+[`REPORT.md`](docs/audits/REPORT.md) (security dossier + audit history) ·
+[`SLITHER.md`](docs/audits/SLITHER.md) (static-analysis triage).
 
 ## How it works
 
@@ -219,7 +219,7 @@ profit), so it lands just under raw buy-and-hold (~5,200x) — see
 > digit. Two earlier models are **deleted**: a hand-rolled equity calculator (reported Pro Max
 > 22,542,031x — compounding leverage the flat-`φ` engine never delivers) and a first
 > real-contract pass that required a separate margin deposit (a workaround for the
-> [V6-M-2](AUDIT-V6.md) routing bug, now fixed so the short self-funds).
+> [V6-M-2](docs/audits/AUDIT-V6.md) routing bug, now fixed so the short self-funds).
 >
 > **The V6-M-2 engine fix that makes the short self-fund is regression-green (269/269) but has
 > not yet passed the adversarial fan-out audit our discipline requires for a core money-routing
@@ -286,7 +286,7 @@ strategy property, so it stays out of this benchmark's return figures.
 > trading fees; perps were not liquid before ~2016, so early-cycle Pro/Pro Max are
 > hypotheticals; pool income uses the 20 %-exit behavioural assumption. The `StructuralLeverage`
 > math and both anchor ratchet concepts are shipped and tested; the vault-engine sizing runs
-> flat-`φ` until the §7b redo lands ([audit record](AUDIT-2026-07-structural-leverage.md)).
+> flat-`φ` until the §7b redo lands ([audit record](docs/audits/AUDIT-2026-07-structural-leverage.md)).
 
 Method and every omitted cost: [Backtest](docs/11-backtest.md).
 

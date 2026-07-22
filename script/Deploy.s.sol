@@ -11,7 +11,7 @@ import {CoreTypes} from "../src/venue/CoreTypes.sol";
 /// @notice Deployment wiring for the target network. Every address/decimal below MUST be
 ///         confirmed by the funded release gates (SECURITY_MODEL §5) before mainnet:
 ///         canonical USDC identity/decimals, LayerZero endpoint + EIDs + DVN config,
-///         Citrea light client, and the whole venue-semantics gate list in REPORT.md.
+///         Citrea light client, and the whole venue-semantics gate list in docs/audits/REPORT.md.
 ///         After configuration, `renounceDelegate()` MUST be executed one-shot on both
 ///         LayerZero sides and verified on-chain (E3).
 contract Deploy is Script {

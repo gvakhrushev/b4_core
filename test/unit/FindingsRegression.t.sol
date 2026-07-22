@@ -47,7 +47,7 @@ contract MockVaultB {
 }
 
 /// @notice Fail-before/pass-after regressions for the adjudicated external discovery
-///         findings (see REPORT.md, "External discovery-report adjudication").
+///         findings (see docs/audits/REPORT.md, "External discovery-report adjudication").
 contract FindingsRegressionTest is VaultTestBase {
     EngineHarness h;
 

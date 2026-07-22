@@ -2,7 +2,7 @@
 
 This page states, in reader-facing terms, what B4 trusts, what it refuses to trust, which safety properties it claims, and exactly which proofs are still missing — it is a summary of the normative [`spec/SECURITY_MODEL.md`](../spec/SECURITY_MODEL.md), not a replacement for it.
 
-> **Status: pre-mainnet, externally unaudited.** Nothing here should be read as production-readiness. The mandatory independent audit and the funded on-chain release gates are both **outstanding** ([`spec/SECURITY_MODEL.md`](../spec/SECURITY_MODEL.md) §5, [`REPORT.md`](../REPORT.md)).
+> **Status: pre-mainnet, externally unaudited.** Nothing here should be read as production-readiness. The mandatory independent audit and the funded on-chain release gates are both **outstanding** ([`spec/SECURITY_MODEL.md`](../spec/SECURITY_MODEL.md) §5, [`REPORT.md`](audits/REPORT.md)).
 
 ## 1. What "security" means here
 
@@ -67,7 +67,7 @@ These are **security boundaries, not dormant extension points** ([`spec/SECURITY
 
 ## 5. Accepted residuals
 
-Documented, decided, and not treated as bugs ([`spec/SECURITY_MODEL.md`](../spec/SECURITY_MODEL.md) §3, [`spec/HAZARDS.md`](../spec/HAZARDS.md) §C, [`REPORT.md`](../REPORT.md)):
+Documented, decided, and not treated as bugs ([`spec/SECURITY_MODEL.md`](../spec/SECURITY_MODEL.md) §3, [`spec/HAZARDS.md`](../spec/HAZARDS.md) §C, [`REPORT.md`](audits/REPORT.md)):
 
 | Residual | Character |
 |---|---|
@@ -83,12 +83,12 @@ Documented, decided, and not treated as bugs ([`spec/SECURITY_MODEL.md`](../spec
 
 ## 6. Audit posture
 
-**What has happened** (full history in [`REPORT.md`](../REPORT.md)):
+**What has happened** (full history in [`REPORT.md`](audits/REPORT.md)):
 
 - **Four internal adversarial rounds** — a first-principles round (12 bug-class finders), a post-build multi-agent audit, the deep **V3** round (5 parallel workstreams + independent adjudication: 4 Medium, 6 Low, 8 Informational, no Critical/High), and a **V4** post-remediation re-audit that **refuted two of the V3 fixes as incomplete** (V4-ENG-1 fund-headroom overflow, V4-VENUE-1 codeless-vault keeper isolation) — both now fixed and independently re-verified.
 - A separate 19-agent coverage sweep returned zero findings on the same tree in which V4 later found a genuine Medium. The repo records this explicitly: **"looks clean" is not "is clean"**.
 - Every confirmed defect carries a **fail-before / pass-after regression**, plus an independent adversarial attempt to break the fix (H1). All 18 §2 invariants are traced to tests, with honest **GAP** markers where the property is venue semantics rather than locally provable ([`INVARIANTS.md`](../INVARIANTS.md)).
-- **Static analysis in CI**: `slither --fail-high` runs on every push/PR; the last recorded run was 30 contracts / 95 detectors / 131 results, exit 0, with every high-severity result triaged as a verified false positive ([`SLITHER.md`](../SLITHER.md)).
+- **Static analysis in CI**: `slither --fail-high` runs on every push/PR; the last recorded run was 30 contracts / 95 detectors / 131 results, exit 0, with every high-severity result triaged as a verified false positive ([`SLITHER.md`](audits/SLITHER.md)).
 
 **What has NOT happened, and is mandatory:**
 
@@ -104,5 +104,5 @@ Mainnet must not proceed until both are recorded and independently reviewed.
 | [`spec/SECURITY_MODEL.md`](../spec/SECURITY_MODEL.md) | Normative trust model, the 18 safety invariants, accepted residuals, release gates |
 | [`spec/HAZARDS.md`](../spec/HAZARDS.md) | The hazard map: every failure class (A async, B accounting, C economic decisions, D pool, E calendar/cross-chain, F authority, G operations, H process) as a design requirement with rationale |
 | [`INVARIANTS.md`](../INVARIANTS.md) | Invariant → test traceability with explicit GAP markers |
-| [`REPORT.md`](../REPORT.md) | Security dossier and audit history: rounds, findings, refutations, remediation, what remains unproven |
-| [`SLITHER.md`](../SLITHER.md) | Per-detector static-analysis triage and the CI gate |
+| [`REPORT.md`](audits/REPORT.md) | Security dossier and audit history: rounds, findings, refutations, remediation, what remains unproven |
+| [`SLITHER.md`](audits/SLITHER.md) | Per-detector static-analysis triage and the CI gate |

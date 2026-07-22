@@ -186,8 +186,8 @@ not aspirational):**
 
 Implementation status: `StructuralLeverage` (both sides) and the low-side ratchet
 (`B4Pool.sampleAnchor`) are shipped and tested; the engine sizing is flat-`φ` pending the §7b
-redo (`AUDIT-2026-07-structural-leverage.md` binds it). Full derivation and per-cycle curves:
-`PROPOSAL-structural-leverage.md`.
+redo (`docs/audits/AUDIT-2026-07-structural-leverage.md` binds it). Full derivation and per-cycle
+curves: `docs/design/PROPOSAL-structural-leverage.md`.
 
 ## 8. Checkpoints, fees, reward weight
 

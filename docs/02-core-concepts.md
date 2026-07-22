@@ -121,7 +121,7 @@ A leveraged position's liquidation is placed at a *structurally confirmed* price
 
 Positions are sized **once per regime and held** — the sizing price and its anchors are captured together and frozen; the calendar, not NAV drift, is the rebalance schedule. Verified on every completed cycle: the structural stop was never touched, while a flat-`φ` position is liquidated by the +99–103 % bear rallies (short) or the −64 % COVID crash (long).
 
-> **Status:** `StructuralLeverage` (both sides, unit-tested) and the low-side ratchet are on-chain; the engine sizing is flat-`φ` pending the §7b redo, whose requirements are bound by [`../AUDIT-2026-07-structural-leverage.md`](../AUDIT-2026-07-structural-leverage.md).
+> **Status:** `StructuralLeverage` (both sides, unit-tested) and the low-side ratchet are on-chain; the engine sizing is flat-`φ` pending the §7b redo, whose requirements are bound by [`../AUDIT-2026-07-structural-leverage.md`](audits/AUDIT-2026-07-structural-leverage.md).
 
 ---
 
@@ -237,4 +237,4 @@ B4 targets **one** venue: HyperEVM + HyperCore. There is no multi-network abstra
 - [04 Integration](04-integration.md) — signatures, lifecycle, events
 - [07 Fees & pool](07-fee-routing.md) — the fee route, penalty and claims in detail
 - Normative package: [`spec/SPECIFICATION.md`](../spec/SPECIFICATION.md), [`spec/HAZARDS.md`](../spec/HAZARDS.md), [`spec/SECURITY_MODEL.md`](../spec/SECURITY_MODEL.md), [`spec/REQUIREMENTS.md`](../spec/REQUIREMENTS.md), [`spec/TEST_PLAN.md`](../spec/TEST_PLAN.md), [`spec/WHITEPAPER.md`](../spec/WHITEPAPER.md)
-- Root: [`ARCHITECTURE.md`](../ARCHITECTURE.md), [`INVARIANTS.md`](../INVARIANTS.md), [`REPORT.md`](../REPORT.md), [`SLITHER.md`](../SLITHER.md)
+- Root: [`ARCHITECTURE.md`](../ARCHITECTURE.md), [`INVARIANTS.md`](../INVARIANTS.md), [`REPORT.md`](audits/REPORT.md), [`SLITHER.md`](audits/SLITHER.md)

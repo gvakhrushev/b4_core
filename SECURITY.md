@@ -6,7 +6,7 @@ B4 is **pre-mainnet** and has **not** completed an independent external audit. T
 funded network gates in [`spec/SECURITY_MODEL.md`](spec/SECURITY_MODEL.md) §5 are **not** met.
 Do not use this code with real funds.
 
-What *has* been done is documented honestly in [`REPORT.md`](REPORT.md): four internal
+What *has* been done is documented honestly in [`REPORT.md`](docs/audits/REPORT.md): four internal
 adversarial audit rounds, each fix carrying a fail-before/pass-after regression, a stateful
 invariant campaign, and a static-analysis gate enforced in CI. Internal rounds are not a
 substitute for an external audit — notably, each of the first three rounds found the previous

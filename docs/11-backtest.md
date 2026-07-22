@@ -25,14 +25,14 @@ the protocol's buy-and-hold) as the baseline:
   calls the permissionless keeper makes. Equity is `navWad()`, nothing else.
 - **BTC only, short self-funds.** Every vault starts from the same BTC deposit and posts **no
   separate margin**. A short product (Pro / Pro Max) funds its fall short by selling that BTC into
-  USDC and reclassifying it as perp collateral — the routing that [V6-M-2](../AUDIT-V6.md) fixed.
+  USDC and reclassifying it as perp collateral — the routing that [V6-M-2](audits/AUDIT-V6.md) fixed.
 - **Income realized per cycle (the "3rd zone").** At each halving the vault fully exits inside the
   20-day penalty-free window — paying the performance fee and **realizing the perp-leg PnL that
   `navWad` excludes by design (invariant B3)** — then re-deposits. So the return is the real,
   compounded, post-fee value a holder would have taken, not an unrealized mark.
 - **Flat-`φ` sizing.** The shipped engine sizes perps at the flat base `φ`, not structural
   leverage (the `StructuralLeverage` library is designed and tested but not wired — see
-  [audit record](../AUDIT-2026-07-structural-leverage.md)). Pro Max's edge here is the `φ`
+  [audit record](audits/AUDIT-2026-07-structural-leverage.md)). Pro Max's edge here is the `φ`
   base target, not a structural amplification.
 - **Costs charged by the contract itself:** the operator performance fee exactly as `opsSettle`
   and the exit path take it (≤ 38.19 % of the 4.5 % virtual fee, **no high-water mark**), and perp
@@ -161,7 +161,7 @@ of this benchmark's return figures.
 | Engine | The real `B4Vault`/`B4VaultOps`/`B4Pool`/`HalvingOracle`, cranked and settled like the live keeper. Equity = `navWad()`. |
 | Data | Daily closes, 2012-01-01 → 2026-07-20; each run starts at the first halving in range |
 | Halvings | Real block timestamps, accepted through the oracle at each epoch boundary |
-| Sizing | Flat base `φ` — the shipped engine. `StructuralLeverage` is designed and unit-tested but not wired ([audit record](../AUDIT-2026-07-structural-leverage.md)) |
+| Sizing | Flat base `φ` — the shipped engine. `StructuralLeverage` is designed and unit-tested but not wired ([audit record](audits/AUDIT-2026-07-structural-leverage.md)) |
 | Fee | Operator's cut of `Phi.FEE_F` (≤ 38.19 % of 4.5 %) on profit, no high-water mark — charged by `opsSettle` and the exit path themselves, not modelled |
 | Funding | Realized by the mock venue on close; the deposit is BTC only (a short self-funds by selling spot — V6-M-2) |
 | Realization | Full exit in the post-halving free window each cycle, then re-deposit — realizes the perp PnL that `navWad` excludes (B3) |
