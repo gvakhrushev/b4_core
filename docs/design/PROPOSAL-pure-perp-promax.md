@@ -56,6 +56,64 @@ detonation" ([[structural-leverage-status]], `docs/audits/AUDIT-2026-07-structur
 Redo needs the diminishing-returns window cap (SPEC §7b caveat) and a post-implementation
 adversarial audit.
 
+#### 3a. Design (pre-registered before coding — the discipline C1/C4 skipped)
+
+**Sizing model.** For a leveraged perp, the WHOLE strategy capital is the margin (no idle 4 %
+reserve — that was C6/C7):
+```
+capital  = _strategyValueWad          (pure perp: the whole deposit, post V6-M-2 self-fund)
+L        = StructuralLeverage.leverageWad(entryPx, g, floor, cap)   (long)
+           / shortLeverageWad(entryPx, g, prevPeak, peakC)          (short)
+margin   = capital                    (all deployed)
+notional = capital · L                (⇒ margin = notional / L, so venue liq = stopWad)
+```
+The venue liquidation then sits at `stopWad` (a confirmed extreme the market has proven it cannot
+regain), NOT ~4 % below entry. **The regression asserts the realized liquidation price == stopWad,
+never order size** (C6).
+
+**FREEZE — the C1/C4 fix.** `entryPx` and the anchors are read TOGETHER at the instant the
+position opens from flat (`szi == 0 → nonzero`) and the resulting `L` (and `stopWad`) are STORED
+and FROZEN for the position's life. While holding, sizing uses the frozen `L`; it is NEVER
+recomputed from live anchors (that is what exploded L→25× at the halving flip). A calendar zone
+change flips the target sign/magnitude → the existing wrong-sign-reduce-to-verified-zero path
+flattens first, and the next open re-captures a fresh `(entryPx, anchors, L)`. So a re-size is
+always flatten-then-re-derive, never a silent re-lever at a stale price.
+
+**Refusal mapping (C5).** `leverageWad`/`shortLeverageWad` return 0 when the structure is
+unconfirmed or `p ≤ floor` (`p ≥ maxStop` for shorts) → the perp target degrades to **0** (hold
+the unlevered spot / USDC), the existential-low de-risk. ONLY `floor == 0` / `prevPeak == 0`
+(genesis) degrades to flat base `g`. The two must not be conflated.
+
+**Anchor source.** `floor`/`cap` (long) and `prevPeak`/`peakC` (short) come from
+`B4Pool.anchors`/`sampleAnchor` — read at capture, frozen. (Note V6-I-3: no on-chain PEAK ratchet
+exists yet — `sampleAnchor` records lows only. The short anchors need a peak ratchet OR a
+documented interim; long side can wire first.)
+
+**Storage.** New frozen fields (e.g. `perpLevWad`, `perpEntryPxWad`) on the delegatecall pair —
+must be appended identically to `B4VaultStorage` (layout identity) and fit EIP-170 (B4Vault 337 B
+margin — tight; the new sizing code lands on the B4VaultOps side to spare B4Vault).
+
+#### 3b. Pre-registered attack surface (carry the AUDIT-2026-07 uncovered list + the redo)
+
+1. **Frozen-vs-live drift** — prove the sizing `L`/`stopWad`/`entryPx` are read once and never
+   re-read live while `szi != 0`; sample an anchor mid-hold across a halving and assert the
+   position does NOT re-trade (the C1/C4 killer).
+2. **Liquidation == stopWad** — regression on the realized venue liquidation price, both sides,
+   across cycles, not order size (C6).
+3. **Refusal path** — `p ≤ floor` opens NO perp (spot/USDC hold), not flat `g`; only genesis flat.
+4. **Re-size = flatten-first** — every zone transition passes through verified `szi == 0` before
+   the opposite/new leg (invariant 9) at the new leverage magnitudes.
+5. **Exit vs held leverage** — `_navWad` excludes unrealized PnL; an informed exit must not redeem
+   at full recorded margin while an amplified perp hides losses (re-verify at the new magnitudes).
+6. **Diminishing-cycle window cap** — short window regime is unbounded as `p → prevPeak`; add the
+   §7b structural cap so a diminishing cycle de-levers, not over-levers.
+7. **notionalTarget rounds-to-zero dead zone**, **oracle-latency skips-the-flip**, **whole-deposit
+   deployed** — the remaining AUDIT-2026-07 uncovered surfaces.
+8. Storage-layout identity + EIP-170 after the new fields.
+
+**Tests MUST** cross a halving with a held position, sample anchors mid-hold, and compare the
+realized liquidation to `stopWad`; then a fresh post-implementation adversarial fan-out.
+
 **Until step 3 lands, the benchmark Pro Max numbers are INFLATED** — flat-`φ` + MockCore models
 no liquidation, so the `φ`-perp "survives" crashes it would be liquidated by live. The numbers
 become honest/survivable only once the structural stop sizes the position.
