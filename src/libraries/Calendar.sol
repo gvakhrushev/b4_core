@@ -111,11 +111,14 @@ library Calendar {
         return growth;
     }
 
-    /// @notice spot = clamp(n, 0, 1); perp = n − spot (SPECIFICATION §3).
+    /// @notice Decompose the signed target `n` into a spot leg and a perp leg (SPECIFICATION §5).
+    ///         The spot leg exists ONLY for an unlevered long (`0 ≤ n ≤ 1`) — held in the asset
+    ///         itself, no funding cost and no liquidation. Any leverage (`|n| > 1`) or any short
+    ///         (`n < 0`) is a **pure perp** position: `spot = 0`, `perp = n`. This makes Pro Max
+    ///         symmetric — a `φ` perp long in growth, a `φ` perp short in the fall — and lets the
+    ///         whole leveraged position self-fund by selling the deposited spot into margin.
     function decompose(int256 n) internal pure returns (int256 spot, int256 perp) {
-        spot = n;
-        if (spot < 0) spot = 0;
-        if (spot > int256(Phi.WAD)) spot = int256(Phi.WAD);
+        spot = (n >= 0 && n <= int256(Phi.WAD)) ? n : int256(0);
         perp = n - spot;
     }
 

@@ -222,6 +222,34 @@ contract BacktestRealTest is VenueTestBase {
         if (ok && ret.length >= 32) pos = abi.decode(ret, (CoreTypes.Position));
     }
 
+    /// Diagnostic: where does Pro Max's perp actually engage across cycle 1, BTC-only? Logs the
+    /// raw perp szi (>0 long, <0 short, 0 none) at growth-mid, fall entry/mid, recovery-mid.
+    function test_real_promax_leverage_by_zone() public {
+        _freshProtocol();
+        B4Vault v = _deployAndFund(address(new StrategyProMax()), address(0x0FE0), 0);
+        uint256 h = HALVING_TS[0];
+        uint256[4] memory pts = [
+            h + Calendar.P / 2, // growth-mid
+            h + Calendar.P + 5 days, // just into the fall
+            h + (Calendar.P + Calendar.T) / 2, // fall-mid
+            h + Calendar.T + (HALVING_TS[1] - h - Calendar.T) / 2 // recovery-mid
+        ];
+        string[4] memory names = ["growth-mid ", "fall-entry ", "fall-mid   ", "recovery   "];
+        console.log(
+            "Pro Max (phi long / phi short) cycle 1, BTC-only. perp szi: >0 long, <0 short:"
+        );
+        for (uint256 i = 0; i < 4; i++) {
+            vm.warp(pts[i]);
+            _setPx(pts[i]);
+            _crankUntilIdle(v, 40);
+            console.log(
+                string.concat("  ", names[i], " px=$", vm.toString(uint256(_pxAt(pts[i])) / 1e18))
+            );
+            console.log("    perp szi:");
+            console.logInt(int256(_readPos(address(v)).szi));
+        }
+    }
+
     // ================================================================= full multi-cycle run
 
     struct CycleRow {

@@ -101,29 +101,27 @@ contract V3EngActivationFreezeVaultTest is VaultTestBase {
         setUpProtocol();
     }
 
-    /// PASS-AFTER: the planner refuses the sub-allowance first margin fund instead of
-    /// creating a doomed poll-forever intent. The vault stays fully operable (idle, no
-    /// pending intent) — it just doesn't open the tiny perp until it grows — and the owner
-    /// can exit and be paid without any out-of-protocol rescue.
+    /// PASS-AFTER (SPEC §5 pure-perp): a tiny fresh-account Pro Max deposit does not wedge. The
+    /// φ perp long's sub-allowance first steps on an unactivated Core account (the BTC sell /
+    /// margin fund) are refused rather than turned into a doomed poll-forever intent, the vault
+    /// converges to idle, and the owner can exit and be paid without any out-of-protocol
+    /// rescue (H3).
     function test_V3ENG1_planner_refuses_tiny_first_margin_fund() public {
         hub.setActivationFee(USDC_CORE, 1e8); // $1 fresh-account fee (quote token, A9)
-        B4Vault v = createVault(address(proMax)); // growth φ ⇒ perp leg +0.618 at t = 0
+        B4Vault v = createVault(address(proMax)); // growth φ ⇒ pure perp long at t = 0
         fundAndDeposit(v, 30_000, 10e6); // $30 dir + $10 margin
 
-        // Crank: spot in-band; the perp leg's ~$0.75 margin fund is REFUSED (≤ allowance),
-        // so no intent is created and the crank simply reports no progress.
-        assertFalse(v.crank());
+        // The machine converges to idle (no doomed poll-forever intent), not wedged.
+        uint256 steps = crankUntilIdle(v, 40);
+        assertLt(steps, 40, "converged, not spinning");
         assertEq(uint8(intentKindOf(v)), uint8(B4VaultStorage.IntentKind.None), "idle, not wedged");
         assertEq(hub.pendingActions(), 0);
-        assertEq(v.usdcMarginEvm(), 10e6, "margin untouched on EVM"); // nothing debited
-        assertEq(v.dirEvm(), 30_000);
 
         // The vault is NOT bricked: the owner can exit right now and gets paid, no rescue.
         vm.prank(user);
         v.initiateExit(1e18);
         crankUntilIdle(v, 20);
         assertEq(v.exitShareWad(), 0, "exit finalized without any top-up");
-        assertGt(usdc.balanceOf(user), 0, "owner paid USDC margin back");
-        assertGt(ubtc.balanceOf(user), 0, "owner paid directional");
+        assertGt(usdc.balanceOf(user) + ubtc.balanceOf(user), 0, "owner paid back");
     }
 }

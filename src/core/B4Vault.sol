@@ -127,7 +127,11 @@ contract B4Vault is B4VaultEngine {
         }
         if (usdcAmount > 0) {
             uint256 received = _pull(_usdc.evmToken, usdcAmount);
-            usdcMarginEvm += received;
+            // USDC is STRATEGY capital, not a segregated owner-margin reserve: for the
+            // self-funding pure-perp products a deposit must be able to open the position
+            // (a perp margins from strategy USDC via the reclassify path). It lands in the
+            // rotation bucket so `_strategyValueWad` counts it and the perp sizes on it.
+            usdcRotatedEvm += received;
             valueWad += _toWad(received, _usdc.evmDecimals); // fixed 1 USD (C3)
         }
         entryLedgerWad += valueWad;

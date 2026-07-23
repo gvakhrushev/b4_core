@@ -21,36 +21,35 @@ contract V6B_DepositRoutingTest is VaultTestBase {
         return p.szi;
     }
 
-    /// A USDC-only Pro Max deposit gets ZERO strategy exposure under the flat-phi
-    /// engine: strategy value is 0, no perp target is ever derivable, the margin
-    /// reserve is never touched, and the crank converges with nothing to do.
-    function test_V6B_2a_usdc_only_deposit_zero_exposure() public {
+    /// FIXED (SPEC §5 pure-perp + USDC-as-strategy): a USDC-only Pro Max deposit now OPENS its
+    /// leveraged perp long — USDC is strategy capital (not a segregated margin reserve), so the
+    /// φ perp long sizes on it and margins from it. Previously this deposit was inert.
+    function test_V6B_2a_usdc_only_deposit_opens_leveraged_long() public {
         B4Vault v = createVault(address(proMax));
         fundAndDeposit(v, 0, 20_000e6); // $20k USDC only
-        uint256 steps = crankUntilIdle(v, 40);
+        crankUntilIdle(v, 40);
 
-        assertEq(v.usdcMarginEvm(), 20_000e6, "100% parked in owner margin reserve");
-        assertEq(v.strategyValueWad(), 0, "strategy value excludes the reserve");
-        assertEq(v.navWad(), 20_000e18, "NAV is the parked reserve only");
-        assertEq(readSzi(address(v)), 0, "no perp ever opened");
-        assertEq(v.perpMargin6(), 0, "margin never deployed");
-        assertEq(v.dirEvm(), 0);
-        assertEq(v.usdcRotatedEvm(), 0, "no rotation to strategy capital exists");
-        // The machine converged (returned false), not spun — the deposit is simply inert.
-        assertLt(steps, 40);
+        assertEq(v.navWad(), 20_000e18, "NAV is the deposit, conserved");
+        assertGt(v.strategyValueWad(), 0, "USDC counts as strategy capital now");
+        assertGt(readSzi(address(v)), 0, "phi perp long opens from USDC-only funding");
+        assertGt(v.perpMargin6(), 0, "margin deployed from the strategy USDC");
+        assertEq(v.dirEvm(), 0, "no directional spot for a pure-perp product");
     }
 
-    /// A dir-only Pro Max deposit runs UNLEVERED: the spot leg is held but the
-    /// leveraged perp leg is silently absent (notionalCap = margin * maxLev / phi = 0).
-    function test_V6B_2a_dir_only_deposit_levered_leg_silently_absent() public {
+    /// FIXED (SPEC §5 pure-perp + V6-M-2): a dir-only Pro Max deposit now OPENS its leveraged
+    /// perp long. Growth φ decomposes to spot 0 / perp φ, so the vault sells the deposited BTC
+    /// into strategy USDC and stands the φ perp long up on it — no separate margin deposit, and
+    /// the leg is no longer silently absent.
+    function test_V6B_2a_dir_only_promax_opens_leveraged_long() public {
         B4Vault v = createVault(address(proMax));
         fundAndDeposit(v, 1e8, 0); // 1 BTC only, no margin
-        uint256 steps = crankUntilIdle(v, 40);
+        crankUntilIdle(v, 40);
 
-        assertEq(v.dirEvm(), 1e8, "spot leg held");
-        assertEq(readSzi(address(v)), 0, "phi-1 perp leg absent: notionalCap == 0");
-        assertEq(v.perpMargin6(), 0);
-        assertEq(v.navWad(), 100_000e18, "1x spot exposure only, not phi");
-        assertLt(steps, 40);
+        assertGt(readSzi(address(v)), 0, "phi perp long opens from BTC-only funding");
+        assertGt(v.perpMargin6(), 0, "margin funded by selling the deposited BTC");
+        assertEq(v.dirEvm(), 0, "BTC fully sold into the pure-perp position");
+        // Leverage engaged: perp notional exceeds the deposit value (phi net of carved margin).
+        uint256 notional6 = uint256(uint64(readSzi(address(v)))) * MARK_PX;
+        assertGt(notional6, 100_000e6, "levered above 1x, not 1x spot");
     }
 }

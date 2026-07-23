@@ -90,8 +90,8 @@ contract CalendarTest is Test {
 
     function test_decompose() public pure {
         (int256 s, int256 p) = Calendar.decompose(int256(Phi.PHI)); // Pro Max growth
-        assertEq(s, 1e18);
-        assertEq(p, int256(Phi.PHI) - 1e18); // φ−1 perp
+        assertEq(s, 0); // leveraged long is a PURE perp now (SPEC §5)
+        assertEq(p, int256(Phi.PHI)); // full φ perp long
         (s, p) = Calendar.decompose(-int256(Phi.PHI)); // Pro Max fall
         assertEq(s, 0);
         assertEq(p, -int256(Phi.PHI));

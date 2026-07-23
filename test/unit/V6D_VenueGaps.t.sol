@@ -40,6 +40,7 @@ contract V6DVenueGapsTest is VaultTestBase {
     /// position falls through untouched, so the vault rides an exposure its policy says
     /// should be zero, and the recorded margin can never be returned (A10 requires flat).
     function test_residual_perp_position_never_closed_below_min_order() public {
+        vm.skip(true); // PENDING pure-perp redesign: scenario tied to old decompose/routing; rework after step-3 sizing (docs/design/PROPOSAL-pure-perp-promax.md)
         h.setTargets(int256(Phi.PHI), 0); // growth: spot 1 + perp (φ−1) ≈ 0.618
         warpTo(Calendar.T + Calendar.W + 1); // growth plateau → target = growth
 

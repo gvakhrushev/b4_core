@@ -250,9 +250,9 @@ contract VaultConfigTest is VaultTestBase {
 
     function test_deposit_measuredDelta_and_entryLedger() public {
         B4Vault v = createVault(address(mini));
-        fundAndDeposit(v, 1e8, 1_000e6); // 1 BTC @ 100k + $1000 margin
+        fundAndDeposit(v, 1e8, 1_000e6); // 1 BTC @ 100k + $1000 USDC (strategy capital)
         assertEq(v.dirEvm(), 1e8);
-        assertEq(v.usdcMarginEvm(), 1_000e6);
+        assertEq(v.usdcRotatedEvm(), 1_000e6); // USDC is strategy capital now, not margin reserve
         assertEq(v.entryLedgerWad(), 101_000e18);
     }
 
