@@ -4,6 +4,7 @@ pragma solidity 0.8.28;
 import {Test} from "forge-std/Test.sol";
 import {CoreTypes} from "src/venue/CoreTypes.sol";
 import {HUB, MockCoreHub, PrecompileShim, CoreWriterShim, MockERC20} from "../mocks/MockCore.sol";
+import {B4PoolDeployer} from "src/core/B4PoolDeployer.sol";
 
 /// @notice Shared venue fixture: etches the mock hub + precompile/CoreWriter shims and
 ///         configures a standard universe — UBTC (fine-lot directional asset) and USDC
@@ -24,7 +25,14 @@ abstract contract VenueTestBase is Test {
     uint64 constant SPOT_PX = 100_000 * 1e4; // 8−4 = 4 px decimals
     uint64 constant MARK_PX = 100_000 * 1e2; // 6−4 = 2 px decimals
 
+    /// Shared holder of B4Pool's creation code (see `B4PoolDeployer`): deployed once and
+    /// passed to every factory by address. A factory that constructed its own would embed
+    /// the pool's ~18 KB of creation code and blow EIP-170 — which is exactly the shape
+    /// this split removed.
+    B4PoolDeployer public poolDeployer;
+
     function setUpVenue() internal {
+        poolDeployer = new B4PoolDeployer();
         vm.etch(HUB, type(MockCoreHub).runtimeCode);
         hub = MockCoreHub(HUB);
 

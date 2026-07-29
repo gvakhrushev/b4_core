@@ -41,9 +41,9 @@ contract HalvingOracleTest is Test {
         vm.warp(GENESIS_TS + 100 days);
         endpoint = new MockLzEndpoint();
         lib = new BtcHeaderLib();
-        oracle = new HalvingOracle(
-            address(endpoint), SRC_EID, SRC_SENDER, GENESIS_HEIGHT, GENESIS_TS, configurator
-        );
+        oracle =
+            new HalvingOracle(address(endpoint), SRC_EID, SRC_SENDER, GENESIS_HEIGHT, configurator);
+        _deliver(GENESIS_HEIGHT, _header(uint32(GENESIS_TS)));
     }
 
     function _header(uint32 ts) internal pure returns (bytes memory h) {
@@ -156,7 +156,9 @@ contract HalvingOracleTest is Test {
         vm.expectRevert(HalvingOracle.ConflictingFact.selector);
         _deliver(GENESIS_HEIGHT + 210_000, conflicting);
 
-        // The genesis anchor carries no header: any delivery for it conflicts.
+        // The bootstrap fact is header-bound too: exact redelivery no-ops, conflict reverts.
+        bytes memory genesisHeader = _header(uint32(GENESIS_TS));
+        _deliver(GENESIS_HEIGHT, genesisHeader);
         vm.expectRevert(HalvingOracle.ConflictingFact.selector);
         _deliver(GENESIS_HEIGHT, header);
     }
@@ -173,19 +175,55 @@ contract HalvingOracleTest is Test {
         );
     }
 
-    // ---------------------------------------------------------------- genesis edges (E4)
+    // ---------------------------------------------------------------- bootstrap edges (E4)
 
-    function test_genesis_constructor_validation() public {
-        vm.expectRevert(HalvingOracle.BadGenesis.selector);
-        new HalvingOracle(address(endpoint), SRC_EID, SRC_SENDER, 0, GENESIS_TS, configurator);
-        vm.expectRevert(HalvingOracle.BadGenesis.selector);
-        new HalvingOracle(address(endpoint), SRC_EID, SRC_SENDER, 840_001, GENESIS_TS, configurator);
-        vm.expectRevert(HalvingOracle.BadGenesis.selector);
-        new HalvingOracle(address(endpoint), SRC_EID, SRC_SENDER, 840_000, 0, configurator);
-        vm.expectRevert(HalvingOracle.BadGenesis.selector);
-        new HalvingOracle(
-            address(endpoint), SRC_EID, SRC_SENDER, 840_000, block.timestamp + 1, configurator
+    function test_bootstrap_requires_proven_fact() public {
+        HalvingOracle fresh =
+            new HalvingOracle(address(endpoint), SRC_EID, SRC_SENDER, GENESIS_HEIGHT, configurator);
+        vm.expectRevert(HalvingOracle.NoHalvingFact.selector);
+        fresh.timeSinceHalving();
+
+        vm.prank(address(endpoint));
+        vm.expectRevert(HalvingOracle.BadHeight.selector);
+        fresh.lzReceive(
+            Origin(SRC_EID, SRC_SENDER, 1),
+            0,
+            abi.encode(GENESIS_HEIGHT + 1, _header(uint32(GENESIS_TS))),
+            address(0),
+            ""
         );
+
+        vm.prank(address(endpoint));
+        vm.expectRevert(HalvingOracle.NotNextHeight.selector);
+        fresh.lzReceive(
+            Origin(SRC_EID, SRC_SENDER, 1),
+            0,
+            abi.encode(GENESIS_HEIGHT + 210_000, _header(uint32(GENESIS_TS))),
+            address(0),
+            ""
+        );
+
+        vm.prank(address(endpoint));
+        fresh.lzReceive(
+            Origin(SRC_EID, SRC_SENDER, 1),
+            0,
+            abi.encode(GENESIS_HEIGHT, _header(uint32(GENESIS_TS))),
+            address(0),
+            ""
+        );
+        assertEq(fresh.timeSinceHalving(), block.timestamp - GENESIS_TS);
+    }
+
+    function test_bootstrap_header_is_bound_and_idempotent() public {
+        bytes memory genesisHeader = _header(uint32(GENESIS_TS));
+        bytes32 expected = lib.hash(genesisHeader);
+        assertEq(oracle.factHash(GENESIS_HEIGHT), expected);
+
+        _deliver(GENESIS_HEIGHT, genesisHeader); // exact idempotent redelivery
+        (uint256 h, uint256 ts, uint256 epoch_) = oracle.latest();
+        assertEq(h, GENESIS_HEIGHT);
+        assertEq(ts, GENESIS_TS);
+        assertEq(epoch_, 0);
     }
 
     function test_timeSince_no_underflow_at_boundary() public {

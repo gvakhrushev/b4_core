@@ -15,6 +15,8 @@ import {Origin} from "src/interfaces/ILayerZero.sol";
 ///        promotion, (c) ratchet direction. Drives the REAL B4Pool ratchet over epoch
 ///        boundaries, then measures the leverage the S7b redo would compute from the
 ///        resulting on-chain anchors (StructuralLeverage is the intended consumer).
+///        POST-V9: hypothesis (b) is FIXED by the sampling-density gate — the sparse-window
+///        tests now pin the safe behavior; windows that must confirm are sampled densely.
 contract V6A_AnchorAttacksTest is VenueTestBase {
     uint32 constant SRC_EID = 30_101;
     bytes32 constant SRC_SENDER = bytes32(uint256(1));
@@ -31,17 +33,28 @@ contract V6A_AnchorAttacksTest is VenueTestBase {
         vm.warp(GEN_TS);
         setUpVenue();
         endpoint = new MockLzEndpoint();
-        oracle = new HalvingOracle(
-            address(endpoint), SRC_EID, SRC_SENDER, GEN_HEIGHT, GEN_TS, address(this)
-        );
+        oracle =
+            new HalvingOracle(address(endpoint), SRC_EID, SRC_SENDER, GEN_HEIGHT, address(this));
+        _acceptHalving(GEN_HEIGHT, uint32(GEN_TS));
         CoreTypes.AssetDescriptor[] memory ds = new CoreTypes.AssetDescriptor[](2);
         ds[0] = usdcDescriptor();
         ds[1] = ubtcDescriptor();
-        pool = new B4Pool(address(oracle), ds);
+        pool = new B4Pool(address(oracle), ds, address(this));
     }
 
     function _setBtc(uint256 usd) internal {
         hub.setSpotPx(SPOT_MKT, uint64(usd * 1e4));
+    }
+
+    /// Sample `n` times, one day apart, starting at the ABSOLUTE time `t0abs`, at price
+    /// `px`. 11 daily samples satisfy the V9 density gate (≥ 10 daily samples spanning ≥ W/2 =
+    /// 10 days), so the window's anchor confirms and the getters expose it.
+    function _sampleDailyAbs(uint256 t0abs, uint256 n, uint256 px) internal {
+        for (uint256 k = 0; k < n; k++) {
+            vm.warp(t0abs + k * 1 days);
+            _setBtc(px);
+            pool.sampleAnchor(DIR);
+        }
     }
 
     function _floor() internal view returns (uint256) {
@@ -72,24 +85,24 @@ contract V6A_AnchorAttacksTest is VenueTestBase {
     /// "INCREASES leverage". PoC: drive the ratchet with a wick to 12k (true bottom 16k),
     /// flip, then compare the leverage the redo computes from the poisoned anchors vs the
     /// honest anchors -- for BOTH the capped and the uncapped regime. The wicked floor only
-    /// ever LOWERS leverage: the hypothesis has the direction backwards (fail-safe).
+    /// ever LOWERS leverage: the hypothesis has the direction backwards (fail-safe). The
+    /// window is sampled densely (V9 density gate) so the poisoned cap still confirms and
+    /// promotes — the direction argument is orthogonal to density.
     function test_a_wickDown_only_lowers_leverage() public {
-        // Cycle 0 62-window: honest bottom 16,000 sampled, then an attacker wick to 12,000.
-        _setBtc(16_000);
-        vm.warp(GEN_TS + Calendar.T + 3 days);
-        pool.sampleAnchor(DIR);
+        // Cycle 0 62-window: honest bottom 16,000 sampled densely, one attacker wick to
+        // 12,000 mid-window — the min ratchet captures it (11 samples, 10-day span).
+        _sampleDailyAbs(GEN_TS + Calendar.T + 1 days, 5, 16_000);
         _setBtc(12_000); // the wick
-        vm.warp(GEN_TS + Calendar.T + 5 days);
+        vm.warp(GEN_TS + Calendar.T + 6 days);
         pool.sampleAnchor(DIR);
+        _sampleDailyAbs(GEN_TS + Calendar.T + 7 days, 5, 16_000);
         assertEq(_cap() / 1e18, 12_000, "wick captured: cap is the running min");
 
-        // Halving 1: the poisoned cap flips into the floor.
+        // Halving 1: the confirmed (wicked) cap flips into the floor.
         uint256 hts = GEN_TS + Calendar.T + 30 days;
         vm.warp(hts);
         _acceptHalving(GEN_HEIGHT + 210_000, uint32(hts));
-        _setBtc(60_000);
-        vm.warp(hts + 2 days);
-        pool.sampleAnchor(DIR);
+        _sampleDailyAbs(hts + 1 days, 11, 60_000);
         assertEq(_floor() / 1e18, 12_000, "poisoned floor");
         assertEq(_cap() / 1e18, 60_000, "cap reseeded");
 
@@ -105,51 +118,53 @@ contract V6A_AnchorAttacksTest is VenueTestBase {
         assertLt(lPoisonU, lHonestU, "uncapped: lower floor => lower L");
     }
 
-    // ------------------------------------- (b) partial-window promotion: CONFIRMED (over-leverage)
+    // --------------------------- (b) partial-window promotion: FIXED by the V9 density gate
 
-    /// Hypothesis (b): a 62-window sampled ONCE at its open promotes an upper bound, not the
-    /// true bottom. PoC: sample px(T)=20,000 once, never again (keeper asleep / thin asset);
-    /// the true 16,000 bottom is never recorded. The flip promotes 20,000 into the floor and
-    /// the redo computes a HIGHER leverage than the honest bottom justifies. Direction is
-    /// UNSAFE -- under-sampling systematically biases the floor UP (min over samples >= true
-    /// min), i.e. toward over-leverage, and nothing on-chain enforces sampling density.
-    function test_b_partial_window_promotion_overleverages() public {
+    /// Hypothesis (b) — FIXED. Pre-fix a 62-window sampled ONCE at its open promoted the
+    /// sparse 20,000 upper bound into the floor (the true 16,000 bottom never recorded),
+    /// over-levering every long on the pool for a full cycle (V6-M-1 → V8-M-1). Post-fix
+    /// the window never confirms: the cap is WITHHELD from the getters and the halving
+    /// flip leaves the floor at the prior confirmed low (0 here — fail-safe).
+    function test_b_sparse_window_promotion_blocked_by_density_gate() public {
         _setBtc(20_000);
         vm.warp(GEN_TS + Calendar.T); // first instant of the 62-window
         pool.sampleAnchor(DIR); // the ONLY sample this window
         // (true bottom 16,000 on day 3 is never sampled -- keeper failure / thin asset)
+        (bool lowConfirmed,) = pool.anchorConfirmed(DIR);
+        assertFalse(lowConfirmed, "a single sample never confirms");
+        assertEq(_cap(), 0, "sparse cap WITHHELD (pre-fix: 20k exposed)");
 
         uint256 hts = GEN_TS + Calendar.T + 30 days;
         vm.warp(hts);
         _acceptHalving(GEN_HEIGHT + 210_000, uint32(hts));
         _setBtc(60_000);
         vm.warp(hts + 2 days);
-        pool.sampleAnchor(DIR);
-        assertEq(
-            _floor() / 1e18,
-            20_000,
-            "upper bound promoted to floor (F1 only guards the ZERO-sample case)"
-        );
+        pool.sampleAnchor(DIR); // the halving flip
+        assertEq(_floor(), 0, "sparse window NOT promoted (pre-fix: 20k poisoned the floor)");
 
+        // Why it mattered: had the sparse 20,000 been promoted, the redo would compute a
+        // HIGHER leverage than the true bottom justifies (the unsafe direction). The gate
+        // closes that path on-chain; the library math below is the pre-fix harm.
         uint256 p = 100_000e18;
-        uint256 lPartial = StructuralLeverage.leverageWad(p, G, 20_000e18, 60_000e18);
+        uint256 lSparse = StructuralLeverage.leverageWad(p, G, 20_000e18, 60_000e18);
         uint256 lTrue = StructuralLeverage.leverageWad(p, G, 16_000e18, 60_000e18);
-        assertGt(lPartial, lTrue, "under-sampling => HIGHER leverage (unsafe direction)");
+        assertGt(lSparse, lTrue, "under-sampling would over-lever -- now blocked by the gate");
     }
 
     /// Active variant of (b): an attacker first-samples the 62-window at a wicked-UP price.
-    /// The poison holds only if NO honest sample lands afterwards -- a single later sample at
-    /// the fair price ratchets the cap back down. Defense = sampling density, off-chain only.
-    function test_b_wickUp_reseed_neutralized_by_one_honest_sample() public {
+    /// Pre-fix the poison held until an honest sample landed; post-fix a lone wick is not
+    /// even EXPOSED (the density gate withholds it), and honest daily sampling both
+    /// ratchets the min back down and confirms the window.
+    function test_b_wickUp_reseed_neutralized_by_honest_dense_sampling() public {
         _setBtc(25_000); // wicked-up price at the window open
         vm.warp(GEN_TS + Calendar.T);
         pool.sampleAnchor(DIR); // attacker first-sample
-        assertEq(_cap() / 1e18, 25_000, "poisoned while unsampled");
+        assertEq(_cap(), 0, "lone wick withheld (unconfirmed)");
 
-        _setBtc(16_000); // ONE honest later sample at the fair bottom
-        vm.warp(GEN_TS + Calendar.T + 4 days);
-        pool.sampleAnchor(DIR);
-        assertEq(_cap() / 1e18, 16_000, "honest sample ratchets the wick away");
+        // Honest daily sampling at the fair bottom (10 more samples → 11 total, 10-day
+        // span): the min ratchets the wick away and the window confirms.
+        _sampleDailyAbs(GEN_TS + Calendar.T + 1 days, 10, 16_000);
+        assertEq(_cap() / 1e18, 16_000, "honest dense sampling ratchets the wick away");
     }
 
     // ----------------------------------------------------- (c) ratchet direction: floor CAN move DOWN
@@ -157,24 +172,19 @@ contract V6A_AnchorAttacksTest is VenueTestBase {
     /// SPECIFICATION S7b: "Anchors -- two confirmed structural lows, ratcheted UP only."
     /// PoC: a deeper second bear (62-window bottom 9,000 < floor 16,000) makes the flip move
     /// the floor DOWN. Direction is fail-safe (lower floor => lower leverage), but the
-    /// "ratchets UP only" claim is not enforced and is false as stated.
+    /// "ratchets UP only" claim is not enforced and is false as stated. (Windows sampled
+    /// densely — the V9 density gate confirms each before it can promote.)
     function test_c_floor_moves_down_on_deeper_bear() public {
-        // Establish floor = 16,000 via cycle-0 bottom + flip.
-        _setBtc(16_000);
-        vm.warp(GEN_TS + Calendar.T + 3 days);
-        pool.sampleAnchor(DIR);
+        // Establish floor = 16,000 via cycle-0 bottom (dense) + flip.
+        _sampleDailyAbs(GEN_TS + Calendar.T + 1 days, 11, 16_000);
         uint256 hts = GEN_TS + Calendar.T + 30 days;
         vm.warp(hts);
         _acceptHalving(GEN_HEIGHT + 210_000, uint32(hts));
-        _setBtc(60_000);
-        vm.warp(hts + 2 days);
-        pool.sampleAnchor(DIR);
+        _sampleDailyAbs(hts + 1 days, 11, 60_000);
         assertEq(_floor() / 1e18, 16_000);
 
-        // Cycle 1 prints a DEEPER 62-window bottom; the next flip moves floor DOWN.
-        _setBtc(9_000);
-        vm.warp(hts + Calendar.T + 2 days);
-        pool.sampleAnchor(DIR);
+        // Cycle 1 prints a DEEPER 62-window bottom (dense); the next flip moves floor DOWN.
+        _sampleDailyAbs(hts + Calendar.T + 1 days, 11, 9_000);
         uint256 hts2 = hts + Calendar.T + 40 days;
         vm.warp(hts2);
         _acceptHalving(GEN_HEIGHT + 2 * 210_000, uint32(hts2));
@@ -191,6 +201,8 @@ contract V6A_AnchorAttacksTest is VenueTestBase {
     /// a whole cycle. The NEXT on-time halving flips cycle-1's 40,000 bottom straight in,
     /// SKIPPING the 16,000 bottom entirely. Stale floor is the fail-safe direction (lower L),
     /// refuting critic #3's "floor stale => more leverage"; the bottom-skip is real.
+    /// (Cycle-1's 62-window is sampled densely: the V9 gate requires a confirmed window
+    /// before the halving-2 flip can promote it.)
     function test_late_acceptance_skips_flip_and_skips_a_bottom() public {
         // Cycle 0 62-window bottom 16,000 confirmed (even tag).
         _setBtc(16_000);
@@ -206,10 +218,8 @@ contract V6A_AnchorAttacksTest is VenueTestBase {
         vm.expectRevert(B4Pool.NotInWindow.selector);
         pool.sampleAnchor(DIR);
 
-        // Epoch 1's 62-window opens: kind-1 reseed does NOT flip -- floor stays stale.
-        _setBtc(40_000);
-        vm.warp(hts + Calendar.T + 1 days);
-        pool.sampleAnchor(DIR);
+        // Epoch 1's 62-window opens (dense): kind-1 reseed does NOT flip -- floor stays stale.
+        _sampleDailyAbs(hts + Calendar.T + 1 days, 11, 40_000);
         assertEq(_floor(), 0, "flip skipped: floor a full cycle stale (fail-safe LOW)");
         assertEq(_cap() / 1e18, 40_000);
 

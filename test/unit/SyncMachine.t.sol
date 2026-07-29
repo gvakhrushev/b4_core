@@ -125,6 +125,101 @@ contract SyncMachineTest is VaultTestBase {
         assertLt(pos.szi, -15_000);
     }
 
+    /// The 20-day transition is two exact 10-day halves. An existing vault reaches
+    /// zero at day 10, 50% of the new side at day 15, and the full stored target at day 20.
+    /// A late entrant follows the same path: day-15 entry starts at 50% and day 20 is full.
+    function test_promax_opening_fall_day15_half_then_day20_full() public {
+        B4Vault v = createVault(address(proMax));
+        fundAndDeposit(v, 0, 120_000e6);
+        crankUntilIdle(v, 60);
+
+        warpTo(Calendar.P - Calendar.H); // day 10: exact zero crossing
+        crankUntilIdle(v, 80);
+        assertEq(readPos(address(v)).szi, 0, "day 10 is strictly flat");
+        assertEq(v.currentTarget(), 0);
+
+        warpTo(Calendar.P - 5 days); // day 15: halfway through 0 -> fall
+        assertApproxEqAbs(v.currentTarget(), -int256(Phi.PHI / 2), 1);
+        crankUntilIdle(v, 80);
+        CoreTypes.Position memory half = readPos(address(v));
+        assertLt(half.szi, 0, "day 15 opens the short side");
+        uint256 halfNtl = uint256(uint64(-half.szi)) * MARK_PX;
+
+        warpTo(Calendar.P); // day 20: full fall target
+        assertEq(v.currentTarget(), -int256(Phi.PHI));
+        crankUntilIdle(v, 80);
+        CoreTypes.Position memory full = readPos(address(v));
+        assertLt(full.szi, half.szi, "day 20 reaches a larger short");
+        uint256 fullNtl = uint256(uint64(-full.szi)) * MARK_PX;
+        assertApproxEqRel(halfNtl * 2, fullNtl, 0.03e18, "day 15 is half of day-20 exposure");
+    }
+
+    function test_promax_late_entry_on_fall_day15_reaches_full_day20() public {
+        warpTo(Calendar.P - 5 days);
+        B4Vault v = createVault(address(proMax));
+        fundAndDeposit(v, 0, 120_000e6);
+        assertApproxEqAbs(v.currentTarget(), -int256(Phi.PHI / 2), 1);
+        crankUntilIdle(v, 80);
+        CoreTypes.Position memory half = readPos(address(v));
+        assertLt(half.szi, 0, "late entrant opens the current half short");
+        uint256 halfNtl = uint256(uint64(-half.szi)) * MARK_PX;
+
+        warpTo(Calendar.P);
+        crankUntilIdle(v, 80);
+        CoreTypes.Position memory full = readPos(address(v));
+        assertLt(full.szi, half.szi, "day 20 adds the remaining half");
+        uint256 fullNtl = uint256(uint64(-full.szi)) * MARK_PX;
+        assertApproxEqRel(halfNtl * 2, fullNtl, 0.03e18);
+    }
+
+    function test_promax_opening_growth_day15_half_then_day20_full() public {
+        B4Vault v = createVault(address(proMax));
+        fundAndDeposit(v, 0, 120_000e6);
+        warpTo(Calendar.P);
+        crankUntilIdle(v, 80);
+        assertLt(readPos(address(v)).szi, 0, "fall short opened");
+
+        warpTo(Calendar.T + Calendar.H); // day 10: exact zero crossing
+        crankUntilIdle(v, 80);
+        assertEq(readPos(address(v)).szi, 0, "day 10 is strictly flat");
+        assertEq(v.currentTarget(), 0);
+
+        warpTo(Calendar.T + 15 days); // halfway through 0 -> growth
+        assertApproxEqAbs(v.currentTarget(), int256(Phi.PHI / 2), 1);
+        crankUntilIdle(v, 80);
+        CoreTypes.Position memory half = readPos(address(v));
+        assertEq(half.szi, 0, "sub-1x day-15 growth is held as spot, not a perp");
+        uint256 halfNtl = (v.dirEvm() + uint256(v.coreDirWei())) * MARK_PX / 10 ** 4;
+        assertGt(halfNtl, 0, "day 15 deploys partial long exposure");
+
+        warpTo(Calendar.T + Calendar.W); // day 20: full growth target
+        assertEq(v.currentTarget(), int256(Phi.PHI));
+        crankUntilIdle(v, 80);
+        CoreTypes.Position memory full = readPos(address(v));
+        assertGt(full.szi, 0, "day 20 reaches the full pure-perp long");
+        uint256 fullNtl = uint256(uint64(full.szi)) * MARK_PX;
+        assertApproxEqRel(halfNtl * 2, fullNtl, 0.03e18, "day 15 is half of day-20 exposure");
+    }
+
+    function test_promax_late_entry_on_growth_day15_reaches_full_day20() public {
+        warpTo(Calendar.T + 15 days);
+        B4Vault v = createVault(address(proMax));
+        fundAndDeposit(v, 0, 120_000e6);
+        assertApproxEqAbs(v.currentTarget(), int256(Phi.PHI / 2), 1);
+        crankUntilIdle(v, 80);
+        CoreTypes.Position memory half = readPos(address(v));
+        assertEq(half.szi, 0, "sub-1x late entry is spot at day 15");
+        uint256 halfNtl = (v.dirEvm() + uint256(v.coreDirWei())) * MARK_PX / 10 ** 4;
+        assertGt(halfNtl, 0);
+
+        warpTo(Calendar.T + Calendar.W);
+        crankUntilIdle(v, 80);
+        CoreTypes.Position memory full = readPos(address(v));
+        assertGt(full.szi, 0, "day 20 reaches the full pure-perp long");
+        uint256 fullNtl = uint256(uint64(full.szi)) * MARK_PX;
+        assertApproxEqRel(halfNtl * 2, fullNtl, 0.03e18);
+    }
+
     // =====================================================================
     // Regression 3 (A4/A5): the harvest-quota deadlock.
     // =====================================================================
@@ -294,8 +389,13 @@ contract SyncMachineTest is VaultTestBase {
     // Margin return path (flat) and B2 reconciliation in sync.
     // =====================================================================
 
+    /// Margin return path (flat): a Pro round trip growth→fall→growth must bring the short's
+    /// margin home. Post pure-perp routing (V8-L-8): the returned margin is STRATEGY CAPITAL —
+    /// it lands in the ROTATION bucket (`_startFromPerp` → `_reclassifyUsdc` → `_startReturn`),
+    /// never in the vestigial owner reserve, and the sync planner immediately redeploys it into
+    /// the spot leg (growth target 1). Pins: flat position, zero margin books everywhere, and
+    /// value conservation across the round trip (flat venue prices ⇒ no trading PnL).
     function test_margin_returns_when_target_zero_and_flat() public {
-        vm.skip(true); // PENDING pure-perp redesign: scenario tied to old decompose/routing; rework after step-3 sizing (docs/design/PROPOSAL-pure-perp-promax.md)
         B4Vault v = createVault(address(pro)); // fall: −1 (full 1x short) perp
         fundAndDeposit(v, 1e8, 10_000e6);
         crankUntilIdle(v, 30); // growth: no perp for Pro (perp target 0); USDC bought into spot
@@ -310,11 +410,15 @@ contract SyncMachineTest is VaultTestBase {
 
         warpTo(Calendar.T + Calendar.W); // growth again: perp target 0
         crankUntilIdle(v, 40);
-        // Short reduced to raw zero, margin returned all the way to the EVM reserve.
+        // Short reduced to raw zero; margin returned and REDEPLOYED as strategy (new routing):
+        // nothing parks in the owner reserve, nothing lingers on Core margin.
         assertEq(readPos(address(v)).szi, 0);
         assertEq(v.perpMargin6(), 0);
         assertEq(v.coreUsdcMarginWei(), 0);
-        assertGt(v.usdcMarginEvm(), 9_000e6); // minus harvest/loss rounding only
+        assertEq(v.usdcMarginEvm(), 0);
+        // Conservation: ~110k initial (1 BTC @ 100k + $10k), no venue losses at flat prices.
+        assertGt(v.navWad(), 109_000e18, "value conserved across the round trip");
+        assertLt(v.navWad(), 111_000e18);
     }
 
     /// B2 in sync: the planner reconciles a flat realized loss before sizing.

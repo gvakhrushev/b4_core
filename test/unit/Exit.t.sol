@@ -57,7 +57,11 @@ contract ExitTest is VaultTestBase {
         assertEq(pool.accruing(1), poolBtc);
         // Ledgers zeroed on a full exit.
         assertEq(v.entryLedgerWad(), 0);
-        assertEq(v.rewardBaseWad(), 0);
+        // Ledgers zeroed on a full exit (SPEC §9). A vault holding no capital keeps no claim
+        // on the shared basket — the basket is funded by leavers for stayers, and this vault
+        // has become a leaver. The pool side of the same event is `forfeitWeight`, asserted
+        // by `test_full_exit_forfeits_reported_pool_weight`.
+        assertEq(v.rewardBaseWad(), 0, "standing base zeroed on a full exit");
     }
 
     /// Inside a free window: owner = gross − proportional operator cut; pool gets 0.
@@ -169,6 +173,9 @@ contract ExitTest is VaultTestBase {
         uint256 vf2 = Phi.wmul(profitBefore, Phi.FEE_F);
         uint256 c2 = Phi.wmul(vf2 - Phi.bps(vf2, 3000), 5e17);
         assertApproxEqAbs(v.rewardBaseWad(), Phi.wmul(rBefore + c2, 5e17), 1e9);
+        // The anti-farming property: whatever the exit pattern, the accrued base never
+        // exceeds ONE full client share — no minting (SPEC §9).
+        assertLe(v.rewardBaseWad(), fullClientShare, "bounded by one settle's worth");
     }
 
     // ------------------------------------------------------------- invariant 14

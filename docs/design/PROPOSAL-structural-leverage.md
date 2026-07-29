@@ -1,8 +1,14 @@
 # Design record: structural sizing — leverage bounded by confirmed extremes
 
-**Status (2026-07-22): mechanism fully specified for BOTH sides (spec §7b) and verified on
-all completed cycles; pure math + low-side ratchet shipped; engine sizing is flat-`φ` pending
-the §7b redo.** A first engine wiring was written, passed a shallow test set, was reported
+**Status (2026-07-23): SHIPPED for BOTH sides via margin control — the engine now sizes each
+position so the venue liquidation sits at the structural stop (confirmed low for a long, confirmed
+peak for a short), replacing the old flat-`φ` reserve. The normative behavior and worked acceptance
+numbers live in [`STRUCTURAL-STATE-MACHINE.md`](STRUCTURAL-STATE-MACHINE.md) (source of truth) and
+[spec §7b](../../spec/SPECIFICATION.md); AB tests (`test/unit/StructuralAB.t.sol`) and engine tests
+(`test/unit/StructuralSizing.t.sol`) pin them.** The record below is the post-mortem of the *first*
+engine wiring, which is why the mechanism was rebuilt — kept for the design history.
+
+A first engine wiring was written, passed a shallow test set, was reported
 done — then a dedicated post-implementation adversarial audit (see
 [`AUDIT-2026-07-structural-leverage.md`](../audits/AUDIT-2026-07-structural-leverage.md)) found it unsafe
 and it was reverted. Two independent Critical/High clusters:

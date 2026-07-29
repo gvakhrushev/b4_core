@@ -29,14 +29,16 @@ the protocol's buy-and-hold) as the baseline:
   20-day penalty-free window — paying the performance fee and **realizing the perp-leg PnL that
   `navWad` excludes by design (invariant B3)** — then re-deposits. So the return is the real,
   compounded, post-fee value a holder would have taken, not an unrealized mark.
-- **Flat-`φ` sizing.** The shipped engine sizes perps at the flat base `φ`, not structural
-  leverage (the `StructuralLeverage` library is designed and tested but not wired — see
-  [audit record](audits/AUDIT-2026-07-structural-leverage.md)). Pro Max's edge here is the `φ`
-  base target, not a structural amplification.
+- **Structural sizing, but genesis-flat here.** The shipped engine sizes perps by margin control
+  against the structural stop (`docs/design/STRUCTURAL-STATE-MACHINE.md`), but this backtest does
+  not sample the anchor windows, so the leverage degrades to the genesis flat base `φ` (a leveraged
+  long/short still deploys the whole deposit as margin with liquidation at `p/φ²` / `p·φ`). The
+  structural amplification (`L > φ` near a confirmed extreme, `sub-1×` deep) is exercised in the
+  unit suite (`StructuralAB.t.sol`, `StructuralSizing.t.sol`), not here.
 - **Costs charged by the contract itself:** the operator performance fee exactly as `opsSettle`
   and the exit path take it (≤ 38.19 % of the 4.5 % virtual fee, **no high-water mark**), and perp
   funding as the venue applies it. The shared-pool client-share weight is **not** included — see
-  [Pool weight](#pool-weight--not-a-backtestable-number).
+  [Pool weight](#pool-weight--population-dependent-now-simulated-separately).
 
 ## Three complete cycles + cycle 4 in progress (2012-11-28 → 2026-07-20)
 
@@ -45,22 +47,24 @@ peak-to-trough of `navWad()`.
 
 | Product | Total return | vs HODL | Worst cycle drawdown |
 |---|---:|---:|---:|
-| HODL (raw BTC, no vault, no fee) | 5,261x | 1.0× | ~84 % |
-| Mini (spot hold — tracks HODL) | 4,814x | 0.9× | 84.5 % |
-| **B4** | **345,052x** | **66×** | **73.9 %** |
-| **Pro** | **1,410,032x** | **268×** | **73.9 %** |
-| **Pro Max** | **9,728,705x** | **1,850×** | **73.9 %** |
+| HODL (raw BTC, no vault, no fee) | 5,261.092x | 1.0× | ~84 % |
+| Mini (spot hold — tracks HODL) | 4,813.714x | 0.915× | 84.45 % |
+| **B4** | **345,257.166x** | **65.625×** | **73.85 %** |
+| **Pro** | **1,317,056.456x** | **250.339×** | **73.85 %** |
+| **Pro Max** | **31,753,217.433x** | **6,035.480×** | **1.96 %** |
 
 > **Audit status.** The V6-M-2 fix passed its adversarial fan-out audit
 > ([AUDIT-V7](audits/AUDIT-V7.md)) — no Critical/High, every finding low and NAV-preserving. The
 > self-funded position sizes on strategy value net of the carved margin, landing a few percent
 > under `|perpF|·NAV` at the BTC perp's `maxLev = 40`.
 >
-> **Pro Max is 1× in the growth phase under BTC-only funding** — a leveraged long needs margin on
-> top of full spot, which selling spot cannot provide; its `φ` edge is the fall short and the
-> recovery long. Its downside is also understated: the test venue models no liquidation (a `φ` leg
-> through a deep drawdown would be liquidated live), and `navWad` excludes unrealized perp PnL (B3).
-> The engine sizes flat-`φ`, not the structural stops below.
+> **This benchmark deliberately uses the engine's genesis-flat fallback.** The production engine
+> is wired for structural margin control, but this file does not sample the anchor windows; their
+> getters therefore withhold anchors and correctly degrade to flat `φ`. It is not a benchmark of
+> a confirmed-anchor deployment. Pro Max is 1× in the growth phase under BTC-only funding — a
+> leveraged long needs margin on top of full spot, which selling spot cannot provide; its `φ` edge
+> is the fall short and recovery long. Its downside remains understated: the test venue models no
+> liquidation, and `navWad` excludes unrealized perp PnL (B3).
 
 ## Per cycle
 
@@ -70,14 +74,14 @@ materially less than Mini every cycle.
 
 | Cycle | | HODL | Mini | B4 | Pro | Pro Max |
 |---|---|---:|---:|---:|---:|---:|
-| **2012→2016** | return | 52.3x | 50.8x | 137.2x | 216.6x | **365.6x** |
-| | max DD | — | 84.5 % | **73.9 %** | **73.9 %** | **73.9 %** |
-| **2016→2020** | return | 13.6x | 13.2x | 51.9x | 82.2x | **154.5x** |
-| | max DD | — | 83.4 % | **64.0 %** | **63.6 %** | **63.5 %** |
-| **2020→2024** | return | 7.3x | 7.1x | 28.5x | 46.7x | **97.5x** |
-| | max DD | — | 76.8 % | **53.0 %** | **52.9 %** | **50.4 %** |
-| **2024→now**\* | return | 1.01x | 1.00x | 1.70x | 1.69x | 1.77x |
-| | max DD | — | 53.3 % | **28.2 %** | **28.1 %** | **21.8 %** |
+| **2012→2016** | return | 52.3x | 50.8x | 137.2x | 230.8x | **660.4x** |
+| | max DD | — | 84.45 % | **73.85 %** | **73.85 %** | **0.00 %** |
+| **2016→2020** | return | 13.6x | 13.2x | 51.9x | 73.2x | **180.1x** |
+| | max DD | — | 83.44 % | **64.04 %** | **64.04 %** | **1.96 %** |
+| **2020→2024** | return | 7.3x | 7.1x | 28.6x | 45.8x | **125.1x** |
+| | max DD | — | 76.81 % | **53.02 %** | **53.02 %** | **0.73 %** |
+| **2024→now**\* | return | 1.01x | 1.00x | 1.70x | 1.70x | **2.13x** |
+| | max DD | — | 53.33 % | **28.15 %** | **28.15 %** | **0.00 %** |
 
 <sub>\* cycle in progress: not yet exited, so read as an unrealized `navWad` mark.</sub>
 
@@ -88,20 +92,23 @@ materially less than Mini every cycle.
   contributes far less to them. The drawdown that remains is intra-bull volatility, and it gives
   back accumulated *profit*, not principal.
 - **Selling the whole spot position to stand up the short makes Pro a full-size short.** That is
-  why Pro clears B4 by a wide margin (1.4M× vs 345k×) rather than tracking it — the fix lets the
-  fall pay the position, not a small side-margin. Pro Max adds the `φ` leg on top (9.7M×).
-- **The short's edge is largest in the deepest fall (cycle 1) and compresses later** as the
-  cycle falls get shallower — but it never inverts: Pro/Pro Max beat B4 in every cycle.
+  why Pro clears B4 by a wide margin (1.317M× vs 345k×) rather than tracking it — the fix lets the
+  fall pay the position, not a small side-margin. Pro Max adds the `φ` leg on top (31.753M×).
+- **The short's edge is largest in the deepest completed fall (cycle 1) and compresses later**
+  as the cycle falls get shallower. In the still-open fourth epoch Pro equals B4 because its
+  fall short has not yet had a completed fall to realize; Pro Max's recovery leg is already ahead.
 - **Realizing at the exit matters for the leveraged legs.** Because `navWad` excludes unrealized
   perp PnL (B3), a leg's gain is invisible until the per-cycle exit realizes it — which is why
-  Pro Max's realized cycle-1 figure (365.6×) is well above the unrealized mark.
+  Pro Max's realized cycle-1 figure (660.4×) is well above the unrealized mark.
 
-## The survival record — the *designed* structural sizing
+## The survival record — structural sizing, separate from this fallback benchmark
 
-This section is about the `StructuralLeverage` library — **designed and unit-tested, not yet
-wired into the engine** (the benchmark above runs flat-`φ`). It motivates the §7b redo: it shows
-that a flat-`φ` leveraged position would have been liquidated by these historical counter-moves,
-whereas a structurally-sized one — stop pinned at a confirmed extreme — survives. Pinned by
+The production engine is wired to `StructuralLeverage` and consumes only density-confirmed
+anchors. This particular benchmark runs the intentionally unsampled, genesis-flat fallback
+described above, so it must not be cited as a structural-leverage performance result. The
+historical reconstruction below shows why confirmed-anchor margin control matters: a flat-`φ`
+leveraged position would have been liquidated by these counter-moves, whereas a structurally
+sized one — stop pinned at a confirmed extreme — survives. Pinned by
 [`StructuralLeverageShort.t.sol`](../test/unit/StructuralLeverageShort.t.sol) and
 [`StructuralLeverage.t.sol`](../test/unit/StructuralLeverage.t.sol).
 
@@ -121,7 +128,7 @@ is what survives; pinned as unit tests in
 [`StructuralLeverageShort.t.sol`](../test/unit/StructuralLeverageShort.t.sol) and
 [`StructuralLeverage.t.sol`](../test/unit/StructuralLeverage.t.sol).
 
-## Pool weight — not a backtestable number
+## Pool return — a closed population, not an assumed APY
 
 **How a claim is earned.** At every settlement, the vault computes `virtualFee = 4.5 %` of
 that interval's profit. Only the operator's slice (`≤ 38.19 %`, i.e. `≤ ~1.72 %` of profit)
@@ -132,22 +139,48 @@ a partial exit (scaled down by the withdrawn fraction). Every settlement, the va
 current `rewardBaseWad` to `B4Pool` as that interval's **weight**.
 
 **How a claim is paid.** The pool's basket for an interval is whatever exit penalties
-(`q = 11.8 %` of a penalized exit's position) landed before the interval closed. Distribution
-is pro rata by weight: `your_share = bucket × your_weight / total_weight`, where `total_weight`
-is the sum of every vault that settled and reported into that same interval.
+(`q = 11.803398… %` of a penalized exit's position) have *realised* by that interval.
+Distribution is pro rata by weight: `your_share = bucket × your_weight / total_weight`, where
+`total_weight` is the sum of every vault that settled and reported into that same interval.
 
-**Why no multiplier is given here.** Weight is *your own* accumulated performance-fee share —
-it scales with your vault's dollar profit (Pro Max generates far more absolute profit than
-Mini at the same starting deposit, so it accrues disproportionately more weight, not an equal
-cut). Both the basket (penalty volume) and `total_weight` (every *other* vault's own weight)
-depend on who else is using the protocol concurrently — a population this backtest has no
-grounds to assume, so no multiple is quoted.
+[`ClosedPopulation.t.sol`](../test/backtest/ClosedPopulation.t.sol) is the contract-backed
+population runner used for this component. Its inputs are deliberately limited to the ones the
+protocol actually has:
 
-What is real and code-grounded: the worked settlement/exit numbers in
-[docs/07-fee-routing.md §6](07-fee-routing.md#6-worked-numeric-example), pinned by
-`Settle.t.sol`, `Exit.t.sol`, `V3Acct_SettleBasketFee.t.sol`. The mechanism is real and the
-client share is never destroyed — its dollar payoff is an ecosystem property, so it stays out
-of this benchmark's return figures.
+- entry date;
+- one of Mini, B4, Pro, or Pro Max; and
+- `r`, the fraction of equal daily participants that exits early (`10%` = 9 stayers / 1 exiter;
+  `20%` = 8 stayers / 2 exiters).
+
+Each participant deposits the same daily USD value in BTC whenever the calendar accepts
+deposits. A daily exiter uses the real exit state machine. Outside a free window the measured
+in-kind receipt enters the selected strict pool's product escrow, is folded into its fixed
+sleeve, and follows the ordinary engine. At the next free window that sleeve exits; only its
+returned, realised tokens become `accruing`, then an interval basket and finally a `claimFor`
+payout. A Pro or Pro Max penalty is therefore neither a passive BTC basket nor a fixed
+percentage yield.
+
+HODL receives the same accepted daily BTC cash flows. The run records the eight free-zone
+boundaries per epoch and run end; claims are made on the first eligible daily close. A live
+sleeve or an unmaterialized tail at the end is not silently counted as a participant payout.
+
+[`PoolClaimFlow.t.sol`](../test/backtest/PoolClaimFlow.t.sol) fixes the simple 20% case: two
+penalized $1,000 exits at BTC $1,000 create exact `q`-sized BTC inventory; at $5,000 an
+equal-weight stayer receives one eighth, $147.54245, or +14.754245% of its original $1,000.
+The difference from an 11% hand estimate is the exact `q = 11.803398…%` and 8-decimal token
+flooring.
+
+An aggregate pool deliberately has no universal table: it needs one more user-supplied input,
+the product mix of other participants, because Mini/B4/Pro/Pro Max carry different reward
+weights. The contract supports aggregate pool `15`; a calculator must expose the mix instead of
+inventing a dilution rate.
+
+Run the current matrix with:
+
+```bash
+forge test --match-path test/backtest/ClosedPopulation.t.sol -vv
+forge test --match-path test/backtest/PoolClaimFlow.t.sol -vv
+```
 
 ## Model and assumptions
 
@@ -156,11 +189,11 @@ of this benchmark's return figures.
 | Engine | The real `B4Vault`/`B4VaultOps`/`B4Pool`/`HalvingOracle`, cranked and settled like the live keeper. Equity = `navWad()`. |
 | Data | Daily closes, 2012-01-01 → 2026-07-20; each run starts at the first halving in range |
 | Halvings | Real block timestamps, accepted through the oracle at each epoch boundary |
-| Sizing | Flat base `φ` — the shipped engine. `StructuralLeverage` is designed and unit-tested but not wired ([audit record](audits/AUDIT-2026-07-structural-leverage.md)) |
+| Sizing | Production engine has structural margin control; this test intentionally does not sample anchors, so its valid fallback is flat base `φ` |
 | Fee | Operator's cut of `Phi.FEE_F` (≤ 38.19 % of 4.5 %) on profit, no high-water mark — charged by `opsSettle` and the exit path themselves, not modelled |
 | Funding | Realized by the mock venue on close; the deposit is BTC only (a short self-funds by selling spot — V6-M-2) |
 | Realization | Full exit in the post-halving free window each cycle, then re-deposit — realizes the perp PnL that `navWad` excludes (B3) |
-| Pool weight | not included — realized yield depends on ecosystem-wide participation (see [Pool weight](#pool-weight--not-a-backtestable-number)) |
+| Pool return | not included in this single-vault benchmark; the closed-population runner above measures strict-pool claims separately |
 
 **Operational assumptions that move the result:** the keeper cadence (this run cranks at each
 calendar transition, the two settlements, and the per-cycle exit — not every block), and the exit

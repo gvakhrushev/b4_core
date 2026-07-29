@@ -85,6 +85,17 @@ contract EngineHarness is B4VaultEngine {
         _startPerpOrder(isBuy, sz, reduceOnly);
     }
 
+    /// V6-M-5: expose the engine's REAL `_quantizePx8` (F2 fix) so regression tests pin the
+    /// shipped implementation — including the uint64 narrowing/clamp an in-test uint256
+    /// mirror structurally cannot observe (V6-I-4 / V8-I-7). Pure: needs no setup().
+    function quantizePx8(uint256 pxWad, bool roundUp, uint8 szDec, bool isSpot)
+        external
+        pure
+        returns (uint64)
+    {
+        return _quantizePx8(pxWad, roundUp, szDec, isSpot);
+    }
+
     function startRecoverySpot(bool dirToken, uint64 weiAmount) external {
         _requireIdle();
         _startRecoverySpot(

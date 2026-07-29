@@ -5,12 +5,12 @@ import {VaultTestBase} from "../utils/VaultTestBase.sol";
 import {B4Vault} from "src/core/B4Vault.sol";
 import {CoreTypes} from "src/venue/CoreTypes.sol";
 
-/// @notice V6 scope B, item 1: F4 added the pxWad == 0 hold-guard to _startSpotOrder
-///         but NOT to _startPerpOrder. The two paths that call _startPerpOrder without
-///         a mark check — the wrong-sign reduce in _planSyncStep and the exit flatten
-///         in _planExitStep — emit a ZERO-PRICE IOC during a mark-feed outage. The
-///         venue rejects it, the intent clears after RESEND_TIMEOUT, and the planner
-///         re-issues it forever: an exit freeze for the duration of the outage (H3).
+/// @notice V6 scope B, item 1 (FIXED by V8-L-1): F4 added the pxWad == 0 hold-guard to
+///         _startSpotOrder but NOT to _startPerpOrder, so the exit flatten in
+///         _planExitStep (which calls _startPerpOrder directly) emitted a ZERO-PRICE IOC
+///         during a mark-feed outage — rejected by the venue, cleared after timeout and
+///         re-issued forever (H3). The guard is now mirrored into _startPerpOrder: the
+///         flatten HOLDS while the feed is down and resumes when it returns.
 contract V6B_PerpZeroMarkTest is VaultTestBase {
     function setUp() public {
         setUpProtocol();
@@ -32,9 +32,9 @@ contract V6B_PerpZeroMarkTest is VaultTestBase {
             abi.decode(args, (uint32, bool, uint64, uint64, bool, uint8, uint128));
     }
 
-    /// Exit flatten at markWad == 0 emits limitPx == 0 orders, then loops: clear after
-    /// timeout → re-issue zero again. The exit cannot progress while the feed is down.
-    function test_V6B_1_exit_flatten_emits_zero_price_order_at_dead_mark_feed() public {
+    /// Exit flatten at markWad == 0 now HOLDS (no intent, no px-0 order queued), then
+    /// resumes the flatten as soon as the mark feed returns.
+    function test_V6B_1_exit_flatten_held_at_dead_mark_feed_resumes_on_return() public {
         B4Vault v = createVault(address(proMax));
         fundAndDeposit(v, 1e8, 20_000e6);
         crankUntilIdle(v, 40);
@@ -45,20 +45,16 @@ contract V6B_PerpZeroMarkTest is VaultTestBase {
         vm.prank(user);
         v.initiateExit(1e18);
 
-        v.crank(); // exit machine flattens: order queued WITHOUT a mark==0 guard
+        v.crank(); // exit machine tries to flatten — HELD by the zero-mark guard
+        assertEq(hub.pendingActions(), 0, "no zero-price order emitted at dead mark feed");
+        assertEq(uint8(intentKindOf(v)), 0, "no intent snapshot while the mark is zero");
+
+        // Feed returns: the flatten proceeds normally with a real limit price.
+        hub.setMarkPx(PERP_MKT, MARK_PX);
+        v.crank();
         (uint32 asset, uint64 limitPx, bool reduceOnly) = _queuedLimitPx(hub.queueHead());
         assertEq(asset, PERP_MKT);
         assertTrue(reduceOnly, "the exit flatten is reduce-only");
-        assertEq(limitPx, 0, "zero-price order emitted at dead mark feed (venue rejects)");
-
-        // After the resend timeout the no-fill intent clears and the planner re-issues
-        // the same zero-price order: the exit spins instead of holding (contrast with
-        // the F4 spot guard, which returns false and holds).
-        vm.warp(block.timestamp + 1 hours + 1);
-        v.crank(); // verify: no fill -> cleared
-        v.crank(); // planner re-issues
-        (, uint64 limitPx2,) = _queuedLimitPx(hub.queueHead());
-        assertEq(limitPx2, 0, "re-issued zero-price order: spin, not hold");
-        assertEq(v.exitShareWad(), 1e18, "exit stuck while the feed is down");
+        assertGt(limitPx, 0, "live-mark limit price once the feed returns");
     }
 }

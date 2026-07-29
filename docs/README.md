@@ -23,7 +23,7 @@ when you need the authoritative `MUST`/`MUST NOT` statements.
 | 8 | [Keeper operations](08-keeper.md) | Running the permissionless crank |
 | 9 | [Roles](09-roles.md) | Owner / operator / referrer / keeper — flows, earnings, hard limits |
 | 10 | [Off-chain architecture](10-offchain-architecture.md) | API, automation and UI — trust boundaries for operators |
-| 11 | [Backtest](11-backtest.md) | The calendar over real BTC data — method, results, and what the model omits |
+| 11 | [Backtest and population simulation](11-backtest.md) | Contract-backed BTC benchmark, strict-pool population runner, and model boundaries |
 
 **Integrating?** 1 → 2 → 4. **Auditing?** 2 → 3 → 5, then
 [`../spec/HAZARDS.md`](../spec/HAZARDS.md) and [`../INVARIANTS.md`](../INVARIANTS.md).
@@ -33,16 +33,18 @@ when you need the authoritative `MUST`/`MUST NOT` statements.
 
 A user deposits a directional asset plus canonical USDC into an isolated **vault** clone and
 selects a policy: a `(growth, fall)` target pair times a scale. Time since the last *proven*
-Bitcoin halving picks and interpolates the active signed target `n`; it decomposes once as
-`spot = clamp(n, 0, 1)` and `perp = n − spot`. Execution against HyperCore is
+Bitcoin halving picks and interpolates the active signed target `n`; it decomposes once — an
+unlevered long is spot, any leverage or short is a pure USDC-margined perp. Execution against HyperCore is
 **asynchronous** — actions are emitted, then their effect is *proven* by a later Core state
 read, and accounting only ever credits actual received balance deltas. At each settlement
 checkpoint, profit over the entry ledger is fee'd, the operator cut is paid in kind, and the
 client share becomes reward weight in a shared **pool**. The pool is funded by the early-exit
 penalty — out of which the operator/referrer payment is carved first, so only the residual
-reaches the pool — and its inventory is distributed in kind, pro rata to weight, with no
-internal swap. The vault, pool and factory contracts have no admin, no upgrade path and no
-privileged fund mover; a permissionless **keeper** merely advances the machine.
+reaches the pool. In a strict product pool it first trades through the matching product sleeve
+and reaches common claims only after the sleeve's free-window exit; legacy pools retain the
+direct basket. Inventory is distributed in kind, pro rata to weight, with no internal swap. The
+vault, pool and factory contracts have no admin, no upgrade path and no privileged fund mover;
+a permissionless **keeper** merely advances the machine.
 
 ## Related records
 

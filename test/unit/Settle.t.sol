@@ -66,16 +66,38 @@ contract SettleTest is VaultTestBase {
         assertEq(v.entryLedgerWad(), 90_000e18); // entry re-anchors to checkpoint NAV
     }
 
-    function test_settle_uses_checkpoint_price_not_live() public {
+    /// @notice Replaces `test_settle_uses_checkpoint_price_not_live` (audit C-1).
+    ///
+    /// The old rule valued the CURRENT composition at the interval's LOCKED price and this
+    /// test asserted it, calling the result "snapshot-protected". It protected in exactly one
+    /// direction. Run the other way — live BELOW the lock — the same mechanism MINTED profit:
+    /// capital deposited after the lock was valued at a price it never experienced, which is
+    /// the committed C-1 exploit ($676 of cost took $833,333 of the shared basket). It could
+    /// not be closed on the deposit side either, because `Calendar.targetAt` is 0 at the
+    /// settlement point and ramps immediately after, so the calendar itself forces the
+    /// permissionless crank to change the composition inside the very same window.
+    ///
+    /// The rule now is: NAV and the entry ledger are always taken on the SAME basis, so
+    /// measured profit is exactly the vault's real mark-to-market P&L against what it
+    /// actually paid. Here the vault genuinely holds 1 BTC that went 100k → 300k, so the
+    /// profit is 200k. The old rule did not destroy that gain, it deferred it (the basis
+    /// re-anchors and the rest is taxed next checkpoint) — deferral was never worth the
+    /// mint it paid for.
+    ///
+    /// Disclosed residual (SECURITY_MODEL §3): with no frozen reference, whoever calls the
+    /// permissionless `settle` picks the instant and therefore the price. Bounded — the
+    /// keeper settles promptly, and the basket is distributed pro rata, so uniform inflation
+    /// cancels and only differential timing matters.
+    function test_settle_values_at_live_price_real_pnl() public {
         B4Vault v = createVault(address(mini));
-        fundAndDeposit(v, 1e8, 0);
+        fundAndDeposit(v, 1e8, 0); // 1 BTC at the default 100k ⇒ entry 100k
         hub.setSpotPx(SPOT_MKT, 120_000e4);
-        uint256 id = _lockAt(p1()); // locked at 120k
-        hub.setSpotPx(SPOT_MKT, 300_000e4); // live price runs away AFTER the lock
+        uint256 id = _lockAt(p1()); // the lock still opens the report window
+        hub.setSpotPx(SPOT_MKT, 300_000e4);
         v.settle(id);
-        // Snapshot-protected: profit measured at 120k, not 300k.
+        // Real P&L: the vault holds 1 BTC worth 300k against a 100k basis.
         uint256 clientShare =
-            Phi.wmul(20_000e18, Phi.FEE_F) - Phi.bps(Phi.wmul(20_000e18, Phi.FEE_F), 3000);
+            Phi.wmul(200_000e18, Phi.FEE_F) - Phi.bps(Phi.wmul(200_000e18, Phi.FEE_F), 3000);
         assertEq(pool.weightOf(id, address(v)), clientShare);
     }
 

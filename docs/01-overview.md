@@ -67,15 +67,16 @@ directional view on your behalf.
 Where a rung carries leverage, the leverage is *designed* to be a safety mechanism: the
 position's liquidation is placed by margin size at a *structurally confirmed* extreme — the
 cycle's confirmed low for a long, its confirmed peak for a short — never at a distance an
-ordinary swing can reach ([SPECIFICATION §7b](../spec/SPECIFICATION.md); the math and anchors
-are shipped and tested, but the engine sizes flat-`φ` pending the §7b redo — see
-[REPORT.md](audits/REPORT.md)).
+ordinary swing can reach ([SPECIFICATION §7b](../spec/SPECIFICATION.md); shipped by margin control,
+both sides — the engine sizes the position so the venue liquidation sits at the structural stop —
+see [STRUCTURAL-STATE-MACHINE.md](design/STRUCTURAL-STATE-MACHINE.md)).
 
-Every product uses the same decomposition for a signed WAD target `n`:
+Every product uses the same decomposition for a signed WAD target `n` — an unlevered long is spot,
+any leverage or short is a pure (USDC-margined) perp:
 
 ```
-spot = clamp(n, 0, 1)
-perp = n - spot
+0 ≤ n ≤ 1:          spot = n,   perp = 0      // held in the asset
+|n| > 1 or n < 0:   spot = 0,   perp = n      // pure perp, self-funded from USDC margin
 ```
 
 Spot expresses exposure in `[0, 1]`; a perpetual position expresses only the residual that spot
@@ -113,13 +114,17 @@ overfills stay unaccounted and separately recoverable (`recoverEvm`, `recoverCor
 `recoverPerpSurplus`). At a checkpoint, profit over the entry ledger is fee'd: the operator cut
 is paid in kind from the EVM basket, and the client share becomes reward weight in the shared
 `B4Pool`. Early exit outside a free window withholds a single in-kind penalty; the
-operator/referrer payment is carved *out of* that penalty (never added to it) and only the
-residual funds the Pool. Pool inventory is distributed in kind, pro rata to recorded weight,
+operator/referrer payment is carved *out of* that penalty (never added to it). In a legacy pool
+the residual becomes basket inventory; in a strict product pool it first enters the matching
+strategy sleeve, follows the ordinary engine, and becomes claim inventory only after that
+sleeve's free-window exit. Pool inventory is distributed in kind, pro rata to recorded weight,
 with no internal swap.
 
 Anyone can push the machine forward — `crank()`, `settle(intervalId)`, `claimDeferred(...)` on
 the vault, and `advance()` / `lockPrices(id)` / `claimFor(id, vault)` / `sweep(id)` /
-`capture()` on the pool — batched by the permissionless
+`capture()` on the pool. For a strict product pool, `foldPenalty`, `crankSleeve`, and
+free-window `initiateSleeveExit` are likewise permissionless and are driven by the open-source
+keeper — batched by the permissionless
 [`Keeper`](../src/periphery/Keeper.sol):
 
 ```solidity

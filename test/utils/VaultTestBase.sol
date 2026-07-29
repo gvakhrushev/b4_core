@@ -5,9 +5,11 @@ import {VenueTestBase} from "./VenueTestBase.sol";
 import {MockLzEndpoint} from "../mocks/MockLzEndpoint.sol";
 import {HalvingOracle} from "src/core/HalvingOracle.sol";
 import {B4Factory} from "src/core/B4Factory.sol";
+import {B4ProductFactory} from "src/core/B4ProductFactory.sol";
 import {B4Pool} from "src/core/B4Pool.sol";
 import {B4Vault} from "src/core/B4Vault.sol";
 import {B4VaultOps} from "src/core/B4VaultOps.sol";
+import {B4VaultRecovery} from "src/core/B4VaultRecovery.sol";
 import {B4VaultStorage} from "src/core/B4VaultStorage.sol";
 import {Calendar} from "src/libraries/Calendar.sol";
 import {CoreTypes} from "src/venue/CoreTypes.sol";
@@ -44,10 +46,11 @@ abstract contract VaultTestBase is VenueTestBase {
         setUpVenue();
         endpoint = new MockLzEndpoint();
         oracle = new HalvingOracle(
-            address(endpoint), SRC_EID, SRC_SENDER, GENESIS_HEIGHT, GENESIS_TS, address(this)
+            address(endpoint), SRC_EID, SRC_SENDER, GENESIS_HEIGHT, address(this)
         );
-        address impl = address(new B4Vault(address(new B4VaultOps())));
-        factory = new B4Factory(address(oracle), usdcDescriptor(), impl);
+        acceptHalving(GENESIS_HEIGHT, uint32(GENESIS_TS));
+        address impl = address(new B4Vault(address(new B4VaultOps()), address(new B4VaultRecovery())));
+        factory = new B4Factory(address(oracle), usdcDescriptor(), impl, address(poolDeployer));
 
         CoreTypes.AssetDescriptor[] memory dirs = new CoreTypes.AssetDescriptor[](1);
         dirs[0] = ubtcDescriptor();
@@ -77,6 +80,74 @@ abstract contract VaultTestBase is VenueTestBase {
                 defaultRoute()
             )
         );
+    }
+
+    // ------------------------------------------------------- strict product-pool fixture
+    // `createPool` above is the LEGACY shared basket (policyMask == 0). Every campaign built
+    // on it is structurally blind to the strict Product-Pool domain: sleeves, per-policy
+    // `penaltyEscrow`, `escrowHeld` and the `capturePenalty` receipt split never execute.
+    // These three helpers make the strict pool as cheap to stand up as the legacy one, so a
+    // test (or an invariant campaign) chooses the domain instead of inheriting it. The
+    // factory is LAZY on purpose: deploying it inside `setUpProtocol` would shift the CREATE
+    // nonce of every contract the ~30 existing suites build afterwards.
+
+    B4ProductFactory internal _strictFactory;
+
+    function strictFactory() internal returns (B4ProductFactory) {
+        if (address(_strictFactory) == address(0)) {
+            _strictFactory = new B4ProductFactory(
+                address(oracle),
+                usdcDescriptor(),
+                factory.vaultImplementation(),
+                address(poolDeployer)
+            );
+        }
+        return _strictFactory;
+    }
+
+    /// One-directional-asset strict pool. `mask` is one of the five product choices
+    /// (1/2/4/8 isolated, 15 aggregate); every enabled policy gets its own sleeve.
+    function createStrictPool(uint8 mask) internal returns (B4Pool p) {
+        CoreTypes.AssetDescriptor[] memory dirs = new CoreTypes.AssetDescriptor[](1);
+        dirs[0] = ubtcDescriptor();
+        address[4] memory strategies =
+            [address(mini), address(b4), address(pro), address(proMax)];
+        p = B4Pool(strictFactory().createProductPool(dirs, strategies, mask));
+    }
+
+    function createStrictVault(
+        B4Pool p,
+        address strategy,
+        address owner_,
+        B4VaultStorage.FeeRoute memory route_
+    ) internal returns (B4Vault v) {
+        vm.prank(owner_);
+        v = B4Vault(
+            strictFactory().createVault(
+                address(p),
+                CoreTypes.descriptorHash(ubtcDescriptor()),
+                strategy,
+                1e18,
+                100,
+                route_
+            )
+        );
+    }
+
+    /// `fundAndDeposit` for a vault whose owner is not the shared `user`.
+    function fundAndDepositFor(
+        B4Vault v,
+        address owner_,
+        uint256 dirAmount,
+        uint256 usdcAmount
+    ) internal {
+        if (dirAmount > 0) ubtc.mint(owner_, dirAmount);
+        if (usdcAmount > 0) usdc.mint(owner_, usdcAmount);
+        vm.startPrank(owner_);
+        if (dirAmount > 0) ubtc.approve(address(v), dirAmount);
+        if (usdcAmount > 0) usdc.approve(address(v), usdcAmount);
+        v.deposit(dirAmount, usdcAmount);
+        vm.stopPrank();
     }
 
     /// Fund the user and deposit into the vault (growth window at t = 0).

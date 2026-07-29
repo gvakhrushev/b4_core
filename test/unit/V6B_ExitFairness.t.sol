@@ -42,10 +42,15 @@ contract V6B_ExitFairnessTest is VaultTestBase {
         int64 szi = readSzi(address(v));
         assertGt(szi, 0); // pure φ perp long on the whole $120k strategy (SPEC §5)
         uint64 marginOpened = v.perpMargin6();
-        assertApproxEqAbs(uint256(marginOpened), 7_340e6, 50e6, "phi*120k notional * phi / 40");
+        // Structural §7b: the WHOLE $120k strategy is the margin (margin = notional/L, whole
+        // deposit deployed — audit C6/C7), NOT the old flat-φ notional·φ/maxLev reserve.
+        assertApproxEqAbs(
+            uint256(marginOpened), 120_000e6, 500e6, "whole $120k deposit is the margin"
+        );
 
-        // Venue crashes 30% while the vault is idle. The perp now carries a hidden
-        // unrealized loss of 18,540 USD — 7.4x the posted margin (wiped out, wd = 0).
+        // Venue crashes 30% while the vault is idle. The perp carries a hidden unrealized loss;
+        // the exit MUST realize it on the venue and reconcile it out of the NAV BEFORE paying —
+        // the security property this test pins is sizing-independent (below).
         hub.setSpotPx(SPOT_MKT, 70_000e4);
         hub.setMarkPx(PERP_MKT, 70_000e2);
 
@@ -90,8 +95,13 @@ contract V6B_ExitFairnessTest is VaultTestBase {
     /// few wei and stays in the vault), (iii) reward weight is never re-reported or
     /// duplicated by exits. Mini vault (spot-only, no trades) so the in-kind dir leg of
     /// _payBucket is exercised with live profit at every exit.
+    /// V8-L-8: each exit is measured AT FINALIZATION (`_crankUntilExitDone`), not after
+    /// cranking to idle — post pure-perp routing the sync planner redeploys the remaining
+    /// rotated USDC into spot (decompose(1) → spot 1, USDC deposits are strategy capital),
+    /// so an idle-boundary measurement would count that legitimate redeployment as exit
+    /// "dust" (the phantom 17,784 USDC; V8 refutation: per-exit bucket decrements ==
+    /// recipient deltas EXACTLY on all 4 exits).
     function test_V6B_2d_settle_exit_waterfall_conservation() public {
-        vm.skip(true); // PENDING pure-perp redesign: scenario tied to old decompose/routing; rework after step-3 sizing (docs/design/PROPOSAL-pure-perp-promax.md)
         B4Vault v = createVault(address(mini));
         fundAndDeposit(v, 1e8, 20_000e6); // E = 120k; dir held, margin parked
 
@@ -143,8 +153,10 @@ contract V6B_ExitFairnessTest is VaultTestBase {
             + ubtc.balanceOf(address(pool));
     }
 
-    /// One x = 10% exit with full waterfall assertions. expectPool=false for a free
-    /// window (pool share must be exactly 0), true for a penalty exit (pool share > 0).
+    /// One x = 10% exit with full waterfall assertions, measured at finalization (see the
+    /// test's V8-L-8 note: the post-exit spot redeployment must NOT be counted as exit
+    /// dust). expectPool=false for a free window (pool share must be exactly 0), true for
+    /// a penalty exit (pool share > 0).
     function _exitOnce(B4Vault v, uint256 id, uint256 weightBefore, bool expectPool) internal {
         uint256 cs = _clientShareNow(v);
         uint256[4] memory pre =
@@ -156,7 +168,7 @@ contract V6B_ExitFairnessTest is VaultTestBase {
 
         vm.prank(user);
         v.initiateExit(0.1e18);
-        crankUntilIdle(v, 20);
+        _crankUntilExitDone(v, 20);
         _checkExit(v, id, weightBefore, expectPool, cs, rPre, pre, userPre, opRefPre, poolPre);
     }
 

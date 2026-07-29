@@ -45,8 +45,9 @@ contract B4PoolTest is VenueTestBase {
         setUpVenue();
         endpoint = new MockLzEndpoint();
         oracle = new HalvingOracle(
-            address(endpoint), SRC_EID, SRC_SENDER, GENESIS_HEIGHT, GENESIS_TS, address(this)
+            address(endpoint), SRC_EID, SRC_SENDER, GENESIS_HEIGHT, address(this)
         );
+        _acceptHalving(GENESIS_HEIGHT, uint32(GENESIS_TS));
 
         // Second directional asset for multi-asset basket behavior.
         ueth = new MockERC20("UETH", 18);
@@ -58,7 +59,7 @@ contract B4PoolTest is VenueTestBase {
         descriptors[0] = usdcDescriptor();
         descriptors[1] = ubtcDescriptor();
         descriptors[2] = uethDescriptor();
-        pool = new B4Pool(address(oracle), descriptors); // test acts as factory
+        pool = new B4Pool(address(oracle), descriptors, address(this)); // test acts as factory
 
         vaultA = new MockVault(ownerA);
         vaultB = new MockVault(ownerB);
@@ -185,23 +186,27 @@ contract B4PoolTest is VenueTestBase {
 
     /// D1 regression (TEST_PLAN §3.9): a transient zero on ONE asset must not poison the
     /// interval — nothing commits, and a retry within the window succeeds.
-    function test_checkpointPrice_poisoning_transientZero_retries() public {
+    /// Replaces `test_checkpointPrice_poisoning_transientZero_retries`. Since
+    /// AUDIT-2026-07-25 C-1 the checkpoint price feeds NO valuation — settlement values the
+    /// vault at the instant it runs, so the entry ledger and NAV share one basis. Poisoning
+    /// the record therefore cannot mis-price anything, and the all-or-nothing refusal that
+    /// used to defend it became pure liveness cost: a dead feed on ONE co-listed asset would
+    /// have blocked reporting and claiming for the WHOLE pool. The property now asserted is
+    /// the stronger one — a transient zero can neither poison a valuation nor stop the
+    /// interval.
+    function test_checkpointPrice_zero_on_one_asset_cannot_block_the_pool() public {
         vm.warp(p1());
         pool.advance();
-        hub.setSpotPx(UETH_SPOT, 0); // transient oracle failure on one asset
+        hub.setSpotPx(UETH_SPOT, 0); // transient oracle failure on one co-listed asset
 
-        vm.expectRevert(B4Pool.ZeroPrice.selector);
         pool.lockPrices(0);
-        // NOTHING was committed — not even the assets that priced fine.
-        assertEq(pool.lockedPxWad(0, 1), 0);
         (, uint64 lockedAt,,) = pool.intervalInfo(0);
-        assertEq(lockedAt, 0);
+        assertGt(lockedAt, 0, "the interval opens for reporting regardless");
+        assertGt(pool.lockedPxWad(0, 1), 0, "the healthy asset is still recorded");
+        assertEq(pool.lockedPxWad(0, 2), 0, "the dead one is simply absent");
 
-        // Oracle recovers inside the window: retry succeeds, interval fully usable.
-        vm.warp(p1() + 30 minutes);
-        hub.setSpotPx(UETH_SPOT, 4000e6);
-        pool.lockPrices(0);
-        assertEq(pool.lockedPxWad(0, 2), 4_000e18);
+        // That the settlement itself no longer reads this record is pinned separately by
+        // `Settle.t.sol::test_settle_values_at_live_price_real_pnl` and the C-1 suite.
     }
 
     function test_missed_snapshot_makes_interval_unreportable_not_stuck() public {
@@ -363,6 +368,29 @@ contract B4PoolTest is VenueTestBase {
         pool.claimFor(id, address(vaultB)); // swept interval: nothing left to claim
     }
 
+    /// D4 regression: successor materialization itself closes former-interval claims;
+    /// sweep only carries the preserved remainder forward.
+    function test_claim_reverts_after_successorMaterialized_beforeSweep() public {
+        uint256 id = _setupDistribution();
+        pool.claimFor(id, address(vaultA)); // B's 1/4 share remains in interval 0.
+        uint256 remainingBefore = pool.remainingOf(id, 0);
+        uint256 liabilityBefore = pool.liability(address(usdc));
+
+        vm.warp(p2());
+        pool.advance(); // interval 1 exists, so interval 0 is expired even before sweep.
+
+        vm.expectRevert(B4Pool.NothingToClaim.selector);
+        pool.claimFor(id, address(vaultB));
+
+        assertEq(usdc.balanceOf(ownerB), 0);
+        assertEq(pool.remainingOf(id, 0), remainingBefore);
+        assertEq(pool.liability(address(usdc)), liabilityBefore);
+
+        pool.sweep(id);
+        assertEq(pool.remainingOf(id, 0), 0);
+        assertEq(pool.accruing(0), remainingBefore);
+    }
+
     function test_capture_measuredDelta_only() public {
         usdc.mint(address(pool), 500e6); // donation sits unaccounted…
         assertEq(pool.liability(address(usdc)), 0);
@@ -382,7 +410,7 @@ contract B4PoolTest is VenueTestBase {
         d[1] = ubtcDescriptor();
         d[2] = ubtcDescriptor();
         vm.expectRevert(B4Pool.DuplicateAsset.selector);
-        new B4Pool(address(oracle), d);
+        new B4Pool(address(oracle), d, address(this));
     }
 
     function _acceptHalving(uint256 height, uint32 ts) internal {

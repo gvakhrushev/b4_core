@@ -96,10 +96,10 @@ library StructuralLeverage {
     ///         WINDOW-REGIME CAVEAT: with `peakC == 0` the stop is `p + (p − prevPeak)·θ`, an
     ///         EXTRAPOLATION from the *previous* cycle's peak, not a bound confirmed for this
     ///         cycle. If this cycle tops close to `prevPeak` (a diminishing-returns cycle) the
-    ///         leverage grows large (unbounded as `p → prevPeak`), relying on the venue
-    ///         `maxLeverage` clamp; all completed cycles topped ≥ 1.53× the prior peak. The
-    ///         §7b redo MUST add a structural cap for that tail (bind: a diminishing cycle
-    ///         should de-lever, not over-lever).
+    ///         leverage grows large (unbounded as `p → prevPeak`); all completed cycles topped
+    ///         ≥ 1.53× the prior peak. The §7b engine (`B4VaultEngine._szTargetStructural`) caps
+    ///         every structural size at the venue `maxLeverage`, so this tail de-levers rather than
+    ///         over-levers or emits a venue-impossible order.
     ///
     ///         Returns 0 (caller falls back to the flat base `g`) when the structure is not
     ///         confirmed: no previous peak recorded (genesis), a `peakC` not above
@@ -135,5 +135,63 @@ library StructuralLeverage {
         uint256 stop = shortStopWad(p, g, prevPeak, peakC);
         if (stop == 0 || stop <= p) return 0;
         return Phi.mulDiv(p, Phi.WAD, stop - p);
+    }
+
+    // ================================================================= §7b state machine
+    // The corrected sizing per docs/design/STRUCTURAL-STATE-MACHINE.md. ONE fixed stop:
+    // `stop = extreme ∓ 0.618·(extreme − prevExtreme)`. Two regimes — window (extreme not
+    // confirmed ⇒ each DCA slice uses its own price `p` as the extreme estimate) and post-pivot
+    // (extreme confirmed ⇒ the stop is FIXED for every entry, only the leverage varies). Long
+    // and short are exact mirrors. Leverage always divides by the ENTRY price. `INV_PHI = 1/φ`.
+
+    /// @notice Structural stop for a leveraged LONG (Pro Max). `Pb` = previous cycle bottom;
+    ///         `B` = this cycle's confirmed 62-window low, or 0 in the window regime. Window
+    ///         ⇒ anchor is the entry `p`; post-pivot ⇒ anchor is `B` (stop fixed, independent
+    ///         of the entry). Returns 0 on no positive delta.
+    function longStop(uint256 p, uint256 Pb, uint256 B) internal pure returns (uint256) {
+        uint256 a = B == 0 ? p : B; // window: p is the low estimate; post: the confirmed low
+        if (a <= Pb) return 0;
+        uint256 drop = Phi.wmul(a - Pb, Phi.INV_PHI); // 0.618·(a − Pb)
+        return a > drop ? a - drop : 0;
+    }
+
+    /// @notice Effective LONG leverage `L = p/(p − stop)`. 0 when the entry sits at/below the
+    ///         stop (existential low — no leverage). No 1× floor: a high entry de-levers.
+    function longLev(uint256 p, uint256 Pb, uint256 B) internal pure returns (uint256) {
+        uint256 s = longStop(p, Pb, B);
+        if (s == 0 || p <= s) return 0;
+        return Phi.mulDiv(p, Phi.WAD, p - s);
+    }
+
+    /// @notice Structural stop for a leveraged SHORT (Pro Max) — the mirror of `longStop`.
+    ///         `Pp` = previous cycle peak; `C` = this cycle's confirmed peak, or 0 in the
+    ///         window regime. `stop = anchor + 0.618·(anchor − Pp)`.
+    function shortStructStop(uint256 p, uint256 Pp, uint256 C) internal pure returns (uint256) {
+        uint256 a = C == 0 ? p : C;
+        if (a <= Pp) return 0;
+        return a + Phi.wmul(a - Pp, Phi.INV_PHI);
+    }
+
+    /// @notice Effective SHORT leverage `L = p/(stop − p)` (Pro Max). Sub-1× deep — the safety.
+    function shortStructLev(uint256 p, uint256 Pp, uint256 C) internal pure returns (uint256) {
+        uint256 s = shortStructStop(p, Pp, C);
+        if (s <= p) return 0;
+        return Phi.mulDiv(p, Phi.WAD, s - p);
+    }
+
+    /// @notice Flat SHORT stop for the base product (Pro, `g = 1`): `stop = max(p·(1+1/g), C)`
+    ///         — a `g×` short liquidation, floored at the confirmed peak `C` so a deep short
+    ///         survives the bounce to the printed peak. Pass `C = 0` in the window regime.
+    function shortFlatStop(uint256 p, uint256 g, uint256 C) internal pure returns (uint256) {
+        if (g == 0) return 0;
+        uint256 flat = p + Phi.mulDiv(p, Phi.WAD, g); // p·(1 + 1/g)
+        return flat > C ? flat : C;
+    }
+
+    /// @notice Effective flat-SHORT leverage `L = p/(stop − p)` (Pro).
+    function shortFlatLev(uint256 p, uint256 g, uint256 C) internal pure returns (uint256) {
+        uint256 s = shortFlatStop(p, g, C);
+        if (s <= p) return 0;
+        return Phi.mulDiv(p, Phi.WAD, s - p);
     }
 }

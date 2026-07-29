@@ -30,7 +30,15 @@ contract V6B_DepositRoutingTest is VaultTestBase {
         crankUntilIdle(v, 40);
 
         assertEq(v.navWad(), 20_000e18, "NAV is the deposit, conserved");
-        assertGt(v.strategyValueWad(), 0, "USDC counts as strategy capital now");
+        // Structural §7b deploys the WHOLE deposit as margin (margin = notional/L), so the
+        // strategy USDC drains out of strategyValue into perpMargin6 — that it funded the perp
+        // (not the excluded owner reserve) is the "USDC = strategy capital" proof, no idle reserve.
+        assertApproxEqAbs(
+            uint256(v.perpMargin6()),
+            20_000e6,
+            200e6,
+            "whole USDC deposit deployed as perp margin (C7)"
+        );
         assertGt(readSzi(address(v)), 0, "phi perp long opens from USDC-only funding");
         assertGt(v.perpMargin6(), 0, "margin deployed from the strategy USDC");
         assertEq(v.dirEvm(), 0, "no directional spot for a pure-perp product");

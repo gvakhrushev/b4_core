@@ -21,6 +21,9 @@ abstract contract B4VaultStorage {
     uint256 internal constant MIN_ORDER_USD_WAD = 10e18;
     /// Perp IOC price envelope, bps of mark (SPECIFICATION §7).
     uint256 internal constant PERP_ENVELOPE_BPS = 50;
+    /// Floor for the per-vault spot envelope. An immutable 0 would emit every IOC at the
+    /// mid, which never crosses — a permanently unfillable vault with no setter to fix it.
+    uint16 internal constant MIN_SLIPPAGE_BPS = 10;
     /// Allowance for the fresh-account activation fee deducted from the first Core
     /// credit (HAZARDS A9); exact live fee is a funded gate.
     uint256 internal constant ACTIVATION_FEE_USD_WAD = 5e18;
@@ -67,6 +70,16 @@ abstract contract B4VaultStorage {
     uint256 public rewardBaseWad;
     /// Last pool interval this vault settled (id + 1; 0 = never).
     uint256 public lastSettledPlusOne;
+
+    /// Frozen structural liquidation target (WAD) of a held leveraged long (§7b margin control).
+    /// Captured once at open and NOT re-derived while held — so a live price move or a
+    /// permissionless anchor sample (which flips the regime / jumps at the halving) can never
+    /// re-lever the position (audit C1/C4). Zero while flat and for every non-structural leg;
+    /// cleared at flip / exit / liquidation so the next open re-derives from the live price.
+    uint256 public perpStopWad;
+    /// Side of the frozen `perpStopWad` (true = long, false = short) — a long's stop sits below
+    /// entry, a short's above, so the sizing denominator and the flip-clear are side-aware.
+    bool public perpStopLong;
 
     // ------------------------------------------------------------------ async intent
     enum IntentKind {
@@ -140,6 +153,7 @@ abstract contract B4VaultStorage {
     );
     event FeePaid(address operator, uint256 operatorValueWad, address referrer);
     event ExitInitiated(uint256 shareWad);
+    event ExitCancelled(uint256 shareWad);
     event ExitFinalized(
         uint256 shareWad, uint256 grossWad, uint256 ownerWad, uint256 penaltyWad, bool free
     );
@@ -153,7 +167,6 @@ abstract contract B4VaultStorage {
     error AlreadyInitialized();
     error OnlyOwner();
     error OnlyFactory();
-    error DepositWindowClosed();
     error ZeroDeposit();
     error BadPolicy();
     error BadRoute();
@@ -171,6 +184,9 @@ abstract contract B4VaultStorage {
     error TooEarly();
     error NothingToRecover();
     error Reentrancy();
+    /// A directional price of 0 is never a valid valuation or cost basis: it would book
+    /// principal at zero, or value a whole NAV at zero (audit C-1/H-3).
+    error ZeroPrice();
 
     modifier onlyOwner() {
         if (msg.sender != owner) revert OnlyOwner();

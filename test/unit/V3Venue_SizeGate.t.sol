@@ -4,6 +4,7 @@ pragma solidity 0.8.28;
 import {VaultTestBase} from "../utils/VaultTestBase.sol";
 import {B4Vault} from "src/core/B4Vault.sol";
 import {B4VaultOps} from "src/core/B4VaultOps.sol";
+import {B4VaultRecovery} from "src/core/B4VaultRecovery.sol";
 import {Keeper} from "src/periphery/Keeper.sol";
 
 /// @notice V3-VENUE-3 fix: an ENFORCED EIP-170 gate. `forge build --sizes` is informational
@@ -35,7 +36,7 @@ contract V3VenueSizeGateTest is VaultTestBase {
     /// Every deployed protocol contract fits under EIP-170.
     function test_V3VENUE3_all_contracts_under_eip170() public {
         // Fresh B4Vault implementation (the factory's impl is created the same way).
-        B4Vault vaultImpl = new B4Vault(address(new B4VaultOps()));
+        B4Vault vaultImpl = new B4Vault(address(new B4VaultOps()), address(new B4VaultRecovery()));
         Keeper keeper = new Keeper();
 
         _assertFits("B4Vault", address(vaultImpl));
@@ -49,7 +50,7 @@ contract V3VenueSizeGateTest is VaultTestBase {
     /// B4Vault is the tight one: enforce a minimum EIP-170 margin so a creeping addition
     /// trips a test (with a clear remedy) well before it bricks a real deployment.
     function test_V3VENUE3_vault_keeps_min_margin() public {
-        B4Vault vaultImpl = new B4Vault(address(new B4VaultOps()));
+        B4Vault vaultImpl = new B4Vault(address(new B4VaultOps()), address(new B4VaultRecovery()));
         uint256 sz = address(vaultImpl).code.length;
         assertLe(
             sz,

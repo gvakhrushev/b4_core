@@ -9,6 +9,7 @@ import {B4Factory} from "src/core/B4Factory.sol";
 import {B4Pool} from "src/core/B4Pool.sol";
 import {B4Vault} from "src/core/B4Vault.sol";
 import {B4VaultOps} from "src/core/B4VaultOps.sol";
+import {B4VaultRecovery} from "src/core/B4VaultRecovery.sol";
 import {B4VaultStorage} from "src/core/B4VaultStorage.sol";
 import {Calendar} from "src/libraries/Calendar.sol";
 import {CoreTypes} from "src/venue/CoreTypes.sol";
@@ -61,10 +62,11 @@ contract BacktestRealTest is VenueTestBase {
         vm.warp(HALVING_TS[0]); // rewind so the fresh pool's lastPointTime starts at halving 0
         endpoint = new MockLzEndpoint();
         oracle = new HalvingOracle(
-            address(endpoint), SRC_EID, SRC_SENDER, HALVING_HEIGHT[0], HALVING_TS[0], address(this)
+            address(endpoint), SRC_EID, SRC_SENDER, HALVING_HEIGHT[0], address(this)
         );
-        address impl = address(new B4Vault(address(new B4VaultOps())));
-        factory = new B4Factory(address(oracle), usdcDescriptor(), impl);
+        _acceptHalving(HALVING_HEIGHT[0], HALVING_TS[0]);
+        address impl = address(new B4Vault(address(new B4VaultOps()), address(new B4VaultRecovery())));
+        factory = new B4Factory(address(oracle), usdcDescriptor(), impl, address(poolDeployer));
         CoreTypes.AssetDescriptor[] memory dirs = new CoreTypes.AssetDescriptor[](1);
         dirs[0] = ubtcDescriptor();
         pool = B4Pool(factory.createPool(dirs));

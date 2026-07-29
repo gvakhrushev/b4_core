@@ -26,6 +26,12 @@ contract ProtocolHandler is VaultTestBase {
     bool public policyMovedFunds;
     bool public reconcileHealFailed;
     bool public poolAdvanceReverted; // invariant 18 / H3: advance() is a permissionless step
+    /// V8-L-7 structural ghost: set when a HELD structural position's venue-computed
+    /// liquidation sits CLOSER to the entry than the frozen stop by more than ±1 lot.
+    /// One-sided by design — liquidation DEEPER than the stop is the documented safe
+    /// direction (mid-ramp parked margin V8-I-1; venue-maxLev clamp), never a violation.
+    bool public liqOffStop;
+    uint256 public liqPinChecks; // exercise counter: the ghost ran on a held position
     uint256 public totalWdDrainedA; // adversarial venue-loss ghost (1e6)
     int256 public vBGrowthSnap;
     int256 public vBFallSnap;
@@ -49,7 +55,22 @@ contract ProtocolHandler is VaultTestBase {
         return oracle.timeSinceHalving();
     }
 
+    /// @dev The venue does not hold an EMITTED action across an hour of wall clock: on a
+    ///      funded network a CoreWriter action is consumed within a block or two, and a
+    ///      permanent non-execution is an ecosystem-wide failure modeled separately and
+    ///      explicitly by `setDropNext` (HAZARDS A7/A8). Every warp here crosses
+    ///      RESEND_TIMEOUT, so the queue is drained first. Without this the campaign would
+    ///      model an action that sits unexecuted for HOURS and then executes — the union of
+    ///      "delayed" and "dropped", which is outside the documented venue model and which
+    ///      the engine's spot-IOC clear-on-timeout is explicitly not written against. The
+    ///      HAZARDS-A window itself is untouched: it is about CRANKS observing a not-yet-
+    ///      effected action, and `advVenueMode` + `advPump` still explore that freely.
+    function _venueDrainsBeforeTime() internal {
+        hub.executeActions(); // dropped actions stay dropped
+    }
+
     function warp(uint32 dt) external {
+        _venueDrainsBeforeTime();
         vm.warp(block.timestamp + bound(uint256(dt), 1 hours, 30 days));
     }
 
@@ -60,6 +81,7 @@ contract ProtocolHandler is VaultTestBase {
     /// campaign actually crosses transitions; subsequent crank/settle handlers then exercise
     /// the fall short, the B4 USDC rotation and the settlement/claim path.
     function warpPivot(uint8 sel) external {
+        _venueDrainsBeforeTime();
         uint256 t = oracle.timeSinceHalving();
         uint256[6] memory marks = [
             Calendar.P - Calendar.H - 1, // ClosingGrowth (growth→fall transition)
@@ -73,20 +95,54 @@ contract ProtocolHandler is VaultTestBase {
         if (target > t) vm.warp(block.timestamp + (target - t)); // advance only
     }
 
+    /// Audit-2026-07-25 blind spot 3: the old clamp to [20k, 500k] made a ZERO price
+    /// unreachable, so the entire H-2/H-3 dead-feed class — a held structural perp re-sized
+    /// by the flat-φ rule, a cost basis or an exit NAV booked against a zero read — could not
+    /// be explored by ANY bounded run. Zero (and both extremes) are now first-class lanes,
+    /// including the recovery direction: a feed that dies and then comes back.
     function movePrice(uint16 seed) external {
-        // px ∈ [20k, 500k], multiplicative steps of ±20%.
-        uint64 px = hub.spotPxOf(SPOT_MKT);
-        uint64 next = uint64(bound(uint256(seed), 80, 120)) * px / 100;
-        next = uint64(bound(uint256(next), 20_000e4, 500_000e4));
+        uint256 s = uint256(seed);
+        uint64 next;
+        uint256 lane = s % 32;
+        if (lane < 2) {
+            next = 0; // dead spot feed
+        } else if (lane == 2) {
+            next = 1; // one raw unit
+        } else if (lane == 3) {
+            next = 10_000_000e4;
+        } else {
+            uint64 px = hub.spotPxOf(SPOT_MKT);
+            if (px == 0) px = SPOT_PX; // the feed returns
+            uint256 nxt = uint256(px) * (80 + (s % 41)) / 100; // multiplicative +/-20%
+            if (nxt < 20_000e4) nxt = 20_000e4;
+            if (nxt > 500_000e4) nxt = 500_000e4;
+            next = uint64(nxt);
+        }
         hub.setSpotPx(SPOT_MKT, next);
         hub.setMarkPx(PERP_MKT, next / 100); // keep conventions aligned (4→2 decimals)
         hub.setOraclePx(PERP_MKT, next / 100);
+    }
+
+    /// Blind spot 2: `VenueTestBase` leaves the venue fully synchronous, which collapses to
+    /// ZERO the emitted-but-unexecuted window that all of HAZARDS class A defends — no
+    /// resend gate, no completion complement and no debit-then-deliver window (A7) was ever
+    /// entered. Fuzzing the three flags independently opens it.
+    function advVenueMode(uint8 m) external {
+        hub.setAuto(m & 1 != 0, m & 2 != 0, m & 4 != 0);
+    }
+
+    /// The venue eventually gets around to it — in an arbitrary, adversarial order.
+    function advPump(uint8 sel) external {
+        if (sel & 1 != 0) hub.applyCredits();
+        if (sel & 2 != 0) hub.executeActions();
+        if (sel & 4 != 0) hub.deliverEvm();
     }
 
     // ------------------------------------------------------------------ cranks
 
     function crankA(uint8 n) external {
         _crank(vA, n);
+        _checkLiqPin();
     }
 
     function crankB(uint8 n) external {
@@ -115,7 +171,6 @@ contract ProtocolHandler is VaultTestBase {
 
     function deposit(uint64 dirAmt, uint64 usdcAmt) external {
         uint256 t = oracle.timeSinceHalving();
-        if (!Calendar.depositOpen(t)) return;
         if (vA.exitShareWad() != 0) return;
         uint256 d = bound(uint256(dirAmt), 1e6, 1e8);
         uint256 u = bound(uint256(usdcAmt), 1e6, 10_000e6);
@@ -274,6 +329,37 @@ contract ProtocolHandler is VaultTestBase {
         (int64 szi,,) = hub.positions(who, PERP_MKT);
         return szi;
     }
+
+    /// V8-L-7 ghost check: on every HELD structural position (idle engine, live szi, frozen
+    /// stop) the venue-computed liquidation must equal the frozen stop ±1 lot — long
+    /// (entryNtl − margin)/szi, short (entryNtl + margin)/|szi| (isolated, ignoring
+    /// maintenance; spec §6). The ±1-lot tolerance (one lot of size granularity, in price
+    /// terms ≈ liq/|szi|) absorbs lot flooring; the check is one-sided because liquidation
+    /// DEEPER than the stop is the safe, documented direction (mid-ramp parked margin
+    /// V8-I-1, venue-maxLev clamp, reduce/exit parking) — only a liquidation CLOSER to the
+    /// entry than the stop is an over-leverage violation.
+    function _checkLiqPin() internal {
+        if (intentKindOf(vA) != B4VaultStorage.IntentKind.None) return; // mid-intent: partial
+        (int64 szi, uint64 entryNtl,) = hub.positions(address(vA), PERP_MKT);
+        if (szi == 0) return;
+        uint256 stop = vA.perpStopWad();
+        if (stop == 0) return; // no structural stop frozen (non-structural/harness state)
+        bool long_ = szi > 0;
+        if (long_ != vA.perpStopLong()) return; // side disagrees mid-transition: re-derives next
+        liqPinChecks++;
+        uint256 margin6 = vA.perpMargin6();
+        uint256 absSzi = long_ ? uint256(uint64(szi)) : uint256(uint64(-szi));
+        uint256 num = long_
+            ? (uint256(entryNtl) > margin6 ? uint256(entryNtl) - margin6 : 0)
+            : uint256(entryNtl) + margin6;
+        uint256 liq = num * 1e4 * 1e18 / (absSzi * 1e6);
+        uint256 tol = liq / absSzi + 1; // one lot of liquidation-price granularity
+        if (long_) {
+            if (liq > stop + tol) liqOffStop = true; // long liq ABOVE the stop: closer to entry
+        } else {
+            if (liq + tol < stop) liqOffStop = true; // short liq BELOW the stop: closer to entry
+        }
+    }
 }
 
 contract ProtocolInvariantTest is VaultTestBase {
@@ -366,6 +452,14 @@ contract ProtocolInvariantTest is VaultTestBase {
         assertFalse(handler.reconcileHealFailed());
     }
 
+    /// V8-L-7 (via handler ghost): on every HELD structural position the venue-computed
+    /// liquidation equals the frozen stop ±1 lot — never CLOSER to the entry (the
+    /// over-leverage direction). Liquidation deeper than the stop is the documented safe
+    /// side (mid-ramp parked margin V8-I-1, venue-maxLev clamp) and is not flagged.
+    function invariant_liq_pinned_to_frozen_stop() public view {
+        assertFalse(handler.liqOffStop());
+    }
+
     /// Invariants 15/16: the fee route never changes after creation; an owner's second
     /// vault keeps its own stored policy untouched by the first vault's activity.
     function invariant_config_immutable() public view {
@@ -374,6 +468,47 @@ contract ProtocolInvariantTest is VaultTestBase {
         assertEq(bps, handler.routeBpsSnap());
         assertEq(handler.vB().growthTarget(), handler.vBGrowthSnap());
         assertEq(handler.vB().fallTarget(), handler.vBFallSnap());
+    }
+
+    /// Blind spot 4: no invariant read `weightOf` or `totalWeight`, so the accounting layer
+    /// audit C-1 attacked was unasserted here. The pool's weight ledger is CLOSED — its
+    /// `totalWeight` is exactly the sum of the registered reporters' weights, with no third
+    /// party and no residue left by a `forfeitWeight` — and no interval can ever hand out
+    /// more than it materialized. Because `claimFor` computes nominal = bucket·w/totalWeight
+    /// AT CLAIM TIME, the first identity is what bounds the sum of nominal claims by the
+    /// bucket independently of the per-claim `remaining` clamp.
+    function invariant_weight_ledger_is_closed() public view {
+        uint256 n = pool.intervalCount();
+        for (uint256 id = 0; id < n; id++) {
+            (,,, uint256 total) = pool.intervalInfo(id);
+            assertEq(
+                pool.weightOf(id, address(handler.vA())) + pool.weightOf(id, address(handler.vB())),
+                total,
+                "totalWeight != sum of reported participant weights"
+            );
+            for (uint256 i = 0; i < 2; i++) {
+                assertLe(
+                    pool.remainingOf(id, i), pool.bucketOf(id, i), "claims exceeded the bucket"
+                );
+            }
+        }
+    }
+
+    /// D2/D4 conservation: recorded liability is EXACTLY the claim inventory that still has a
+    /// drain path — accruing plus every interval's unclaimed remainder.
+    function invariant_liability_is_exactly_claim_inventory() public view {
+        uint256 n = pool.intervalCount();
+        for (uint256 i = 0; i < 2; i++) {
+            uint256 sum = pool.accruing(i);
+            for (uint256 id = 0; id < n; id++) {
+                sum += pool.remainingOf(id, i);
+            }
+            assertEq(
+                pool.liability(i == 0 ? address(usdc) : address(ubtc)),
+                sum,
+                "liability != claim inventory"
+            );
+        }
     }
 
     /// Invariant 18 / H3: the permissionless calendar-advance step never reverts. Unlike

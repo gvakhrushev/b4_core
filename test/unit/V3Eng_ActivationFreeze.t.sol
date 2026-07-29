@@ -26,12 +26,7 @@ contract V3EngActivationFreezeHarnessTest is VenueTestBase {
         vm.warp(1_713_571_767 + 100 days);
         setUpVenue();
         oracle = new HalvingOracle(
-            address(new MockLzEndpoint()),
-            1,
-            bytes32(uint256(1)),
-            840_000,
-            1_713_571_767,
-            address(this)
+            address(new MockLzEndpoint()), 1, bytes32(uint256(1)), 840_000, address(this)
         );
         h = new EngineHarness();
         h.setup(ubtcDescriptor(), usdcDescriptor(), address(oracle));

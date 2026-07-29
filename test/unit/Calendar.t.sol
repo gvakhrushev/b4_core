@@ -109,19 +109,6 @@ contract CalendarTest is Test {
         assertEq(p, -int256(Phi.INV_PHI));
     }
 
-    function test_deposit_windows() public pure {
-        // Closed exactly in the two 0→… sub-windows.
-        assertTrue(Calendar.depositOpen(0));
-        assertTrue(Calendar.depositOpen(Calendar.P - Calendar.H - 1));
-        assertFalse(Calendar.depositOpen(Calendar.P - Calendar.H)); // OpeningFall
-        assertFalse(Calendar.depositOpen(Calendar.P - 1));
-        assertTrue(Calendar.depositOpen(Calendar.P)); // Fall: open
-        assertTrue(Calendar.depositOpen(Calendar.T + Calendar.H - 1)); // ClosingFall: open
-        assertFalse(Calendar.depositOpen(Calendar.T + Calendar.H)); // OpeningGrowth
-        assertFalse(Calendar.depositOpen(Calendar.T + Calendar.W - 1));
-        assertTrue(Calendar.depositOpen(Calendar.T + Calendar.W));
-    }
-
     function test_free_exit_windows() public pure {
         // Post-fact window.
         assertTrue(Calendar.freeExit(0));

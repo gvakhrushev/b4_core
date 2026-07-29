@@ -9,16 +9,20 @@ import {CoreTypes} from "../venue/CoreTypes.sol";
 import {CoreWriterLib} from "../venue/CoreWriterLib.sol";
 import {IERC20} from "../interfaces/IERC20.sol";
 import {IHalvingOracle} from "../interfaces/IHalvingOracle.sol";
+import {IStrategy} from "../interfaces/IStrategy.sol";
+import {IB4PoolPolicy} from "../interfaces/IB4PoolPolicy.sol";
 
 interface IB4PoolVault {
     function reportWeight(uint256 id, uint256 weight) external;
+    function forfeitWeight(uint256 id) external;
     function reportDeadline(uint256 id) external view returns (uint256);
     function intervalInfo(uint256 id)
         external
         view
         returns (uint64 pointTime, uint64 lockedAt, bool swept, uint256 totalWeight);
     function lockedPxWad(uint256 id, uint256 assetIndex) external view returns (uint256);
-    function capture() external;
+    function capturePenalty() external;
+    function beginPenalty() external;
 }
 
 /// @title B4VaultOps — settle / exit-finalize / recovery module.
@@ -35,6 +39,29 @@ contract B4VaultOps is B4VaultEngine {
     modifier onlyInitialized() {
         if (!_initialized) revert NotDelegated();
         _;
+    }
+
+    // ================================================================= policy
+
+    /// @notice Read a strategy once, then bind its resolved targets.  A configured
+    ///         pool validates the exact canonical strategy pair, scale and direction of
+    ///         the product transition before any vault state changes.
+    function opsSelectPolicy(address strategy, uint256 scaleWad) external onlyInitialized {
+        (int256 g, int256 f) = IStrategy(strategy).targets();
+        if (!IB4PoolPolicy(pool).policyAllowedForVault(address(this), strategy, g, f, scaleWad)) {
+            revert BadPolicy();
+        }
+        if (scaleWad == 0 || scaleWad > Phi.MAX_SCALE) revert BadPolicy();
+        if (Phi.abs(g) > Phi.MAX_BASE_TARGET || Phi.abs(f) > Phi.MAX_BASE_TARGET) {
+            revert BadPolicy();
+        }
+        int256 rg = g * int256(scaleWad) / int256(Phi.WAD);
+        int256 rf = f * int256(scaleWad) / int256(Phi.WAD);
+        if (Phi.abs(rg) > Phi.PHI || Phi.abs(rf) > Phi.PHI) revert BadPolicy();
+        growthTarget = rg;
+        fallTarget = rf;
+        IB4PoolPolicy(pool).setVaultPolicy(IB4PoolPolicy(pool).policyIdForStrategy(strategy));
+        emit PolicySelected(strategy, rg, rf, scaleWad);
     }
 
     // ================================================================= settle
@@ -64,7 +91,20 @@ contract B4VaultOps is B4VaultEngine {
         }
         _reconcile();
 
-        uint256 pxWad = IB4PoolVault(pool).lockedPxWad(intervalId, _dirAssetIndex);
+        // Value the CURRENT composition at the CURRENT price (audit C-1). Valuing it at the
+        // interval's locked checkpoint price instead — a price up to 3 days old — was the
+        // defect: `_navWad` reads composition at call time, so every composition change
+        // inside the report window was measured against a stale reference and the gap read
+        // as interval profit no capital earned. The window is exactly when the calendar
+        // MANDATES a change (`Calendar.targetAt` is 0 at the point and ramps immediately
+        // after, so a flattening product sells and a spot product buys), and `deposit` and
+        // `crank` are both reachable there — so no deposit-side rule can close it: only a
+        // shared basis can. `_finalizeExit` already values at the live price (C2), so this
+        // also makes settle and exit agree; while they disagreed, the gap between them was
+        // itself harvestable. Entry ledger and the NAV it is subtracted from are now always
+        // taken on the same basis.
+        uint256 pxWad = _livePxWad();
+        if (pxWad == 0) revert ZeroPrice();
         // Idle ⇒ every in-flight leg has credited its bucket; NAV is exact.
         uint256 nav = _navWad(pxWad);
         uint256 e = entryLedgerWad;
@@ -143,16 +183,6 @@ contract B4VaultOps is B4VaultEngine {
         }
     }
 
-    /// @notice Retry a deferred payout — permissionless; pays only the recorded
-    ///         recipient (F2). Reverts if the transfer still fails (retryable).
-    function opsClaimDeferred(address recipient, address token) external onlyInitialized {
-        uint256 amount = deferredPayout[recipient][token];
-        if (amount == 0) revert NothingToRecover();
-        deferredPayout[recipient][token] = 0;
-        deferredPayoutTotal[token] -= amount;
-        token.safeTransfer(recipient, amount); // revert rolls the clearing back
-        emit DeferredPayoutClaimed(recipient, token, amount);
-    }
 
     // ================================================================= planners
 
@@ -193,8 +223,9 @@ contract B4VaultOps is B4VaultEngine {
             _startReturn(true, Purpose.Generic, coreDirWei);
             return true;
         }
-        _finalizeExit();
-        return true;
+        // Propagate: a deferred finalize must report NO progress, or the keeper's burst loop
+        // and every bounded crank loop spin forever on a step that changed nothing (A13/L-6).
+        return _finalizeExit();
     }
 
     // ================================================================= exit finalize
@@ -209,10 +240,23 @@ contract B4VaultOps is B4VaultEngine {
 
     /// @notice Final exit step, reached only after the perp is strictly flat, PnL is
     ///         harvested, loss reconciled and ALL Core principal returned (SPEC §9).
-    function _finalizeExit() internal {
+    /// @return done false ⇒ no progress this crank; the exit stays pending and retries.
+    function _finalizeExit() internal returns (bool done) {
         uint256 x = exitShareWad;
         if (x == 0) revert NoExitPending();
         uint256 pxWad = _livePxWad(); // live oracle valuation (decision C2)
+        // A zero read is not a valuation (audit H-3): `grossWad` would be 0, the whole
+        // in-kind payment block would be skipped, yet the exit share would be consumed and
+        // the entry ledger and reward base scaled by (1−x) — an exit that destroys the
+        // ledger and pays nothing. Defer instead. This is a no-progress RETURN, never a
+        // revert: `_planExitStep` runs under the permissionless crank, and reverting would
+        // take down every other step with it. Deferral only where the price actually
+        // matters — a vault holding no directional asset is valued exactly at px 0, so it
+        // must still be able to exit during a feed outage. `B4Vault.cancelExit` is the
+        // escape if the feed never returns — for a pool-OWNED sleeve (`owner == pool`)
+        // that escape is reached through `B4Pool.cancelSleeveExit`, which is gated on the
+        // exact complement of this deferral predicate (audit L-1 / INVARIANTS row 20).
+        if (pxWad == 0 && dirEvm + coreDirWei != 0) return false;
         uint256 nav = _navWad(pxWad);
         uint256 e = entryLedgerWad;
         uint256 profit = nav > e ? nav - e : 0;
@@ -248,26 +292,50 @@ contract B4VaultOps is B4VaultEngine {
         uint256 keep = Phi.WAD - x;
         entryLedgerWad = Phi.wmul(e, keep);
         rewardBaseWad = Phi.wmul(rewardBaseWad + Phi.wmul(clientShare, x), keep);
+        // A full exit (`keep == 0`) therefore zeroes the standing base, as SPEC §9 requires.
+        // The call-ORDER asymmetry this used to leave — `settle` then `exit` kept the weight
+        // already reported to the pool, `exit` then `settle` never reported it — is closed on
+        // the POOL side just below, by forfeiting the reported weight, not by letting the base
+        // survive the exit: a vault that has left is a leaver, and the basket is funded by
+        // leavers for the benefit of stayers. Keeping a claim while holding no capital inverts
+        // that (AUDIT-2026-07-25 C-1 half B).
+        if (keep == 0 && lastSettledPlusOne != 0) {
+            IB4PoolVault(pool).forfeitWeight(lastSettledPlusOne - 1);
+        }
         exitShareWad = 0;
+        // The exit flattened the perp to szi 0; the frozen structural stop is stale. Clear it so
+        // the re-opened kept capital re-derives at the CURRENT price — the fan-out's confirmed
+        // CRITICAL (a free partial exit over-levering the re-open at the stale entry) is closed.
+        perpStopWad = 0;
 
         // Interactions: pay each accounted bucket's share in kind, then push the penalty
         // into the pool.
         if (s.grossWad > 0) {
+            // Snapshot the pool BEFORE pushing the penalty in, so its capturePenalty
+            // escrows the measured receipt of THIS exit rather than every unattributed
+            // token sitting there (audit H-1). try/catch for the same reason the capture
+            // below is wrapped: a pool-side failure must never freeze an exit.
+            if (s.poolWad > 0) {
+                try IB4PoolVault(pool).beginPenalty() {} catch {}
+            }
             dirEvm = _payBucket(_dir.evmToken, dirEvm, x, s);
             usdcRotatedEvm = _payBucket(_usdc.evmToken, usdcRotatedEvm, x, s);
             usdcMarginEvm = _payBucket(_usdc.evmToken, usdcMarginEvm, x, s);
             // Penalty tokens have already been transferred to the pool by _payBucket;
-            // capture() only ACCOUNTS them. try/catch so a griefing co-asset in the pool
+            // capturePenalty() only ACCOUNTS them. In a configured pool it routes the
+            // measured receipt to the exiting vault's immutable policy sleeve; legacy
+            // pools retain the original generic basket path. try/catch so a griefing co-asset in the pool
             // can never freeze this exit (V3-POOL-1) — the penalty is safe in the pool and
             // any keeper capture() re-accounts it later.
             if (s.poolWad > 0) {
-                try IB4PoolVault(pool).capture() {} catch {}
+                try IB4PoolVault(pool).capturePenalty() {} catch {}
             }
         }
 
         emit ExitFinalized(
             x, s.grossWad, s.ownerWad, s.grossWad - s.ownerWad - s.operatorWad, s.free
         );
+        return true;
     }
 
     /// @dev Pay one accounted bucket's share x, split in kind by value ratios; flooring
@@ -287,68 +355,4 @@ contract B4VaultOps is B4VaultEngine {
         return bucket - toOwner - toOperator - toPool;
     }
 
-    // ================================================================= recovery (B6)
-
-    /// @notice Recover unaccounted EVM assets to the owner. For the two accounted tokens
-    ///         this requires an idle engine (an in-flight return could otherwise be
-    ///         siphoned mid-delivery).
-    function opsRecoverEvm(address token) external onlyInitialized {
-        uint256 excess;
-        uint256 bal = IERC20(token).balanceOf(address(this));
-        // Deferred payouts are accounted value owed to their recipients — never
-        // recoverable as "unaccounted" surplus.
-        uint256 deferred = deferredPayoutTotal[token];
-        if (token == _dir.evmToken) {
-            _requireIdle();
-            excess = bal - Phi.min(dirEvm + deferred, bal);
-        } else if (token == _usdc.evmToken) {
-            _requireIdle();
-            uint256 accounted = usdcRotatedEvm + usdcMarginEvm + deferred;
-            excess = bal - Phi.min(accounted, bal);
-        } else {
-            excess = bal - Phi.min(deferred, bal);
-        }
-        if (excess == 0) revert NothingToRecover();
-        token.safeTransfer(owner, excess);
-        emit UnaccountedEvmRecovered(token, excess);
-    }
-
-    /// @notice Recover Core spot balance above recorded principal — bounded, flat/idle,
-    ///         no accounting callback (B6). Works with zero recorded principal.
-    function opsRecoverCoreSpot(bool dirToken) external onlyInitialized {
-        _requireIdleFlat();
-        CoreTypes.AssetDescriptor memory d = dirToken ? _dir : _usdc;
-        uint64 bal = _spotBal(d.coreToken);
-        uint64 recorded = dirToken ? coreDirWei : coreUsdcRotatedWei + coreUsdcMarginWei;
-        if (bal <= recorded) revert NothingToRecover();
-        _startRecoverySpot(
-            dirToken ? IntentKind.RecoverSpotDir : IntentKind.RecoverSpotUsdc, bal - recorded
-        );
-    }
-
-    /// @notice Recover perp withdrawable above (margin principal + any outstanding harvest
-    ///         claim) — two-phase perp→spot→EVM→owner. The pending harvest claim is a
-    ///         RECORDED intent to route realized perp PnL into the taxed strategy ledger
-    ///         (bearing the operator/referrer performance fee, decision C1). It must be
-    ///         reserved here: only genuine funding surplus above margin AND the claim is
-    ///         the owner's untaxed recoverable surplus. Reserving (not gating on)
-    ///         pendingHarvest6 preserves A5 — the planner still settles the claim normally.
-    function opsRecoverPerpSurplus() external onlyInitialized {
-        _requireIdleFlat();
-        _reconcile(); // honest surplus: losses written down first
-        uint64 wd = _wd();
-        uint256 reserved = uint256(perpMargin6) + pendingHarvest6;
-        if (wd <= reserved) revert NothingToRecover();
-        uint64 surplus6 = uint64(wd - reserved);
-        _snapshotBase(IntentKind.RecoverPerpPhase1, Purpose.Generic, surplus6);
-        intent.snapSrcWei = _spotBal(_usdc.coreToken);
-        CoreWriterLib.usdClassTransfer(surplus6, false);
-    }
-
-    function _requireIdleFlat() internal view {
-        _requireIdle();
-        if (exitShareWad != 0) revert ExitPending();
-        // Strict custody flatness: raw position exactly zero (A10), never an epsilon.
-        if (_position().szi != 0) revert NotFlat();
-    }
 }

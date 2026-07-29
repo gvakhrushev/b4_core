@@ -22,6 +22,15 @@ library SafeTransfer {
         }
     }
 
+    /// @notice Set an ERC-20 allowance, treating malformed return data exactly like the
+    ///         transfer helpers above.  Pool sleeves use a zero-reset followed by this
+    ///         helper, so their allowance exists only for the atomic measured deposit.
+    function safeApprove(address token, address spender, uint256 amount) internal {
+        if (!_call(token, abi.encodeWithSelector(0x095ea7b3, spender, amount))) {
+            revert TransferFailed();
+        }
+    }
+
     /// @notice Non-reverting variant for per-token retryable claims (HAZARDS D5) and
     ///         deferred payouts. NEVER reverts, whatever the token returns.
     function tryTransfer(address token, address to, uint256 amount) internal returns (bool) {

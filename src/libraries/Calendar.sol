@@ -69,10 +69,10 @@ library Calendar {
     enum Zone {
         Growth, // [0, P−W)
         ClosingGrowth, // [P−W, P−H): growth target → 0
-        OpeningFall, // [P−H, P): 0 → fall target (deposits closed)
+        OpeningFall, // [P−H, P): 0 → fall target
         Fall, // [P, T)
         ClosingFall, // [T, T+H): fall target → 0
-        OpeningGrowth, // [T+H, T+W): 0 → growth target (deposits closed)
+        OpeningGrowth, // [T+H, T+W): 0 → growth target
         TerminalGrowth // [T+W, next accepted fact)
     }
 
@@ -120,12 +120,6 @@ library Calendar {
     function decompose(int256 n) internal pure returns (int256 spot, int256 perp) {
         spot = (n >= 0 && n <= int256(Phi.WAD)) ? n : int256(0);
         perp = n - spot;
-    }
-
-    /// @notice Deposits are closed in the two 0→… sub-windows (SPECIFICATION §4).
-    function depositOpen(uint256 t) internal pure returns (bool) {
-        Zone z = zoneAt(t);
-        return z != Zone.OpeningFall && z != Zone.OpeningGrowth;
     }
 
     /// @notice Free exits cover all four transition zones plus a fixed window after each

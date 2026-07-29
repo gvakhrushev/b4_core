@@ -16,7 +16,7 @@ Everything time-dependent in B4 is a pure function of one number:
 t = block.timestamp − halvingTs
 ```
 
-`halvingTs` is the timestamp of the latest **accepted** Bitcoin halving fact held by `HalvingOracle` (published from Citrea by `src/citrea/HalvingProver.sol`, delivered over LayerZero). A vault reads it through `IHalvingOracle.timeSinceHalving()`. Facts delivered after deployment are bound to their 80-byte header — re-hashed and their timestamp re-derived on the receiving side, then stored in `factHash[height]`. The *initial* value is different: a deploy-time genesis anchor `(genesisHeight, genesisTs)` asserted by the deployer, checked only for non-zero, `height % 210000 == 0` and not-in-future, and carrying **no** header hash (`factHash` stays 0 for it). Verifying that anchor is a deployment-review item, not something the code proves.
+`halvingTs` is the timestamp of the latest **accepted** Bitcoin halving fact held by `HalvingOracle` (published from Citrea by `src/citrea/HalvingProver.sol`, delivered over LayerZero). A vault reads it through `IHalvingOracle.timeSinceHalving()`. The oracle deploys empty except for the immutable expected bootstrap height and path. Before any vault/pool use, the prover publishes that bootstrap header through the same authenticated LayerZero path as every later fact; the receiver re-hashes its 80-byte header, derives the timestamp, and stores `factHash[height]`. `timeSinceHalving()` reverts `NoHalvingFact()` until that proof arrives.
 
 No keeper, operator or vault owner can move the calendar: acceptance requires exactly `halvingHeight + 210000`, a strictly monotonic and non-future header timestamp, and there is no wall-clock window that could stall it. One residual administrative boundary exists pre-launch — `HalvingOracle.delegate` (and its `HalvingProver` counterpart): a temporary LayerZero configurator set at deployment that controls the messaging path's endpoint configuration until `renounceDelegate()` permanently removes it. It holds no power over funds, vaults, pools or targets, and cannot rewrite a fact already accepted (delivery is idempotent by height; a conflicting fact reverts). Its permanent removal is a pre-production requirement.
 
@@ -40,15 +40,15 @@ No keeper, operator or vault owner can move the calendar: acceptance requires ex
 |---|---|---|
 | `Growth` | `[0, P−W)` | growth target held |
 | `ClosingGrowth` | `[P−W, P−H)` | leaving the growth target |
-| `OpeningFall` | `[P−H, P)` | entering the fall target — **deposits closed** |
+| `OpeningFall` | `[P−H, P)` | entering the fall target |
 | `Fall` | `[P, T)` | fall target held |
 | `ClosingFall` | `[T, T+H)` | leaving the fall target |
-| `OpeningGrowth` | `[T+H, T+W)` | entering the growth target — **deposits closed** |
+| `OpeningGrowth` | `[T+H, T+W)` | entering the growth target |
 | `TerminalGrowth` | `[T+W, next accepted fact)` | growth target held indefinitely |
 
 `TerminalGrowth` is deliberate: the calendar **rests** in growth after `T+W` until the next real halving fact is accepted. Nothing requires the realized halving interval to match the nominal 1460 days, and no wall-clock window ever gates acceptance of a halving fact.
 
-`Calendar.depositOpen(t)` is false exactly in `OpeningFall` and `OpeningGrowth` — the two `0→…` sub-windows.
+Deposits are accepted throughout the cycle. Late entry uses the current interpolated target: at day 15 of either 20-day transition the target is 50%, and ordinary cranks add the remaining exposure by day 20.
 
 ### Interpolation: split at zero vs. direct
 
@@ -83,11 +83,12 @@ Around each point: a settlement-day price snapshot window (`SNAPSHOT_WINDOW = 24
 A single signed WAD number `n` describes the whole desired position. Execution decomposes it once:
 
 ```solidity
-/// spot = clamp(n, 0, 1); perp = n − spot
+/// unlevered long (0 ≤ n ≤ 1): spot = n, perp = 0
+/// leverage or short (|n| > 1 or n < 0): spot = 0, perp = n   (a pure, USDC-margined perp)
 function decompose(int256 n) internal pure returns (int256 spot, int256 perp)
 ```
 
-`spot` is the fraction of capital held as the directional token; `perp` is signed perpetual notional as a fraction of capital (negative = short). There is no third leg. Settlement currency is canonical linked USDC, valued at a fixed `1 USD`.
+`spot` is the fraction of capital held as the directional token; `perp` is signed perpetual notional as a fraction of capital (negative = short). A leveraged position is a **pure perp** (spot 0) so it self-funds from USDC margin — there is never spot held alongside perp margin (that doubles the directional exposure and pays funding on borrowed notional). There is no third leg. Settlement currency is canonical linked USDC, valued at a fixed `1 USD`.
 
 Worked values for the reference ladder at scale `k = 1`:
 
@@ -98,7 +99,7 @@ Worked values for the reference ladder at scale `k = 1`:
 | | | fall | `0` | `0` | `0` (all USDC) |
 | `StrategyPro` | `(1, −1)` | growth | `1` | `1` | `0` |
 | | | fall | `−1` | `0` | `−1` (full short) |
-| `StrategyProMax` | `(φ, −φ)` | growth | `1.618033988749894848` | `1` | `+0.618033988749894848` |
+| `StrategyProMax` | `(φ, −φ)` | growth | `1.618033988749894848` | `0` | `+1.618033988749894848` |
 | | | fall | `−1.618033988749894848` | `0` | `−1.618033988749894848` |
 
 Mid-transition example — `StrategyB4` (`fall = 0`, so the split-at-zero path applies) at `t = P − 15 days`, i.e. halfway through `ClosingGrowth`:
@@ -121,7 +122,7 @@ A leveraged position's liquidation is placed at a *structurally confirmed* price
 
 Positions are sized **once per regime and held** — the sizing price and its anchors are captured together and frozen; the calendar, not NAV drift, is the rebalance schedule. Verified on every completed cycle: the structural stop was never touched, while a flat-`φ` position is liquidated by the +99–103 % bear rallies (short) or the −64 % COVID crash (long).
 
-> **Status:** `StructuralLeverage` (both sides, unit-tested) and the low-side ratchet are on-chain; the engine sizing is flat-`φ` pending the §7b redo, whose requirements are bound by [`../AUDIT-2026-07-structural-leverage.md`](audits/AUDIT-2026-07-structural-leverage.md).
+> **Status:** shipped by **margin control** — `StructuralLeverage` (both sides), the low- and high-side ratchets, and the engine planner size a leveraged long or short so the venue's own liquidation sits at the structural stop; a single frozen stop, cleared at flip/exit/liquidation, keeps a held position from re-levering. State machine + acceptance numbers + the remaining interims (halving volume-add, growth-rise ratchet floor, per-slice DCA): [`../design/STRUCTURAL-STATE-MACHINE.md`](design/STRUCTURAL-STATE-MACHINE.md).
 
 ---
 
@@ -148,7 +149,11 @@ Consequences worth internalizing:
 
 - The core stores **no product names** — only two signed numbers. A strategy address is an input, not a dependency.
 - The hard cap is `|resolved| ≤ φ`. `StrategyProMax` already sits at `|φ|`, so **any** `scaleWad > 1e18` on ProMax reverts with `BadPolicy`. `StrategyPro` (`{1, −1}`) at `k = 1.5` resolves to `(1.5, −1.5)` — a `1.5×` long / `1.5×` short — accepted because `1.5 < φ ≈ 1.618`.
-- A later `selectPolicy` (or a scale change) **rebalances this same vault in place**. It is never an exit and never a penalty; the resulting trades are ordinary sync steps. It is rejected while an exit is pending (`ExitPending`).
+- In a legacy generic pool, a later `selectPolicy` (or scale change) **rebalances this same
+  vault in place**. In a strict Product Pool only its canonical scale-`1` products are valid:
+  aggregate `15` may move upward Mini → B4 → Pro → Pro Max, while a downgrade or an isolated
+  cross-product move requires an ordinary exit and new vault. All selection is rejected while
+  an exit is pending (`ExitPending`).
 
 ---
 
@@ -158,16 +163,16 @@ Two different objects. Do not conflate them.
 
 | | `B4Vault` | `B4Pool` |
 |---|---|---|
-| What | isolated custody container, one per user position (an EIP-1167 clone from `B4Factory`) | shared in-kind reward basket for the vaults registered to it |
+| What | isolated custody container, one per user position (an EIP-1167 clone from `B4Factory` or `B4ProductFactory`) | shared in-kind reward basket for the vaults registered to it; strict pools also own fixed product sleeves |
 | Custody | holds the owner's assets, one directional descriptor + the settlement descriptor | holds reward/penalty inventory, owes it to weights |
 | Authority | one fixed owner, one immutable fee route, no admin | no admin over funds; `registerVault` is factory-only and `reportWeight` is callable only by a registered vault. Creation is permissionless and **is not endorsement** |
 | Owner-only | `selectPolicy`, `deposit`, `initiateExit`, `recoverEvm`, `recoverCoreSpot`, `recoverPerpSurplus`, `emergencyClearRecovery` | — |
-| Permissionless | `crank`, `settle`, `claimDeferred` | `advance`, `lockPrices`, `claimFor`, `sweep`, `capture` |
+| Permissionless | `crank`, `settle`, `claimDeferred` | `advance`, `lockPrices`, `claimFor`, `sweep`, `capture`; strict pools also `foldPenalty`, `crankSleeve`, free-window `initiateSleeveExit` |
 | Views | `currentTarget()`, `navWad()`, `strategyValueWad()` | `intervalInfo`, `lockedPxWad`, `bucketOf`, `remainingOf` |
 
 The vault is split across three files purely for EIP-170 code size: `B4VaultStorage.sol` (shared storage base), `B4VaultEngine.sol` (the async intent engine), and `B4VaultOps.sol` (settle, the crank's plan-step dispatch and the exit machine, exit-finalize, deferred-payout retry and recovery bodies, reached by `delegatecall` through an address fixed at implementation deployment — code organization, **not** an upgrade path; `B4Factory` deploys nothing upgradeable and there is no proxy admin, no pause, and no privileged fund mover).
 
-Pool mechanics in one paragraph: a pool admits 1–8 directional descriptors (`MAX_DIRECTIONAL = 8`) plus the settlement descriptor at index 0, keyed on the **full descriptor hash** (not just the token address) — and additionally rejects any repeated `evmToken` or `coreToken` within the pool. `advance()` materializes the next passed settlement point; `lockPrices(id)` commits checkpoint prices **all-or-nothing**, only after every directional asset prices non-zero; each vault reports weight once per interval via `reportWeight`; `claimFor(id, vault)` pays the vault's fixed owner `nominal = B·w/W` **in kind**, pro rata, with no internal swap, and on shortfall scales by `balance/liability` in an order-independent way. Unclaimed inventory of an expired interval `sweep`s once into the accruing basket with liability unchanged. `capture()` folds any balance above liability into the accruing interval — a donation becomes pool inventory, never vault profit.
+Pool mechanics in one paragraph: a pool admits 1–8 directional descriptors (`MAX_DIRECTIONAL = 8`) plus the settlement descriptor at index 0, keyed on the **full descriptor hash** (not just the token address) — and additionally rejects any repeated `evmToken` or `coreToken` within the pool. `advance()` materializes the next passed settlement point; `lockPrices(id)` commits checkpoint prices **all-or-nothing**, only after every directional asset prices non-zero; each vault reports weight once per interval via `reportWeight`; `claimFor(id, vault)` pays the vault's fixed owner `nominal = B·w/W` **in kind**, pro rata, with no internal swap, and on shortfall scales by `balance/liability` in an order-independent way. Unclaimed inventory of an expired interval `sweep`s once into the accruing basket with liability unchanged. `capture()` folds a legacy penalty or donation into that basket. A strict product penalty is instead measured into product escrow, folds into the matching sleeve, and joins `accruing` only when that sleeve exits in a free window.
 
 ---
 
@@ -213,14 +218,14 @@ clientShare = virtualFee − operatorCut
 reportedWeight = priorRewardBase + clientShare
 ```
 
-`NAV` is `_navWad` — recorded strategy value + margin value, recorded amounts only — and `E` is the entry ledger. The **pricing basis differs by path**: at settlement `NAV` is taken at the interval's **locked checkpoint** price (`pool.lockedPxWad(intervalId, dirAssetIndex)`); at exit-finalize the same arithmetic runs at the **live** oracle price.
+`NAV` is `_navWad` — recorded strategy value + margin value, recorded amounts only — and `E` is the entry ledger. **One pricing basis on every path**: both settlement and exit-finalize value `NAV` at the **live** oracle price of the moment they run, so `NAV` and `E` are always taken on the same basis. Settlement used to use the interval's locked checkpoint price; because `_navWad` reads composition at call time, that let any composition change inside the report window — a deposit, or the rotation the calendar itself mandates there — be measured against a stale reference and read as profit no capital earned (AUDIT-2026-07-25 C-1). `lockedPxWad` is still recorded but no longer feeds any valuation.
 
 Only the **operator cut is physically paid**, in kind from the accounted EVM basket; Core principal must return through the verified machine first. This is enforced, not merely expected: `settle` reverts `FeeNotRepatriated` unless the accounted EVM basket covers the operator cut, so a vault whose value still sits on Core cannot settle at all until it repatriates (liveness, not custody). A referral is carved *out of* the operator cut, never added. The `clientShare` is not paid out here — it becomes **reward weight** in the shared pool, and is later claimed in kind via `claimFor`. One weight report per interval.
 
 **On exit** (`initiateExit(shareWad)`, `x ∈ (0,1]`, then driven by the live position through permissionless cranks): the perp is reduced to strictly zero, PnL is harvested under bound, realized loss is reconciled, all Core principal is returned — and only then are EVM assets paid.
 
 - Inside a free window (§1): `owner = gross − proportional operatorCut`, `Pool = 0`.
-- Outside: `penalty = gross · q`; `operator = min(proportional cut, penalty)`; `owner = gross − penalty`; `Pool = penalty − operator`. There is exactly **one** withholding — the operator payment is carved from it, never stacked on top. The pool's share arrives in kind (the vault transfers, then calls `capture()`), and is distributed in kind to recorded weight with no internal swap.
+- Outside: `penalty = gross · q`; `operator = min(proportional cut, penalty)`; `owner = gross − penalty`; `Pool = penalty − operator`. There is exactly **one** withholding — the operator payment is carved from it, never stacked on top. In a strict Product Pool the in-kind receipt follows matching `escrow → sleeve → free-window exit → accruing`; in a legacy pool it goes directly to `accruing`. Distribution remains in kind to recorded weight with no internal swap.
 - Ledgers scale rather than re-anchor: `nextEntry = E·(1−x)`, `nextRewardBase = (R + C·x)·(1−x)`, so each share's profit earns client share exactly once and repeated partial (including dust) exits cannot duplicate reward weight.
 
 A failed payout token transfer does not revert the rest — it is recorded and retried permissionlessly via `claimDeferred(recipient, token)`.

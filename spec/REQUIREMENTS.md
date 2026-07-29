@@ -26,22 +26,28 @@ mover.
 
 ## 2. Products and exposure
 
-Reference products at scale `1` (core derives `spot = clamp(target,0,1)`, `perp = target − spot`):
+Reference products at scale `1` (an unlevered long is spot; every short or leverage is a pure
+USDC-margined perp):
 
 | Product | Growth | Fall | Markets used |
 |---|---|---|---|
 | Mini | `1 spot` | `1 spot` | none after deposit |
 | B4 | `1 spot` | `1 USDC` | directional/USDC spot |
-| Pro | `1 spot` | `1 USDC − 1 perp` | spot + perp (separate margin) |
-| Pro Max | `1 spot + (L−1) perp` | `1 USDC − L perp` | spot + perp (separate margin); `L` structural per §7b (base `φ`) |
+| Pro | `1 spot` | `−1 perp` | spot in growth; pure USDC-margined perp short in fall |
+| Pro Max | `φ perp` | `−φ perp` | pure USDC-margined structural perp; base `φ` |
 
 - A **product is a `(growth, fall)` pair**; the core stores no product names. A strategy
   contract is read once at selection; later strategy mutation MUST NOT change stored targets
   unless the user re-selects.
 - A **scale** `k` multiplies both targets, bounded so `0 < k ≤ 10·WAD` and `|resolved| ≤ φ`,
   and the raw base target is bounded `|b| ≤ 10·WAD` before scaling.
-- Product/scale changes rebalance the **same** vault in place — no withdrawal, no exit
-  penalty, no replacement vault. Resulting trades are ordinary execution events.
+- In a legacy generic Pool, product/scale changes rebalance the **same** vault in place —
+  no withdrawal or exit penalty. A strict Product Pool accepts only the exact canonical
+  scale-`1` reference strategy bound at creation. Its only valid choices are one isolated
+  product (`Mini=1`, `B4=2`, `Pro=4`, `Pro Max=8`) or aggregate `15`; partial mixed masks
+  are not a product. Aggregate `15` permits only an equal-or-higher product in place; any
+  downgrade, and every cross-product change in an isolated pool, requires the ordinary exit
+  and a new vault.
 - The interface MUST display resolved numeric targets, not rely on product names.
 
 ## 3. Vault and pool structure
@@ -57,6 +63,14 @@ Reference products at scale `1` (core derives `spot = clamp(target,0,1)`, `perp 
     it never deposited — MUST be disclosed before creation).
 - Separate Pools share no balances, weights, or liabilities. Multiple vaults of one owner are
   independent accounting/execution domains even in the same Pool with the same descriptor.
+- `B4ProductFactory` may create the four isolated product masks (`1/2/4/8`) or aggregate
+  mask `15`. In a strict pool, each non-free penalty is measured and retained in
+  `(product, directional asset, token)` escrow for settlement + the vault's own directional
+  token. A different whitelisted token at the pool is ordinary donation inventory. Only the matching pool-owned sleeve may
+  receive it; that sleeve has the same canonical strategy, live price and confirmed structural
+  anchors as a vault opened at the fold. It may return capital to common claimable inventory
+  only after a full free-window sleeve exit. While it trades, neither it nor a different
+  product's sleeve changes ordinary claimant liability.
 
 ## 4. Commercial model (fee routes)
 
@@ -73,33 +87,43 @@ Reference products at scale `1` (core derives `spot = clamp(target,0,1)`, `perp 
 
 ## 5. Lifecycle (business processes)
 
-1. **Create Pool** — creator fixes the asset whitelist (validated: valid market identities,
-   correct decimals, no duplicate token, settlement excluded from directional).
+1. **Create Pool** — after the oracle has accepted its proof-backed bootstrap fact, the creator
+   fixes the asset whitelist (validated: valid market identities, correct decimals, no duplicate
+   token, settlement excluded from directional). Both factory paths reject pool creation while
+   `halvingHeight() == 0`.
 2. **Create vault** — operator proposes Pool/descriptor/policy/scale/slippage/route; user
    reviews and signs. Creation atomically binds owner, Pool, an isolated execution identity,
    stored targets, and the immutable route.
-3. **Deposit** — directional capital and/or USDC margin; accepted only in open windows;
-   accounted from the actual received delta; adds current value to the interval entry ledger.
+3. **Deposit** — directional capital and/or USDC margin; accepted throughout the cycle;
+   accounted from the actual received delta; a late entry joins the current interpolated target
+   and reaches the full target at the end of the 20-day transition.
 4. **Sync exposure** — permissionless crank drives spot/perp toward the time-derived target
    in one asynchronous step at a time (rotate spot, allocate/return margin, open/reduce perp,
    harvest). Keepers call again after each step verifies.
-5. **Settle** — at each interval settlement point, checkpoint prices are locked (permissionless,
-   within the settlement-day window), realized profit is measured against entry, the performance fee
-   is split, and reward weight is reported to the Pool.
+5. **Settle** — at each interval settlement point the interval opens for reporting
+   (permissionless, within the settlement-day window), profit is measured against entry **on a
+   single price basis** — the vault is valued at the moment settlement is performed, never
+   against a price fixed earlier — the performance fee is split, and reward weight is reported
+   to the Pool. Deposits stay open throughout, including during the settlement window: a
+   deposit contributes to profit exactly its own P&L over its own holding period, so it can
+   neither create nor destroy weight it did not earn.
 6. **Distribute** — permissionless; profitable participants receive Pool inventory pro rata,
    in kind, paid to the fixed owner.
 7. **Exit** — full or partial; flattens any perp to a strictly flat account, harvests bounded
    PnL, reconciles realized Core loss, returns Core principal, then pays the requested EVM
-   share; a non-free exit withholds one in-kind penalty.
+   share; a non-free exit withholds one in-kind penalty. In a strict Product Pool that measured
+   penalty follows `escrow → matching sleeve → free-window sleeve exit → accruing → claim`, not
+   an immediate depositor-proportional distribution.
 8. **Recover** — owner may recover unaccounted EVM assets, bounded Core spot surplus, and
    bounded perp surplus above principal, each while idle/flat, with no accounting callback.
 
 ## 6. Windows and timing
 
-- Deposits are closed during the two `OpeningFall`/`OpeningGrowth` (`0→…`) transition
-  sub-windows.
+- Deposits are accepted throughout both 20-day transitions. Day 15 means 50% of the new side;
+  day 20 means the full stored target.
 - Free exits (no penalty) cover all four transition zones and a fixed window after each
-  accepted halving fact.
+  accepted halving fact. The latter is exactly 20 days, so an exit there cannot simultaneously
+  create a penalty sleeve.
 - Checkpoint prices MUST be locked within a settlement-day (24h) snapshot window at each settlement
   boundary; missing it makes the interval unreportable (liveness, not custody loss).
 
@@ -109,5 +133,7 @@ Before creation or policy change, the interface MUST show: exact Pool and descri
 single/multi-asset and the full reward-token set; the unverified token↔perpetual association;
 policy, scale, and current time-derived target; expected Close trades; required separate USDC
 margin; the full fee route; whether capital tops up an existing route or creates a new vault;
-the fixed `USDC = 1 USD` assumption; and all bridge/swap transactions before signature.
+the fixed `USDC = 1 USD` assumption; and all bridge/swap transactions before signature. For a
+strict pool it MUST also show its isolated/aggregate choice, allowed upgrade direction, and that
+live sleeve capital is not claimable until a free-window sleeve exit.
 Interfaces MUST NOT present the mechanical Close profile as tax advice.

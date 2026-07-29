@@ -17,12 +17,13 @@ contract HalvingOracle is ILayerZeroReceiver {
     ILayerZeroEndpointV2 public immutable endpoint;
     uint32 public immutable srcEid;
     bytes32 public immutable srcSender;
+    uint256 public immutable bootstrapHeight;
 
     uint256 public halvingHeight;
     uint256 public halvingTs;
-    /// Number of accepted facts since the deploy-time genesis anchor.
+    /// Number of accepted facts after bootstrap (the bootstrap fact itself is epoch 0).
     uint256 public epoch;
-    /// height ⇒ accepted header hash (0 for the genesis anchor, which carries no header).
+    /// height ⇒ accepted header hash, including the proven bootstrap fact.
     mapping(uint256 => bytes32) public factHash;
 
     /// One temporary LayerZero configurator; MUST be permanently removed before
@@ -42,7 +43,7 @@ contract HalvingOracle is ILayerZeroReceiver {
     error NonMonotonicTimestamp();
     error FutureTimestamp();
     error ConflictingFact();
-    error BadGenesis();
+    error NoHalvingFact();
     error OnlyDelegate();
     error AlreadyRenounced();
 
@@ -50,22 +51,16 @@ contract HalvingOracle is ILayerZeroReceiver {
         address endpoint_,
         uint32 srcEid_,
         bytes32 srcSender_,
-        uint256 genesisHeight,
-        uint256 genesisTs,
+        uint256 bootstrapHeight_,
         address delegate_
     ) {
-        if (
-            genesisHeight == 0 || genesisHeight % BtcHeader.HALVING_PERIOD != 0 || genesisTs == 0
-                || genesisTs > block.timestamp
-        ) revert BadGenesis();
+        if (bootstrapHeight_ == 0 || bootstrapHeight_ % BtcHeader.HALVING_PERIOD != 0) revert BadHeight();
         endpoint = ILayerZeroEndpointV2(endpoint_);
         srcEid = srcEid_;
         srcSender = srcSender_;
-        halvingHeight = genesisHeight;
-        halvingTs = genesisTs;
+        bootstrapHeight = bootstrapHeight_;
         delegate = delegate_;
         ILayerZeroEndpointV2(endpoint_).setDelegate(delegate_);
-        emit HalvingAccepted(0, genesisHeight, genesisTs, bytes32(0));
     }
 
     /// @inheritdoc ILayerZeroReceiver
@@ -89,7 +84,20 @@ contract HalvingOracle is ILayerZeroReceiver {
         uint256 ts = BtcHeader.timestamp(headerMem);
 
         if (height == 0 || height % BtcHeader.HALVING_PERIOD != 0) revert BadHeight();
+        if (ts == 0) revert NonMonotonicTimestamp();
+        if (ts > block.timestamp) revert FutureTimestamp();
 
+        if (halvingHeight == 0) {
+            // Bootstrap is not a special trusted constructor path: the first fact is
+            // proven and delivered through exactly the same immutable LayerZero route
+            // as every later halving. It establishes epoch 0.
+            if (height != bootstrapHeight) revert NotNextHeight();
+            halvingHeight = height;
+            halvingTs = ts;
+            factHash[height] = headerHash;
+            emit HalvingAccepted(0, height, ts, headerHash);
+            return;
+        }
         if (height <= halvingHeight) {
             // Idempotent by height: an exact re-delivery is a no-op; a conflict reverts.
             if (factHash[height] != headerHash) revert ConflictingFact();
@@ -97,7 +105,6 @@ contract HalvingOracle is ILayerZeroReceiver {
         }
         if (height != halvingHeight + BtcHeader.HALVING_PERIOD) revert NotNextHeight();
         if (ts <= halvingTs) revert NonMonotonicTimestamp();
-        if (ts > block.timestamp) revert FutureTimestamp();
         // E1: no wall-clock interval window — the height is the fact, not the calendar.
 
         halvingHeight = height;
@@ -109,9 +116,11 @@ contract HalvingOracle is ILayerZeroReceiver {
         emit HalvingAccepted(epoch, height, ts, headerHash);
     }
 
-    /// @notice Time since the latest accepted fact. Never underflows: acceptance requires
-    ///         ts ≤ block.timestamp and time only moves forward (E4).
+    /// @notice Time since the latest accepted fact. Reverts until the proof-backed bootstrap
+    ///         fact arrives; afterward it never underflows because accepted timestamps are
+    ///         non-future and strictly monotonic (E4).
     function timeSinceHalving() external view returns (uint256) {
+        if (halvingHeight == 0) revert NoHalvingFact();
         return block.timestamp - halvingTs;
     }
 
