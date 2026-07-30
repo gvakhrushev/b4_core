@@ -353,7 +353,7 @@ a corroborating close 12,368; post-halving reseed 79,951 (the doc's path, still 
 worst case is now the **peak** reseed at 0.106M, and the budget holds at ~3.8×.
 
 **No change to the constant** — 400,000 is still right. Corrected the docstring to name the real
-worst path and number, and added `AuditA14_AnchorGasBudget.t.sol`, which fails at **half** the
+worst path and number, and added `GasBounds.t.sol`, which fails at **half** the
 budget rather than at the budget: a sample that merely *fits* leaves no room for the next slot, and
 the failure mode is silent. It also pins that the peak path is the dearest, so the doc cannot drift
 back.

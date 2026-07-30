@@ -20,7 +20,7 @@ interface IB4PoolDeployer {
 ///         actually carries the pool's bytecode — it made `B4Pool`'s own 8 KB of apparent
 ///         headroom unusable: every byte added to the pool overflowed the creator instead.
 ///         Four accepted audit fixes were blocked by that and by nothing else
-///         (`docs/audits/REMEDIATION-2026-07-25.md`).
+///         (`docs/audits/archive/REMEDIATION-2026-07-25.md`).
 ///
 ///         Holding the creation code once, here, gives the pool back its real headroom and
 ///         costs the factories a single external call.

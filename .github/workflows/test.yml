@@ -58,6 +58,14 @@ jobs:
       - name: Storage-layout guard (delegatecall modules)
         run: ./script/check-storage-layout.sh
 
+      # A reference to a test that does not exist reads as evidence, so it suppresses the very
+      # checking it appears to have had: Keeper.sol cited test/unit/GasBounds.t.sol as the source
+      # of all four of its gas budgets, three times, and the file had never existed. Same rot
+      # attacks INVARIANTS.md, whose whole value is the invariant -> test mapping, and the finding
+      # registry, whose promise is the test named in its last column.
+      - name: Citation integrity (live docs, traceability, registry)
+        run: ./script/check-citations.sh
+
       - name: Run Forge tests
         run: forge test -vvv
 

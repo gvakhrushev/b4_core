@@ -52,7 +52,7 @@ just the `0.618` excess.
 
 **Why it is the hard/risky part:** the engine WIRING (perp sized by `L`, margin = notional/`L`,
 re-sizing a HELD position) was implemented, audited, and **reverted** on C1/C4 "re-lever
-detonation" ([[structural-leverage-status]], `docs/audits/AUDIT-2026-07-structural-leverage.md`).
+detonation" ([[structural-leverage-status]], `docs/audits/archive/AUDIT-2026-07-structural-leverage.md`).
 Redo needs the diminishing-returns window cap (SPEC §7b caveat) and a post-implementation
 adversarial audit.
 

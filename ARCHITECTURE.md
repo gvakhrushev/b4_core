@@ -414,7 +414,7 @@ step never blocks the others.
   special-case correction, and the later Core credit is still capped at the sent amount
   (A11) so it can never double-count. Regression: `test_settle_requires_idle_then_no_phantom_profit`.
 
-## Discovery-report hardening (2026-07-18, see docs/audits/REPORT.md adjudication)
+## Discovery-report hardening (2026-07-18, see docs/audits/archive/REPORT.md adjudication)
 
 - **Settle requires an idle engine; reconcile only ever runs at idle.** `opsSettle`
   irreversibly pays the operator fee in kind and reports pool weight, so it must value a
