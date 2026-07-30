@@ -332,9 +332,19 @@ src/
 test/         unit · integration · invariant campaigns · adversarial HyperCore mock
 script/       deployment wiring
 data/         BTC daily closes used by the historical demo
-spec/         the normative specification package
-docs/         guides
+spec/         the normative specification package — the SINGLE source of MUST/MUST NOT
+docs/         guides, plus the audit (docs/audits/) and design (docs/design/) record
 ```
+
+`spec/` is normative and `ARCHITECTURE.md` is normative for the implementation (`HAZARDS` G3);
+everything under `docs/` explains rather than binds. The specification began life as a
+standalone clean-room package one directory up, which for a while left a second, unversioned,
+byte-identical copy of all six documents beside the repository — two sets that could only drift
+apart, with only one of them the code was judged against. There is now one copy, here. The
+prompt the build was handed over on is kept as provenance at
+[`docs/design/CLEANROOM-HANDOFF.md`](docs/design/CLEANROOM-HANDOFF.md); it records *why* the code
+is shaped the way it is, chiefly that `spec/HAZARDS.md` is binding design input and not
+background reading.
 
 ## Security
 

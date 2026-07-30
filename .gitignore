@@ -28,3 +28,10 @@ slither-failhigh.txt
 
 # macOS
 .DS_Store
+
+# local tool state, not project configuration
+.claude/
+
+# security-scan output: a dated report directory, regenerated on demand and carrying its own
+# `.gitignore`. Named here too so deleting that inner file cannot sweep a report into a commit.
+CLAUDE-SECURITY-*/
