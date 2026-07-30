@@ -468,7 +468,10 @@ contract B4VaultOps is B4VaultEngine {
             // token sitting there (audit H-1). try/catch for the same reason the capture
             // below is wrapped: a pool-side failure must never freeze an exit.
             if (s.poolWad > 0) {
-                try IB4PoolVault(pool).beginPenalty() {} catch {}
+                try IB4PoolVault(pool).beginPenalty() {}
+                catch {
+                    emit PenaltyRoutingDegraded(false);
+                }
             }
             dirEvm = _payBucket(_dir.evmToken, dirEvm, x, s);
             usdcRotatedEvm = _payBucket(_usdc.evmToken, usdcRotatedEvm, x, s);
@@ -480,7 +483,10 @@ contract B4VaultOps is B4VaultEngine {
             // can never freeze this exit (V3-POOL-1) — the penalty is safe in the pool and
             // any keeper capture() re-accounts it later.
             if (s.poolWad > 0) {
-                try IB4PoolVault(pool).capturePenalty() {} catch {}
+                try IB4PoolVault(pool).capturePenalty() {}
+                catch {
+                    emit PenaltyRoutingDegraded(true);
+                }
             }
         }
 

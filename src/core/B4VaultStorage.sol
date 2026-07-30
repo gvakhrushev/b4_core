@@ -174,6 +174,17 @@ abstract contract B4VaultStorage {
     );
     event FeePaid(address operator, uint256 operatorValueWad, address referrer);
     event SettleNavSnapshotted(uint256 indexed intervalId, uint256 navWad, uint256 pxWad);
+    /// The exit paid its penalty to the pool, but the pool-side attribution call reverted and was
+    /// swallowed so the exit could not be frozen by it (H3/V3-POOL-1). `onCapture` distinguishes
+    /// which half failed: `beginPenalty` (false) or `capturePenalty` (true).
+    ///
+    /// Custody is unaffected — the tokens are in the pool and a later permissionless `capture()`
+    /// accounts them. What IS affected is ROUTING: in a strict Product Pool the penalty was owed
+    /// to its matching sleeve (D6/D7) and instead falls through to generic claim inventory, where
+    /// it is distributed by weight to whoever is claiming. That is a value movement with no other
+    /// on-chain trace, which HAZARDS G1 requires be observable rather than inferred by diffing
+    /// storage — and it is the ONLY signal that a pool-side guard silently downgraded the routing.
+    event PenaltyRoutingDegraded(bool onCapture);
     event ExitInitiated(uint256 shareWad);
     event ExitCancelled(uint256 shareWad);
     event ExitFinalized(

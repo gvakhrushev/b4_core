@@ -1,4 +1,4 @@
-# Remediation — 2026-07-30 (pre-mainnet closure pass: F3 + A1–A10)
+# Remediation — 2026-07-30 (pre-mainnet closure pass: F3 + A1–A11)
 
 Closes the one **unapplied** finding from AUDIT-2026-07-29 (F3 — a verified patch that had been
 written but never landed), plus the residuals still marked open/partial after that round and one
@@ -193,6 +193,41 @@ left alone: renumbering buys no safety and breaks every caller.
 
 **Verified, not assumed:** the accounting is correct. A Pro exit's penalty escrows
 234,887,637 USDC + 23,371,910 directional to the Pro sleeve under policy id 3 — D6/D7 hold.
+
+## A11 — a silently downgraded penalty routing is now observable (HAZARDS G1)
+
+**Severity: Low (observability of an accepted degradation). No custody impact; no code path
+changed. Found by reading the transient-snapshot path I had misdiagnosed in A10.**
+
+`_finalizeExit` wraps both pool-side penalty calls in `try/catch`, correctly: a pool-side failure
+must never freeze an exit (H3 / V3-POOL-1). But the catch was silent, and the two failures are not
+equivalent to no-ops:
+
+- `beginPenalty` failing leaves the transient snapshot unset, so `capturePenalty` measures
+  `received = 0` and escrows nothing;
+- `capturePenalty` failing escrows nothing directly.
+
+Either way the penalty tokens are already in the pool (transferred by `_payBucket`) and a later
+permissionless `capture()` accounts them — **custody is safe**, which is what the existing comment
+means by "the documented safe direction". What is NOT safe is the reading that nothing happened:
+in a strict Product Pool the penalty was owed to its **matching sleeve** (D6/D7) and instead falls
+through to generic claim inventory, distributed by weight to whoever is claiming. That is a real
+transfer of value between claim classes with no other on-chain trace.
+
+Reachability, stated precisely rather than assumed. `beginPenalty` can only revert `NotAVault`, and
+the caller is the vault itself, so it effectively cannot fail — the diversion is not reachable
+through that half. `capturePenalty` is `nonReentrant`, and `_entered` is one flag for the whole
+pool, so it reverts whenever the exit finalizes **inside** another pool `nonReentrant` call. The
+only untrusted callbacks a pool `nonReentrant` function makes are token transfers, so this needs a
+**callback-capable whitelisted co-asset** — the hostile-co-asset class this codebase already models
+(D5, V3-POOL-1). Whoever is claiming benefits, which is a real if narrow incentive.
+
+**Fix:** `PenaltyRoutingDegraded(bool onCapture)`, emitted from each catch. Behaviour is unchanged
+by design — the guard and the try/catch are both correct and stay. What changes is that the
+downgrade is detectable: HAZARDS **G1** binds this codebase to emit an event on every otherwise
+invisible value movement *"so keepers/users detect them without diffing storage"*, and this path
+was violating it. It is also the only signal distinguishing "no penalty was owed" from "a penalty
+was owed and silently went to the wrong claim class".
 
 ## A8 — `anchorConfirmed` no longer reports a confirmed peak that serves nothing
 
