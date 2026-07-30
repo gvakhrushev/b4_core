@@ -17,13 +17,21 @@ asserting a property nothing tested, is where the next finding tends to live.
 
 **Verification of this pass**
 
-- `forge test`: **487 passed, 0 failed** across 83 suites. `slither --fail-high` clean (168 informational, no high).
+- `forge test`: **488 passed, 0 failed** across 83 suites. `slither --fail-high` clean (168 informational, no high).
 - **Deep invariant campaign run** (`FOUNDRY_PROFILE=deep`, 512×256): 32 tests, 0 failed, 283 s. This is the project's strongest gate and it had not been run against any of this pass's changes until now.
 - Each was confirmed to **fail on the pre-fix tree** with the exact predicted failure mode, then
   pass after the fix (see the per-item "fail-before" note).
-- `forge build --sizes` on pinned solc 0.8.28: all contracts inside EIP-170. Tightest after this
-  pass: `B4Vault` 24,395 B (**181 B** headroom — improved from 141 B by moving `emergencyClearRecovery` into the recovery module), `B4VaultOps` 24,228 B (348 B). `forge fmt --check`
-  clean; storage-layout guard passes (33 slots).
+- `forge build --sizes` on pinned solc 0.8.28: all contracts inside EIP-170. Tightest at the close
+  of this pass: `B4Vault` 24,395 B (**181 B** headroom — improved from 141 B by moving
+  `emergencyClearRecovery` into the recovery module), `B4VaultOps` 24,359 B (217 B),
+  `B4Pool` 18,758 B (5,818 B). `forge fmt --check` clean; storage-layout guard passes (33 slots);
+  `slither --fail-high` clean; deep invariant campaign (512×256) green.
+
+  > Figures in this block are a **point-in-time record of this pass**, not a live claim — they
+  > date the way every number in a dated remediation does. The BINDING constraint is the test:
+  > `Eip170Sizes.t.sol` and `V3Venue_SizeGate` fail the build if any contract breaches the limit
+  > or `B4Vault` falls under its 128 B floor, and `GasBounds.t.sol` does the same for the keeper
+  > budgets. Trust those, not this paragraph.
 
 > **Headroom is the binding constraint on this codebase.** It reached 141 B mid-pass — 13 bytes
 > over the project's own 128 B floor (`V3Venue_SizeGate`) — which is why A5 went into `B4VaultOps`
@@ -287,7 +295,44 @@ handler turns any `xBps % 4 == 0` into a **full** exit — so a round number sil
 test at the case it was written to complement. It failed loudly (`kept == 0`) rather than passing
 as a duplicate, which is the only reason it was caught; the comment now names the trap in place.
 
-## A14 — the keeper's anchor gas budget is re-measured and pinned
+## A14 — every keeper gas budget is re-measured, corrected and pinned
+
+**No exploit. A load-bearing set of constants whose MEASURED justifications cited a test that
+NEVER EXISTED, plus three figures that had gone stale — one of them false. Found by sweeping
+`Keeper`, the one contract never touched or reviewed here, and then sweeping every numeric claim
+in `src/`.**
+
+`Keeper.sol` cited `test/unit/GasBounds.t.sol` as the source of its measurements **three times**,
+and the file does not exist in this tree or anywhere in git history. Four budgets rested on numbers
+nothing re-derived. A citation to a test that does not exist is worse than no citation: it reads as
+evidence, which is precisely why the staleness below went unnoticed.
+
+Corrected, each verified by measurement:
+
+| claim | was | is |
+|---|---|---|
+| worst `sampleAnchor` path | post-halving reseed, 0.09M | **peak-window reseed, 0.106M** (F2 added two `Anchor` slots) |
+| anchor sample cost, inline | "cheap (**<0.1M** each)" | 0.106M — the claim was **false** |
+| legacy-pool crank | "measures 1.57M" | "measured 1.57M **when this bound was sized**" |
+| `B4VaultOps` size (this doc) | 24,228 B / 348 B | 24,359 B / 217 B (A11 grew it) |
+
+**Written** `test/unit/GasBounds.t.sol`, so the citations now resolve and the numbers re-derive on
+every run. It asserts `ANCHOR_GAS` at **half** the budget — that call is gas-capped *and* its
+result is swallowed, so an overrun fails silently and what stops working is the ratchet's only
+honest competitor (L-2), visible only as anchors that never confirm a cycle later — and guards the
+calendar tail (measured 0.17M) at half its reserve. It also pins that the peak path is the dearest,
+so the docstring cannot drift back.
+
+**Scope stated in the file rather than implied:** the extreme-configuration figures (the 0.7M tail
+at MAX_DIRECTIONAL, the 17.0/30.0/35.1M sleeve-loop scaling) are sizing rationale and are now
+*labelled as such* in `Keeper.sol` instead of being presented as test-derived.
+
+**Systemic check, so this stops recurring:** every `*.t.sol` filename cited from `src/` and from
+the normative documents now resolves to a real file — verified mechanically, not by eye. And the
+size figures in this document are marked a point-in-time record, with the binding constraint named
+as the test that actually fails the build.
+
+## A14-note — the original anchor-only finding
 
 **No exploit. A stale MEASUREMENT behind a load-bearing constant, invalidated by this pass's own
 F2 change. Found by sweeping `Keeper` — the one contract never touched or reviewed here.**

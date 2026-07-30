@@ -16,12 +16,16 @@ contract Keeper {
     uint256 internal constant SWEEP_LOOKBACK = 16;
 
     /// Gas the bounded loops below leave untouched so the calendar/sweep/capture tail and
-    /// the `Cranked` receipt always run. MEASURED (test/unit/GasBounds.t.sol): that tail
-    /// costs ~0.7M at MAX_DIRECTIONAL with both settlement points pending and the full
-    /// 16-deep sweep window, so this is ~2x the worst observation.
+    /// the `Cranked` receipt always run. MEASURED: that tail costs ~0.7M at MAX_DIRECTIONAL with
+    /// both settlement points pending and the full 16-deep sweep window, so this is ~2x the worst
+    /// observation. That extreme figure is the sizing rationale and is recorded here rather than
+    /// reproduced; `test/unit/GasBounds.t.sol` guards the same path on a representative pool
+    /// (measured 0.17M) and fails at half this reserve, so the tail cannot silently grow an order
+    /// of magnitude.
     uint256 internal constant TAIL_RESERVE = 1_500_000;
 
-    /// Ceiling on ONE sleeve step. MEASURED (test/unit/GasBounds.t.sol): the heaviest
+    /// Ceiling on ONE sleeve step. MEASURED (extreme configuration; sizing rationale, not
+    /// reproduced by a test — see the scope note in `test/unit/GasBounds.t.sol`): the heaviest
     /// single step is a fold (approve/approve/deposit + a full sleeve crank) at 0.49M,
     /// then a sleeve crank at 0.51M and a sleeve-exit opening at 0.05M — so this is ~4x
     /// the worst observation. It is enforced by forwarding at most this much, which is
@@ -43,14 +47,15 @@ contract Keeper {
     /// looks: this call is gas-capped AND its result is swallowed, so an over-budget sample fails
     /// SILENTLY, and what stops working is the ratchet's only honest competitor (L-2) — visible
     /// only as anchors that never confirm, a cycle later.
-    /// Pinned by `AuditA14_AnchorGasBudget.t.sol`, which fails at HALF this budget so the next
-    /// slot added to `Anchor` is caught here rather than in production.
+    /// Pinned by `test/unit/GasBounds.t.sol`, which fails at HALF this budget so the next slot
+    /// added to `Anchor` is caught there rather than in production.
     ///
     /// Gating the anchor loop on the SLEEVE budget would defeat the reordering directly
     /// above it: a caller below `TAIL_RESERVE + STEP_GAS` = 3.5M would sample ZERO anchors
     /// rather than "as many as fit", which is the opposite of the F2 partial-progress rule
     /// every other bound here follows. That threshold is above HyperEVM's 2M small-block
-    /// limit, so on a legacy (mask 0) pool — whose whole crank measures 1.57M and needs no
+    /// limit, so on a legacy (mask 0) pool — whose whole crank measured 1.57M when this bound was
+    /// sized, and needs no
     /// sleeve budget at all — the L-2 competitor would become unreachable to any keeper
     /// that has not opted into big blocks. Sizing the gate to the step actually being
     /// forwarded keeps the reserve arithmetic identical and keeps sampling reachable.
@@ -82,7 +87,8 @@ contract Keeper {
         //
         // This runs FIRST, ahead of the sleeve loop, and on its own small `ANCHOR_GAS`
         // budget. Sampling moves no funds and only reads the venue price, so nothing
-        // downstream depends on the order; but it is cheap (<0.1M each), safety-critical
+        // downstream depends on the order; but it is cheap (0.106M worst case, measured and
+        // pinned by `test/unit/GasBounds.t.sol`), safety-critical
         // and time-sensitive (the density gate counts DAYS), and the sleeve loop below can
         // legitimately consume a whole block on a wide aggregate pool. Ordering it first
         // AND budgeting it separately is what stops the ratchet's only honest competitor
@@ -191,8 +197,8 @@ contract Keeper {
                 if ((mask & (uint8(1) << (policy - 1))) == 0) continue;
                 // Gas bound (F2). This body runs up to 4 × MAX_DIRECTIONAL = 32 times, and
                 // `maxSteps` multiplies INSIDE it — so a value that is perfectly sane for
-                // the caller's own vault list is not sane here. MEASURED (test/unit/
-                // GasBounds.t.sol) on an 8-directional aggregate pool with all 32 escrow
+                // the caller's own vault list is not sane here. MEASURED (extreme configuration;
+                // sizing rationale, not reproduced by a test) on an 8-directional aggregate pool with all 32 escrow
                 // slots funded, at a settlement point inside a free-exit window: 17.0M gas
                 // at maxSteps=0, 30.0M at 2, and 35.1M — ABOVE a 30M block — from
                 // maxSteps=4 up. Unbounded, that whole transaction reverts and NOTHING
