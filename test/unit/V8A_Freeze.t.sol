@@ -85,11 +85,28 @@ contract V8A_FreezeTest is VaultTestBase {
         assertEq(
             frozen, StructuralLeverage.shortStructStop(44_000e18, 0, 0), "S-win stop at live p"
         );
-        int64 szi0 = readPos(address(v)).szi;
-
-        // ATTACK: permissionless peak samples ratchet the running peak UP mid-hold.
+        // ATTACK: permissionless peak samples ratchet the running peak UP mid-hold. Since
+        // AUDIT-2026-07-29 the served level needs TWO distinct daily closes, so the attack takes
+        // two — which is the remedy working, not an obstacle to the property under test: once
+        // corroborated the peak HAS moved, and the held short must still ignore it.
+        //
+        // The first close is a candidate only. The second necessarily lands a day later, and in
+        // `OpeningFall` the target ramps with time, so the crank legitimately adds volume in
+        // between — the baseline is therefore taken AFTER that ramp has settled, which isolates
+        // the ratchet's effect from the calendar's and keeps the assertion exact.
         _setPx(48_000);
         pool.sampleAnchor(DIR);
+        (, uint256 candidateOnly,) = pool.peaks(DIR);
+        assertEq(candidateOnly, 45_000e18, "one close is a candidate, the anchor has not moved");
+
+        warpTo(Calendar.P - Calendar.H + 3 days);
+        _setPx(44_500);
+        crankUntilIdle(v, 40); // let the calendar ramp settle before measuring
+        int64 szi0 = readPos(address(v)).szi;
+        assertEq(v.perpStopWad(), frozen, "the ramp does not thaw the freeze either");
+
+        _setPx(48_000);
+        pool.sampleAnchor(DIR); // corroborating close: the peak really does move now
         (, uint256 peakC,) = pool.peaks(DIR);
         assertEq(peakC, 48_000e18, "running peak moved (and stays confirmed)");
         _setPx(44_500);

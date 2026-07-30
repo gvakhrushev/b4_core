@@ -164,7 +164,7 @@ rule covers both sides:
 |  | **Long (bottom)** | **Short (top)** |
 |---|---|---|
 | Anchors | `floor` = previous confirmed bottom; `cap` = most recent confirmed bottom | `prevPeak` = previous confirmed peak; `C` = this cycle's confirmed peak |
-| Confirmation window | 62-window `[T, T+W]` and post-halving `[halving, halving+W]` (min close) | the `W` days ending at the 38.2% pivot (max close) |
+| Confirmation window | 62-window `[T, T+W]` and post-halving `[halving, halving+W]` (min close) | the `W` days ending at the 38.2% pivot (max close, corroborated — see below) |
 | Sizing | `stop = min(p − (p − floor)/g, cap)` | window: `stop = p + (p − prevPeak)·(g−1)` (DCA slices); after the pivot: `MaxStop = C + (C − prevPeak)·(g−1)`, `stop = max(p + (MaxStop − p)·(g−1), C)` |
 | Leverage | `L = p/(p − stop)`, clamped by the venue max | `L = p/(stop − p)`, clamped by the venue max, **no 1× floor** |
 | Depth behaviour | grows toward the confirmed low, decays for a late entry | decreases monotonically with depth; pins to `C` deep; exceeds the base `g` for any entry above `maxStop/2` (which lies **below** `C`, since `g·(g−1) = 1`), reaching ≈ 4.8× at the cycle-4 pivot |
@@ -196,6 +196,23 @@ of the cycle, the bottom at `0.618 + q² ≈ 0.632`.
   low). Sampling more makes the anchors more accurate ⇒ **less** leverage; under-sampling is
   NOT fail-safe, so an unconfirmed anchor MUST fall back to the flat base `g`, never to an
   assumed extreme.
+- **The peak anchor is the max over daily CLOSES, corroborated by two of them.** A "close" is a
+  fixed, public instant, not whatever a caller chose to read: an observation may set the peak
+  value only inside `ANCHOR_CLOSE_WINDOW` of a daily close, on a day grid anchored to the
+  sampling window's own opening (so close `k` is exactly `P − W + k days`, and a `W`-wide window
+  holds exactly `W` closes). A level MUST be reached at TWO DISTINCT close-days before it is
+  served by `peaks()` or promoted into `prevPeak`. Value binding MUST be independent of the
+  density counter: conflating them gives the caller who wins the daily counting slot ownership of
+  the day's value, which is suppression (AUDIT-2026-07-29 F2), and gating on nothing at all
+  admits any wick (M-3). The window's opening observation carries no served value.
+  Two costs, stated rather than hidden: a top printing at exactly one close is served one close
+  late, bounded by the gap between the two highest closes; and a fixed instant is predictable and
+  therefore easier to target than a random one — what it buys is that an attacker must hold a
+  price at a published time instead of choosing their moment. Both errors understate `C`, which
+  pushes the short's stop further out and LOWERS leverage: the conservative direction.
+  The LOW side is deliberately NOT mirrored — it ratchets on every observation, because a lower
+  low moves a long's stop further from price and lowers leverage, so every-observation is a
+  superset of daily closes in exactly the safe direction.
 - **The window regime is bounded by a structural cap, not just the venue max.** With `C` not
   yet confirmed the short window stop `p + (p − prevPeak)·(g−1)` is an extrapolation from the
   *previous* peak; if a cycle tops near `prevPeak` the leverage grows large. The redo MUST cap
@@ -227,8 +244,31 @@ the remaining interims (the halving volume-add, the growth-rise ratchet floor, p
   then expiry. Price locking is permissionless and MUST commit **only after all assets price**
   (a transient zero on one asset MUST NOT poison the interval — see `HAZARDS.md` D1). Missing
   the snapshot window makes the interval unreportable (liveness, not custody).
+- **The settlement day is one named day of the transition's twenty, and the two clocks agree.**
+  Since `W − H = 10 days` exactly, the settlement point opens precisely on the transition's tenth
+  daily close, so the day the interval is valued on is itself a close day — the anchor sampler's
+  close grid (anchored to the window opening `P − W`) puts its close 10 inside this day's first
+  `ANCHOR_CLOSE_WINDOW`. Any change to `W`, `H` or the snapshot width MUST preserve that: a
+  settlement point landing between two closes would give the protocol two disagreeing day grids,
+  one for what a price *is* and one for when a vault is *valued*.
 - Settlement MUST reject a still-wrong-sign perp for the interval and MUST reconcile realized
   Core loss before computing the ledger.
+- **The valuation instant MUST NOT be the settle caller's choice.** Interval NAV and the price it
+  is measured at MUST be captured **together, at one instant**, by a one-shot act confined to the
+  settlement-day snapshot window (`B4Vault.snapshotNav`); settlement MUST value off that capture,
+  and MUST refuse rather than substitute a later price when the window has passed with nothing
+  captured (the interval then defers to the next checkpoint — liveness, not custody). The capture
+  MUST be permissionless, so that the vault owner can take it at `pointTime` and leave no
+  discretion for a front-runner; settlement MAY take it itself while still inside the window, so
+  the ordinary keeper path stays a single call. The captured price MUST also be the basis the
+  in-kind operator cut values the basket on, or the fee and the NAV it is a fraction of come from
+  different prices — the C-1 mismatch in miniature.
+  Without this, settlement valued the vault at the price of the instant it ran, anywhere in the
+  three-day report window, and because the interval is one-shot a third party could pin another
+  vault's minted weight at a trough with no second attempt for the victim (AUDIT-2026-07-29 F4).
+  Note what MUST NOT be done instead: freezing a shared per-interval price reopens C-1, and
+  restricting the *caller* rather than the instant hands each owner a repeatable, unpreemptable
+  slice in which to pick their own peak.
 - Performance: `profit = max(L−E,0)`, where `L` and `E` MUST be on one price basis (§5);
   `virtualFee = profit·f` (`f = 0.045084971874737120`);
   `operatorCut = virtualFee·operatorBps/10000`; `clientShare = virtualFee − operatorCut`;
@@ -252,10 +292,17 @@ the remaining interims (the halving volume-add, the growth-rise ratchet floor, p
   therefore hold no claim on it. The exiting share's own profit is paid to it in kind by the
   exit itself; what a full exit surrenders is only the claim on other users' exit penalties.
   The call-order asymmetry this leaves — `settle` before exiting reports weight the pool would
-  otherwise never hear was abandoned — MUST be closed on the pool side by surrendering the
-  reported weight (`forfeitWeight`), not by letting the base survive the exit: the latter
+  otherwise never hear was abandoned — MUST be closed on the pool side by scaling the reported
+  weight (`scaleWeight`), not by letting the base survive the exit: the latter
   inverts the redistribution model and lets a repeatedly-recycled clone accrue standing claims
-  against capital it no longer holds. Where
+  against capital it no longer holds.
+  The pool side MUST scale by the same `keep` on EVERY exit, not only on a full one, so that
+  reported weight always tracks the capital still standing behind it. Gating it on the exact
+  boundary `keep == 0` is forbidden: `x` is chosen by the owner, so an equality test at the
+  boundary is satisfied by `x = 1 − ε` for any `ε`, which withdraws the whole position while
+  keeping the whole claim (AUDIT-2026-07-29 F1). Nor may the condition be taken from the
+  post-exit BASE, which the `C·x` term re-inflates with the exiting share's own unsettled
+  profit. A full exit is then the endpoint of the ramp rather than a distinct rule. Where
   `C = virtualFee − operatorCut` is the full-position client share, so `C·x` is the client
   share of the EXITING share — symmetric with the proportional operator cut above. Only the
   exiting share's profit earns client share at exit; the remaining share's open profit

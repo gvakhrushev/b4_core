@@ -113,6 +113,13 @@ contract B4Pool is IB4PoolPolicy {
         uint256 prevPeak;
         uint256 peakC;
         uint256 peakTag;
+        // Dispersion remedy (AUDIT-2026-07-25 M-3's second half, prescribed twice and never
+        // built — see REVIEW-2026-07-25 item 11). `peakTop` is the highest CLOSE seen so far
+        // and `peakTopDay` the close-day that set it; `peakC` above is the highest level
+        // reached at TWO DISTINCT close-days, and only `peakC` is ever served or promoted. A
+        // lone print — a wick, or one manipulated close — raises `peakTop` and stops there.
+        uint256 peakTop;
+        uint256 peakTopDay;
         // Sampling density of the window currently feeding each side (V8-M-1/V8-M-2): the
         // anchor is CONFIRMED only at ≥ MIN_ANCHOR_SAMPLES daily observations spanning
         // ≥ W/2 of its window. Reset on every window reseed; each packs into a single slot.
@@ -135,6 +142,36 @@ contract B4Pool is IB4PoolPolicy {
     /// anchor is never promoted and never fed to the engine.
     uint256 internal constant MIN_ANCHOR_SAMPLES = 10;
     uint256 internal constant MIN_ANCHOR_SAMPLE_GAP = 1 days;
+
+    /// Daily-CLOSE acceptance window, measured from the sampling window's own opening: an
+    /// observation may set the peak VALUE only when `(t − (P − W)) % 1 days` is inside it.
+    /// Anchoring the day grid to the window rather than to the halving puts the first close at
+    /// the window's opening instant and yields exactly `W` closes in a `W`-wide window.
+    ///
+    /// SPECIFICATION §152 defines the peak anchor as the window's **max close**, and a close is
+    /// a fixed instant of the day. The implementation had no such instant: it took the max over
+    /// all *calls*, so the anchor was whatever price a caller chose to sample at (M-3), and
+    /// after M-3's first remedy tied the value to the density slot it became whatever the
+    /// caller who WON that slot chose — letting a squatter take every daily slot at a low and
+    /// suppress the true high while the density gate still confirmed (AUDIT-2026-07-29 F2).
+    ///
+    /// Pinning the instant is what separates the two failures, which no rule based on the
+    /// caller's identity or the gap since the last sample can do — those are the only two
+    /// dimensions a squat and an honest late observation differ in, and addresses are free.
+    /// A fixed, public instant is a third dimension:
+    ///   * suppression fails — the value is not owned by whoever calls first; every
+    ///     observation inside the window competes, so an honest caller always lands the
+    ///     genuine close;
+    ///   * a wick fails — an injected print must coincide with the close window to bind at
+    ///     all, instead of being harvestable at any instant of the day.
+    ///
+    /// One hour rather than one block, for the same reason `Calendar.SNAPSHOT_WINDOW` is 24h:
+    /// over a window recurring once a day for 20 days, a failed cron or an RPC outage is the
+    /// dominant real risk, and a one-block target would be missed routinely. The honest cost of
+    /// a fixed instant is that it is PREDICTABLE and therefore easier to target than a random
+    /// one; what it buys is that the attacker must now hold a price at a published time rather
+    /// than pick their moment, and the density gate still requires ≥10 such days spanning ≥W/2.
+    uint256 internal constant ANCHOR_CLOSE_WINDOW = 1 hours;
 
     /// Inventory collecting for the next interval to be materialized (asset index →
     /// amount, EVM units).
@@ -422,8 +459,16 @@ contract B4Pool is IB4PoolPolicy {
     ///         MIN_ANCHOR_SAMPLES daily observations spanning ≥ W/2 (see `_confirmed`).
     ///         An unconfirmed anchor is never promoted into `floor`/`prevPeak` and is
     ///         withheld by the `anchors()`/`peaks()` getters (read as 0 = "absent"), so a
-    ///         sparsely-sampled window or a single wicked print can never size a leveraged
-    ///         position — the engine degrades fail-safe instead.
+    ///         sparsely-sampled window can never size a leveraged position — the engine
+    ///         degrades fail-safe instead.
+    ///
+    ///         PEAK value rule (SPEC §152, `ANCHOR_CLOSE_WINDOW`): the density gate above
+    ///         governs CONFIRMATION only. The peak VALUE is the max over daily CLOSES,
+    ///         corroborated by two distinct close-days — a separate mechanism, deliberately not
+    ///         sharing the counter's gate. Conflating them is what let a caller who won the
+    ///         daily counting slot own the day's value and suppress the true high (F2); gating
+    ///         the value on nothing at all is what let any wick set it (M-3). A single print,
+    ///         wherever it lands, is at most a candidate.
     function sampleAnchor(uint256 i) external {
         if (i == 0 || i >= assetCount) revert BadAsset();
         uint256 t = oracle.timeSinceHalving();
@@ -437,6 +482,9 @@ contract B4Pool is IB4PoolPolicy {
             uint256 pxp = CoreReader.spotPxWad(_assets[i]);
             if (pxp == 0) revert ZeroPrice();
             uint256 ptag = oracle.epoch() + 1; // 0 = never sampled
+            uint256 sinceOpen = t - (Calendar.P - Calendar.W);
+            bool atClose = sinceOpen % MIN_ANCHOR_SAMPLE_GAP < ANCHOR_CLOSE_WINDOW;
+            uint256 closeDay = sinceOpen / MIN_ANCHOR_SAMPLE_GAP;
             if (ptag != a.peakTag) {
                 // A new peak window opens. Lazy promotion of the outgoing window — the
                 // fallback for the eager halving-flip path below. ONE coherent rule on
@@ -444,21 +492,52 @@ contract B4Pool is IB4PoolPolicy {
                 // `peakC` cannot change between the flip and this opening, the two paths
                 // are idempotent (they can never contradict or double-promote).
                 if (a.peakTag != 0 && _confirmed(a.peakDensity)) a.prevPeak = a.peakC;
-                a.peakC = pxp; // reseed to the first observation of this window
+                // Reseed carries NO served value. Seeding `peakC` from whatever the first
+                // caller into the window happened to read gave that caller the anchor for the
+                // whole 20 days with no cadence condition at all — and since the value only
+                // ratchets up, a wick at that instant survived the entire window. A served
+                // value now requires two distinct closes, so the opening observation can only
+                // ever be a candidate.
+                a.peakC = 0;
+                a.peakTop = atClose ? pxp : 0;
+                a.peakTopDay = closeDay;
                 a.peakTag = ptag;
                 a.peakDensity = Density(1, now112, now112);
             } else {
-                // The window anchor is the MAX of DAILY observations, not of every tick
-                // (audit M-3). Ratcheting on any call let a caller wait for a wick and push
-                // `peakC` up for free: the density gate counts days, so a window already
-                // confirmed by honest sampling accepted a poisoned VALUE at no cost. The
-                // harm lands a full cycle later — `peakC` is promoted to `prevPeak`, the
-                // short's DELTA anchor, and an inflated `Pp` shrinks `(C − Pp)`, pulling the
-                // stop toward C and RAISING leverage. Tying the value to the same daily
-                // cadence removes it; a peak that prints only between samples is missed,
-                // which understates `Pp`, pushes the stop further and lowers leverage — the
-                // conservative direction.
-                if (_recordDistinctSample(a.peakDensity, now112) && pxp > a.peakC) {
+                // Density counting stays daily and stays SEPARATE from the value: it gates
+                // confirmation (was this window actually observed?), never what the anchor is.
+                // Conflating the two is what produced F2 — the caller who won the day's
+                // counting slot also owned the day's value, so taking every slot at a low
+                // suppressed the true high while the gate still confirmed.
+                _recordDistinctSample(a.peakDensity, now112);
+            }
+            // The value: the MAX over daily CLOSES, per SPECIFICATION §152, corroborated by two
+            // distinct closes. Three properties, each closing a different failure:
+            //
+            //   * independent of who won the density slot ⇒ suppression is impossible. A
+            //     squatter taking every slot cannot stop an honest observation from raising the
+            //     level, which is what F2 exploited.
+            //   * confined to the close window ⇒ an off-close print, the ordinary exchange wick,
+            //     cannot bind at all.
+            //   * corroborated across two distinct close-days ⇒ a print that DOES land at a
+            //     close still cannot bind alone. This is M-3's dispersion remedy; the close
+            //     window narrows when a wick must occur, but only corroboration makes a single
+            //     one worthless.
+            //
+            // The cost, stated rather than hidden: the served level is the second-highest close,
+            // so a top that prints on exactly one close is understated until a second close
+            // reaches it. Understating `peakC` pushes the short's stop further out and LOWERS
+            // leverage — the conservative direction — and the error is bounded by the gap
+            // between the two highest closes, where an admitted wick would be unbounded.
+            if (atClose) {
+                if (pxp > a.peakTop) {
+                    // A new candidate. The level it displaces is now attested by its own day, so
+                    // if that day differs it becomes the corroborated value.
+                    if (closeDay != a.peakTopDay && a.peakTop > a.peakC) a.peakC = a.peakTop;
+                    a.peakTop = pxp;
+                    a.peakTopDay = closeDay;
+                } else if (closeDay != a.peakTopDay && pxp > a.peakC) {
+                    // A different close-day reaches this level: corroborated.
                     a.peakC = pxp;
                 }
             }
@@ -540,10 +619,14 @@ contract B4Pool is IB4PoolPolicy {
     ///         consumer compares it to `oracle.epoch() + 1` to reject a stale prior-cycle peak (a
     ///         short must never anchor to an unconfirmed/stale high — see B4VaultEngine).
     ///         Density gate: an under-sampled `peakC` is WITHHELD (read as 0 = "this cycle's
-    ///         peak unknown") so a short never anchors to a sparse print or a single wick
-    ///         (V8-M-1/V8-M-2); the freshness tag is returned raw so the consumer can still
-    ///         distinguish "withheld" from "stale". `prevPeak` is returned raw: it is only
-    ///         ever promoted from a density-confirmed peak.
+    ///         peak unknown") so a short never anchors to a sparse window (V8-M-1); the
+    ///         freshness tag is returned raw so the consumer can still distinguish "withheld"
+    ///         from "stale". `prevPeak` is returned raw: it is only ever promoted from a
+    ///         density-confirmed peak.
+    ///         `peakC` itself is the CORROBORATED level — the highest reached at two distinct
+    ///         daily closes — so a single wick is never served here even in a dense window
+    ///         (M-3's dispersion remedy); the uncorroborated candidate `peakTop` is internal
+    ///         and deliberately not exposed.
     function peaks(uint256 i)
         external
         view
@@ -618,33 +701,58 @@ contract B4Pool is IB4PoolPolicy {
         emit WeightReported(id, msg.sender, weight);
     }
 
-    /// @notice A vault that has FULLY exited surrenders the weight it reported for `id`.
-    /// @dev AUDIT-2026-07-25 C-1 half B. The basket is funded by leavers for the benefit of
-    ///      stayers, so a vault holding no capital must not keep a claim on it. The vault side
-    ///      already zeroes `rewardBaseWad` on a full exit (SPEC §9); this is the pool side of
-    ///      the same event, which previously never happened — making the outcome depend on
-    ///      whether the owner called `settle` before or after exiting.
+    /// @notice A vault that exits scales the weight it reported for `id` by the share it
+    ///         KEPT, so a reported claim always tracks the capital still standing behind it.
+    /// @dev AUDIT-2026-07-25 C-1 half B, generalised by AUDIT-2026-07-29 F1. The basket is
+    ///      funded by leavers for the benefit of stayers, so a claim must never outlive the
+    ///      capital that earned it. The vault side already scales its standing base by `keep`
+    ///      on EVERY exit (`rewardBaseWad = (R + C·x)·keep`, SPEC §9); this is the pool side of
+    ///      the same event, and the two are now the same rule rather than two different ones.
     ///
-    ///      Two properties this MUST preserve, both load-bearing:
+    ///      Previously the pool side fired only at the exact boundary `keep == 0`, which left
+    ///      two defects. The outcome depended on whether the owner called `settle` before or
+    ///      after exiting (C-1 half B, the original motivation). And because the test was an
+    ///      exact equality on a caller-chosen number, `initiateExit(WAD − 1)` paid out every
+    ///      unit of the position but flooring dust while keeping 100% of the reported weight
+    ///      (F1) — one wei of retained share bought the whole claim.
+    ///
+    ///      Scaling proportionally removes the boundary rather than moving it: there is no
+    ///      threshold to sit just above, one wei of retained share retains one wei of weight,
+    ///      and the outcome is continuous in the exit share. Repeated exits compound
+    ///      multiplicatively because each call re-reads the live weight, so splitting an exit
+    ///      into steps cannot dodge it either. A dust threshold would only relocate the same
+    ///      defect; a measure taken from the post-exit BASE would be worse still, because
+    ///      `(R + C·x)·keep` is re-inflated by the exiting share's own unsettled profit, which
+    ///      the owner controls the timing of.
+    ///
+    ///      Three properties this MUST preserve, all load-bearing:
     ///      1. `claimFor` computes `nominal = bucket · w / totalWeight` AT CLAIM TIME, so
     ///         shrinking `totalWeight` once claims are open would raise every later claimant's
     ///         share and could pay out more than the bucket (D2/D3). Claims are gated until
-    ///         AFTER `reportDeadline`, so forfeiting is confined to the same window in which
+    ///         AFTER `reportDeadline`, so scaling is confined to the same window in which
     ///         `reportWeight` itself is allowed — while claims are still closed, weights are
     ///         not yet final and order-independence is untouched.
     ///      2. It is reached from `_finalizeExit`, which sits on the permissionless crank path.
     ///         A revert there would freeze the exit, and there is no admin to unstick it — so
-    ///         every non-applicable case is a silent no-op, never a revert (H3).
-    function forfeitWeight(uint256 id) external {
+    ///         every non-applicable case is a silent no-op, never a revert (H3). The added
+    ///         arithmetic cannot revert: `keepWad` is clamped at `WAD`, so `kept ≤ w` always
+    ///         and the subtraction can never underflow.
+    ///      3. `keep == 0` still zeroes the reported weight exactly, so the full-exit rule the
+    ///         original half-B fix established is unchanged — it is now the endpoint of a ramp
+    ///         instead of a special case.
+    function scaleWeight(uint256 id, uint256 keepWad) external {
         if (!isVault[msg.sender]) return;
         if (id >= intervalCount) return;
         if (block.timestamp > reportDeadline(id)) return; // weights final, claims open
         Interval storage it = _intervals[id];
         uint256 w = it.weightOf[msg.sender];
         if (w == 0) return;
-        it.weightOf[msg.sender] = 0;
-        it.totalWeight -= w;
-        emit WeightForfeited(id, msg.sender, w);
+        uint256 kept = keepWad >= Phi.WAD ? w : Phi.wmul(w, keepWad);
+        uint256 dropped = w - kept;
+        if (dropped == 0) return; // nothing left, or flooring dust — silent no-op
+        it.weightOf[msg.sender] = kept;
+        it.totalWeight -= dropped;
+        emit WeightForfeited(id, msg.sender, dropped);
     }
 
     // ------------------------------------------------------------------ distribution

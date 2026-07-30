@@ -98,14 +98,54 @@ MUST be permanently removed before production.
   makes the choice once-per-interval and non-repeatable.
   **Why the product owner accepts it.** Mark-to-market on a real holding is real profit: the
   measured figure is always the vault's own P&L against what it actually paid, so no weight can
-  be created by capital that did not earn it (invariant 19). Two further factors bound the
-  effect in practice — the keeper settles every vault of a pool in a single pass, i.e. at one
-  block and one price; and the basket is distributed pro rata, so a uniform price shift cancels
-  and only *differential* timing has any effect at all. This is a relative-weight fairness
-  question, never a mint, a freeze, or a custody question. The alternative — freezing a
-  reference price for a composition read up to three days later — is precisely what produced the
-  C-1 Critical, so it is not available.
-  (`Settle.t.sol::test_settle_values_at_live_price_real_pnl`, `AuditC1_JitWeight.t.sol` ×4.)
+  be created by capital that did not earn it (invariant 19). The basket is distributed pro rata,
+  so a *uniform* price shift cancels and only **differential** timing has any effect at all. This
+  is a relative-weight fairness question, never a mint, a freeze, or a custody question. The
+  alternative — freezing a reference price for a composition read up to three days later — is
+  precisely what produced the C-1 Critical, so it is not available.
+  **The residual is now bounded by pre-emption, not by an operational expectation**
+  (AUDIT-2026-07-29 F4, closed 2026-07-30). This text used to lean on a second factor: "the keeper
+  settles every vault of a pool in a single pass, i.e. at one block and one price", which is what
+  made the shift uniform and therefore harmless. That was an operational expectation, not a code
+  guarantee: `settle` is permissionless and one-shot per interval, so a third party could PRE-EMPT
+  that pass for a vault it did not own and pin that vault's increment at an instant of its
+  choosing — the shift is then differential by construction, and the factor that cancelled it did
+  not hold. Worse, the mitigation the `Calendar` docstring records for `lockPrices` — "the harmed
+  party can simply call it at `pointTime` and remove all discretion" — did not transfer, because
+  since C-1 the locked price feeds no valuation, so the discretion had moved to `settle`, where
+  the harmed party had no equivalent move.
+  **The fix separates the valuation instant from the report.** `B4Vault.snapshotNav(id)` captures
+  the interval's NAV and the price it was measured at, together, at one instant; it is
+  permissionless, one-shot per interval, and confined to `Calendar.SNAPSHOT_WINDOW` (the
+  settlement day). `settle` then values off that capture and takes it itself when it runs inside
+  the same window, so the ordinary keeper path is still a single call. Two consequences:
+  the choosable span narrows from three days to one, and — the point of it — the vault owner
+  removes all discretion by taking the snapshot at `pointTime`, which restores exactly the
+  mitigation the `Calendar` docstring relies on. Reporting liveness is untouched: the weight
+  report still has until `reportDeadline`, and a vault that misses the snapshot window simply
+  defers the interval, which is already the documented cost of missing that window for
+  `lockPrices`. The stored price is what lets the in-kind operator cut be paid on the same basis
+  the NAV was measured on when settle runs a day later; valuing the basket at the live price
+  against a day-old NAV would re-create the C-1 mismatch in miniature.
+  **What was rejected, and why**, since each is a plausible-looking alternative that measured
+  worse. Any per-interval *uniform* valuation basis reopens C-1 (measured: valuing at the locked
+  price mints 1577.97e18 of phantom weight against an honest vault's 315.59e18 — 83.3% of the
+  basket, the recorded C-1 exploit exactly; even clamping the live price to ±10% of the locked one
+  still yields 79.6%). An owner-preferred *settle* window destroys the uniformity above and hands
+  each owner a repeatable, unpreemptable slice to pick their own peak — which is why the fix gates
+  the valuation instant rather than the caller. Owner-only settle makes `Keeper.settleVault` revert
+  into its catch forever; re-settle best-of gives every active owner a per-interval mint against
+  passive co-claimants; re-settle last-write-wins lets a third party force repeated irreversible
+  in-kind operator payments at chosen peaks; and a pool-wide consensus-price band lets an attacker
+  settle first at a wick and lock every other vault out of the interval. No TWAP basis exists to
+  switch to — `CoreReader`'s spot, mark and oracle reads are all instantaneous precompile reads.
+  **The residual that remains**, rated LOW and asserted rather than hidden: inside the settlement
+  day, a vault whose owner does not pre-empt can still have its instant chosen by whoever calls
+  first. What that costs is one interval's *increment*, not the standing base (`reportWeight`
+  reports the cumulative `rewardBaseWad`), and `entryLedgerWad` is re-anchored to the same pinned
+  NAV, so the chained ledger books the suppressed move at the next settlement.
+  (`Settle.t.sol::test_settle_values_at_live_price_real_pnl`, `AuditC1_JitWeight.t.sol` ×4,
+  `AuditF4_SettleValuationInstant.t.sol` ×6.)
 - **Crank-timing MEV (accepted residual).** Every step that emits a venue order is
   permissionless and prices off the live venue read at the moment it runs, so its CALLER chooses
   the block and therefore the price. Three concrete surfaces:
@@ -139,14 +179,21 @@ MUST be permanently removed before production.
   market loss. With C-1 closed, reaching a claim is not cheap — it needs real capital, real
   exposure and real profit across a real interval.
   The ORDER DEPENDENCE this used to carry is closed (AUDIT-2026-07-25 "half B"), and closed on
-  the POOL side: a FULL exit zeroes the standing base on the vault side
-  (`nextRewardBase = (R + C·x)·(1−x)`, so `x = 1 ⇒ 0`) **and** surrenders the weight already
-  reported for the open interval via `B4Pool.forfeitWeight`, which removes it from `weightOf`
-  and from `totalWeight`. Settle-then-exit and exit-then-settle therefore agree: a vault that
-  has left holds no claim on a basket that is funded by leavers for the benefit of stayers.
+  the POOL side: an exit scales the standing base on the vault side
+  (`nextRewardBase = (R + C·x)·(1−x)`, so `x = 1 ⇒ 0`) **and** scales the weight already
+  reported for the open interval by the same `keep` via `B4Pool.scaleWeight`, lowering both
+  `weightOf` and `totalWeight` by the identical amount. Settle-then-exit and exit-then-settle
+  therefore agree: a vault holds a claim proportional to the capital still standing behind it,
+  on a basket funded by leavers for the benefit of stayers.
   (The earlier "add the realised share instead of scaling it away" fix converged the two orders
   on KEEPING the weight; it was reverted because that inverts the redistribution model and
-  re-opens the clone-recycling shape of C-1.) `forfeitWeight` is confined to
+  re-opens the clone-recycling shape of C-1.)
+  The pool side scales on EVERY exit. It used to fire only at `keep == 0`, and because `x` is
+  owner-chosen that exact-equality test was defeated by `x = WAD − 1`: essentially the whole
+  position paid out, the whole reported claim retained (AUDIT-2026-07-29 F1). Proportional
+  scaling removes the boundary rather than relocating it — no threshold survives a caller who
+  can sit one wei above it, and no measure derived from the post-exit base survives the `C·x`
+  re-inflation the owner controls the timing of. `scaleWeight` is confined to
   `block.timestamp <= reportDeadline(id)` — strictly disjoint from the claim window, which opens
   only after it — so `totalWeight` can never move while claims are open (invariants 10/11), and
   every non-applicable case is a silent no-op rather than a revert on the permissionless crank

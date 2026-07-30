@@ -127,17 +127,16 @@ contract V6B_ExitFairnessTest is VaultTestBase {
         // Live price runs to 130k AFTER the lock: every exit now carries real profit
         // (live-oracle valuation, decision C2) → real operator carve per exit.
         hub.setSpotPx(SPOT_MKT, 130_000e4);
-        uint256 weightBefore = pool.weightOf(id, address(v));
 
         // Three free dust exits x = 10% (OpeningFall zone: free).
         for (uint256 i; i < 3; i++) {
-            _exitOnce(v, id, weightBefore, false);
+            _exitOnce(v, id, false);
         }
 
         // Fourth exit OUTSIDE the free window (Fall zone): penalty leg, operator carve,
         // pool remainder + capture(). Same conservation discipline, pool share > 0.
         warpTo(Calendar.P + 1 days);
-        _exitOnce(v, id, weightBefore, true);
+        _exitOnce(v, id, true);
     }
 
     function _usdcOpRef() internal view returns (uint256) {
@@ -157,7 +156,7 @@ contract V6B_ExitFairnessTest is VaultTestBase {
     /// test's V8-L-8 note: the post-exit spot redeployment must NOT be counted as exit
     /// dust). expectPool=false for a free window (pool share must be exactly 0), true for
     /// a penalty exit (pool share > 0).
-    function _exitOnce(B4Vault v, uint256 id, uint256 weightBefore, bool expectPool) internal {
+    function _exitOnce(B4Vault v, uint256 id, bool expectPool) internal {
         uint256 cs = _clientShareNow(v);
         uint256[4] memory pre =
             [v.entryLedgerWad(), v.usdcRotatedEvm() + v.usdcMarginEvm(), _usdcSum(), _ubtcSum()];
@@ -165,17 +164,21 @@ contract V6B_ExitFairnessTest is VaultTestBase {
         uint256 userPre = usdc.balanceOf(user) + ubtc.balanceOf(user);
         uint256 opRefPre = _usdcOpRef() + _ubtcOpRef();
         uint256 poolPre = usdc.balanceOf(address(pool)) + ubtc.balanceOf(address(pool));
+        // Sampled per exit, not once for the whole sequence: since AUDIT-2026-07-29 F1 the
+        // pool-side weight scales by `keep` on every exit, so the repeated-exit expectation is
+        // multiplicative and each round must measure its own starting point.
+        uint256 wPre = pool.weightOf(id, address(v));
 
         vm.prank(user);
         v.initiateExit(0.1e18);
         _crankUntilExitDone(v, 20);
-        _checkExit(v, id, weightBefore, expectPool, cs, rPre, pre, userPre, opRefPre, poolPre);
+        _checkExit(v, id, wPre, expectPool, cs, rPre, pre, userPre, opRefPre, poolPre);
     }
 
     function _checkExit(
         B4Vault v,
         uint256 id,
-        uint256 weightBefore,
+        uint256 wPre,
         bool expectPool,
         uint256 cs,
         uint256 rPre,
@@ -211,8 +214,16 @@ contract V6B_ExitFairnessTest is VaultTestBase {
         } else {
             assertEq(poolDelta, 0, "no pool share in a free exit");
         }
-        // (iv) exits never re-report or duplicate weight.
-        assertEq(pool.weightOf(id, address(v)), weightBefore, "no exit-time report");
+        // (iv) exits never re-report or duplicate weight — and inside the report window they
+        //      surrender exactly the share withdrawn (AUDIT-2026-07-29 F1). Past
+        //      `reportDeadline` weights are final and `scaleWeight` is a no-op by design, so
+        //      this branch also pins the window confinement that keeps `totalWeight` still
+        //      while claims are open (D2/D3).
+        if (block.timestamp <= pool.reportDeadline(id)) {
+            assertEq(pool.weightOf(id, address(v)), Phi.wmul(wPre, 0.9e18), "claim scaled by keep");
+        } else {
+            assertEq(pool.weightOf(id, address(v)), wPre, "weights final after the deadline");
+        }
     }
 
     /// Crank until the pending exit finalizes (a partial exit leaves the vault live —

@@ -16,9 +16,14 @@ import {Phi} from "src/libraries/Phi.sol";
 /// standing base and no reported pool weight. The basket is funded by leavers for the benefit
 /// of stayers, so a vault holding no capital must not hold a claim on it.
 ///
-/// The convergence is achieved on the POOL side (`B4Pool.forfeitWeight`), NOT by letting the
+/// The convergence is achieved on the POOL side (`B4Pool.scaleWeight`), NOT by letting the
 /// realised share survive the exit — the latter inverts the product's own redistribution model
 /// and re-opens the clone-recycling shape of C-1.
+///
+/// AUDIT-2026-07-29 F1 generalised the pool side from the exact boundary `keep == 0` to a
+/// proportional scaling on every exit: weight tracks the capital still standing behind it. The
+/// full-exit case below is unchanged — it is now the endpoint of a ramp instead of a special
+/// case — while a partial exit surrenders exactly the share it withdrew.
 contract AuditHalfB_ExitWeightOrderTest is VaultTestBase {
     function setUp() public {
         setUpProtocol();
@@ -110,9 +115,76 @@ contract AuditHalfB_ExitWeightOrderTest is VaultTestBase {
         assertEq(v.rewardBaseWad(), 0, "so is the claim");
     }
 
-    /// A PARTIAL exit is not a departure: the remaining capital keeps its reported claim, and
-    /// the standing base scales by `keep` rather than vanishing.
-    function test_halfB_partial_exit_keeps_proportional_claim() public {
+    /// A PARTIAL exit surrenders exactly the share it withdrew: the reported claim scales by
+    /// `keep`, in lock step with the standing base, so weight always tracks the capital still
+    /// standing behind it (AUDIT-2026-07-29 F1).
+    ///
+    /// This REVERSES the earlier rule that "a partial exit forfeits nothing" (recorded at
+    /// `docs/audits/REVIEW-2026-07-25-agent-changes.md:418-431`). That rule made the pool side
+    /// an exact-equality test on `keep == 0`, a number the owner chooses, so `initiateExit(WAD
+    /// − 1)` paid out everything but flooring dust and kept the whole claim. There is no
+    /// threshold that fixes an exact-boundary test — every threshold has its own "just above",
+    /// and a measure taken from the post-exit BASE is re-inflatable by the exiting share's own
+    /// unsettled profit. Proportional scaling removes the boundary instead of moving it.
+    function test_halfB_partial_exit_scales_the_claim_by_keep() public {
+        B4Vault v = _vaultWithProfit();
+
+        hub.setSpotPx(SPOT_MKT, 110_000 * 1e4);
+        vm.warp(_p1());
+        pool.advance();
+        uint256 id = pool.intervalCount() - 1;
+        pool.lockPrices(id);
+
+        v.settle(id);
+        uint256 reported = pool.weightOf(id, address(v));
+        (,,, uint256 totalBefore) = pool.intervalInfo(id);
+
+        vm.prank(user);
+        v.initiateExit(5e17); // 50%
+        crankUntilIdle(v, 40);
+
+        uint256 kept = Phi.wmul(reported, 5e17);
+        assertEq(pool.weightOf(id, address(v)), kept, "a 50% exit keeps exactly 50% of the claim");
+        (,,, uint256 totalAfter) = pool.intervalInfo(id);
+        assertEq(totalAfter, totalBefore - (reported - kept), "denominator drops by the same");
+        assertGt(v.rewardBaseWad(), 0, "and the standing base survives, scaled by keep");
+    }
+
+    /// The F1 exploit input, refused. `initiateExit(WAD − 1)` withdraws every unit of the
+    /// position but flooring dust; under the old `keep == 0` boundary it kept 100% of the
+    /// reported weight and collected a full pro-rata share of a basket funded by other
+    /// participants' penalties. The claim must now be dust too.
+    function test_halfB_near_total_exit_cannot_keep_its_reported_weight() public {
+        B4Vault v = _vaultWithProfit();
+        B4Vault stayer = _vaultWithProfit();
+
+        hub.setSpotPx(SPOT_MKT, 110_000 * 1e4);
+        vm.warp(_p1());
+        pool.advance();
+        uint256 id = pool.intervalCount() - 1;
+        pool.lockPrices(id);
+
+        v.settle(id);
+        stayer.settle(id);
+        uint256 reported = pool.weightOf(id, address(v));
+        uint256 stayerWeight = pool.weightOf(id, address(stayer));
+        assertGt(reported, 0, "reported before exiting");
+
+        vm.prank(user);
+        v.initiateExit(Phi.WAD - 1); // everything but one wei of share
+        crankUntilIdle(v, 40);
+
+        uint256 left = pool.weightOf(id, address(v));
+        assertLt(left, reported / 1e6, "a near-total exit keeps under 1 ppm of its own claim");
+        assertLt(left, stayerWeight / 1e6, "and under 1 ppm of a stayer's");
+        (,,, uint256 total) = pool.intervalInfo(id);
+        assertEq(total, stayerWeight + left, "totalWeight stays the exact sum of survivors");
+    }
+
+    /// Splitting the exit into steps cannot dodge the scaling: each call re-reads the live
+    /// weight, so the effect compounds multiplicatively. Three 80% exits leave 0.8³ = 51.2% of
+    /// the capital's share, not the 100% an unsplit-only rule would have left.
+    function test_halfB_split_exit_compounds_and_cannot_dodge() public {
         B4Vault v = _vaultWithProfit();
 
         hub.setSpotPx(SPOT_MKT, 110_000 * 1e4);
@@ -124,12 +196,15 @@ contract AuditHalfB_ExitWeightOrderTest is VaultTestBase {
         v.settle(id);
         uint256 reported = pool.weightOf(id, address(v));
 
-        vm.prank(user);
-        v.initiateExit(5e17); // 50%
-        crankUntilIdle(v, 40);
+        for (uint256 k = 0; k < 3; k++) {
+            vm.prank(user);
+            v.initiateExit(8e17); // 80% of what remains
+            crankUntilIdle(v, 40);
+        }
 
-        assertEq(pool.weightOf(id, address(v)), reported, "partial exit forfeits nothing");
-        assertGt(v.rewardBaseWad(), 0, "and the standing base survives, scaled by keep");
+        // 0.2³ = 0.008 of the reported claim survives, up to flooring dust.
+        assertLt(pool.weightOf(id, address(v)), reported / 100, "compounded well below 1%");
+        assertGt(pool.weightOf(id, address(v)), 0, "but nothing is destroyed outright");
     }
 
     /// SPEC §9: repeated partial exits must not mint or duplicate weight. With the restored

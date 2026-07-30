@@ -59,7 +59,7 @@ contract ExitTest is VaultTestBase {
         assertEq(v.entryLedgerWad(), 0);
         // Ledgers zeroed on a full exit (SPEC §9). A vault holding no capital keeps no claim
         // on the shared basket — the basket is funded by leavers for stayers, and this vault
-        // has become a leaver. The pool side of the same event is `forfeitWeight`, asserted
+        // has become a leaver. The pool side of the same event is `scaleWeight`, asserted
         // by `test_full_exit_forfeits_reported_pool_weight`.
         assertEq(v.rewardBaseWad(), 0, "standing base zeroed on a full exit");
     }

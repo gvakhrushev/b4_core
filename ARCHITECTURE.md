@@ -93,20 +93,38 @@ the code now state the same behavior (HAZARDS G3).
    the benefit of stayers, so a vault holding no capital must not hold a claim on it — and
    "weight survives a full exit" re-opens the clone-recycling shape of C-1. The ledger formula
    is therefore the strict contraction `nextRewardBase = (R + C·x)·(1−x)`, and the two orders
-   are converged on the **pool** side instead: `B4VaultOps._finalizeExit` calls the new
-   `B4Pool.forfeitWeight(id)` when `keep == 0`, removing the already-reported weight from both
-   `weightOf` and `totalWeight`. Two properties `forfeitWeight` is built to preserve, both
+   are converged on the **pool** side instead: `B4VaultOps._finalizeExit` calls
+   `B4Pool.scaleWeight(id, keep)`, lowering the already-reported weight and `totalWeight` by the
+   same amount. Two properties it is built to preserve, both
    load-bearing: it is confined to `block.timestamp <= reportDeadline(id)` — exactly the window
    in which `reportWeight` is allowed and in which `claimFor` still reverts `ReportWindowOpen`,
    so the two windows are strictly disjoint and `totalWeight` never moves while claims are open
    (D2/D3); and every non-applicable case is a silent `return`, never a revert, because it sits
    on the permissionless crank path and there is no admin to unstick a freeze (H3, F1).
+
+   **And the correction to that (AUDIT-2026-07-29 F1).** The pool side originally fired only when
+   `keep == 0`. That is an exact-equality test on a number the vault owner supplies, so
+   `initiateExit(WAD − 1)` paid out every unit of the position but flooring dust and kept **100%**
+   of the reported claim — a departed vault collecting a full pro-rata share of a basket funded by
+   other participants' penalties, with every stayer diluted by exactly that amount. It now scales
+   by `keep` on **every** exit, so reported weight tracks the capital still standing behind it and
+   a full exit is the endpoint of a ramp rather than a distinct rule. Two things this deliberately
+   is *not*: a threshold (every threshold has its own "just above", so relocating the boundary
+   changes nothing), and a measure taken from the post-exit base (`(R + C·x)·keep` is re-inflated
+   by the exiting share's own unsettled profit, whose timing the owner controls — measured: a
+   vault paid out 99.2% of its holdings and retained 100% of its weight). Repeated exits compound
+   multiplicatively, because each call re-reads the live weight, so splitting cannot dodge it.
+   This reverses the recorded decision that "a partial exit forfeits nothing": a partial exit now
+   surrenders exactly the share it withdrew.
+
    Still bounded: the accrual is a contraction, so no exit pattern accrues more than one
-   settle's client share. One residual is asserted rather than hidden — a vault that settles
+   settle's client share. Two residuals are asserted rather than hidden — a vault that settles
    AFTER emptying itself has `entryLedgerWad == 0`, so the flooring dust the exit waterfall
    left behind reads as profit and reports a dust weight, pinned below one part per million of
-   a real participant's share. (`AuditHalfB_ExitWeightOrder.t.sol` ×4, `Exit.t.sol`;
-   `INVARIANTS.md` row 21.)
+   a real participant's share; and an exit finalized past `reportDeadline` scales nothing, since
+   the window confinement above takes precedence, so the rule holds inside the report window
+   rather than forever. (`AuditHalfB_ExitWeightOrder.t.sol` ×6, `Exit.t.sol`,
+   `V6B_ExitFairness.t.sol`; `INVARIANTS.md` rows 21–22.)
 
 ## Structural anchors: which window feeds which stop (AUDIT-2026-07-25 H-4 / M-3)
 
@@ -122,13 +140,31 @@ drove leverage to the venue clamp at any price at all. The density gate did not 
 confirms only that the window's own minimum was sampled enough, never that the minimum is a
 structural bottom. Regression asserts the realized LIQUIDATION PRICE, not the order size.
 
-**M-3 — the PEAK anchor is the max of DAILY observations; the LOW is deliberately not
-mirrored.** The density gate counted days but the peak's value ratchet ran on every call, so a
+**M-3 / F2 — the PEAK anchor is the max over daily CLOSES, corroborated; the LOW is deliberately
+not mirrored.** The density gate counted days but the peak's value ratchet ran on every call, so a
 caller could wait for a wick and move a confirmed peak for free. The harm lands a full cycle
 later: `peakC` is promoted to `prevPeak`, the short's delta anchor, and an inflated `Pp` shrinks
-`(C − Pp)`, pulling the stop toward `C` and RAISING leverage. Tying the peak's VALUE to the same
-daily cadence removes it: a peak that prints only between samples is missed, which understates
-`Pp`, pushes the stop further out and lowers leverage — the conservative direction.
+`(C − Pp)`, pulling the stop toward `C` and RAISING leverage.
+
+The first remedy tied the peak's VALUE to the density counter's daily slot — and that created the
+opposite finding. The slot is claimed by whoever calls first after `last + 1 day`, so a squatter
+taking every slot at an intraday low had every honest observation of the true high refused while
+their own samples kept the count growing: `peaks()` served a density-CONFIRMED but SUPPRESSED
+peak, and a suppressed `C` pulls the stop toward the price and raises leverage *this* cycle
+(AUDIT-2026-07-29 F2). The peak side is therefore exposed in both directions, which is exactly
+what the low side is not.
+
+Both halves now exist, and they are separate mechanisms on purpose. **Density counting** stays
+daily and answers only "was this window observed?". **Value binding** is confined to a daily
+CLOSE window on a grid anchored to the sampling window's own opening — a fixed, public instant,
+which is the one discriminator neither the caller's identity nor the gap since the last sample
+provides — and a level must be reached at **two distinct close-days** before it is served or
+promoted. The close window is what makes suppression impossible and kills the off-close wick;
+corroboration is what makes a single at-close print worthless. This is the dispersion remedy the
+audit prescribed twice and that was never built (REVIEW-2026-07-25 item 11); leaving it unbuilt
+is what turned an unfinished defence into a new finding. The costs are stated in
+`SPECIFICATION.md` §7b: a top printing at exactly one close is served one close late, and a fixed
+instant is predictable. Both understate `C`, which lowers leverage — the conservative direction.
 The low side is NOT the mirror of this, because the two anchors fail in opposite directions. A
 lower recorded `cap` moves a long's stop FURTHER from price and LOWERS leverage, so the low
 ratchets on EVERY observation, exactly as `sampleAnchor`'s own contract states ("sampling MORE
@@ -150,7 +186,7 @@ receipt).
 created in the same transaction as the pool. `owner` and `pool` are both the pool address, scale
 is `1`, the `(growth, fall)` pair is that product's canonical reference pair, slippage is 100 bps
 and the fee route is empty. It is registered `isSleeve` and deliberately **not** `isVault`, so it
-can never `reportWeight`, `forfeitWeight`, `beginPenalty` or `capturePenalty` — a sleeve is
+can never `reportWeight`, `scaleWeight`, `beginPenalty` or `capturePenalty` — a sleeve is
 capital being carried, not a participant with a claim. It runs the ordinary engine at the
 ordinary live price against the ordinary confirmed anchors, so a Pro/Pro Max sleeve is
 indistinguishable from a client vault opened at that moment; it is not an operator-chosen trade.
@@ -234,10 +270,10 @@ the suite at fixture setup. Before/after, bytes free:
 
 `B4Vault` is now the tightest and is the one to watch.
 
-## Settlement valuation: one price basis (AUDIT-2026-07-25 C-1)
+## Settlement valuation: one price basis (AUDIT-2026-07-25 C-1), at one instant (F4)
 
-Settlement values the vault at the price of the instant it is performed (`_livePxWad`), not at
-the interval's locked checkpoint price. This is a **correction**, not a preference.
+Settlement values the vault's composition and its price **together, at one instant**, not at the
+interval's locked checkpoint price. This is a **correction**, not a preference.
 
 `_navWad` reads the vault's composition at call time. Pairing that with a price fixed up to
 three days earlier meant every composition change inside the report window was measured against
@@ -249,8 +285,33 @@ window; the crank never touches the entry ledger, so no deposit-side rule can cl
 shared basis can. `_finalizeExit` already valued at the live price (decision C2), so this also
 removes a second harvestable gap between settle and exit.
 
+**Which instant, though, was left to whoever called `settle` — and that was AUDIT-2026-07-29 F4.**
+The C-1 fix answered *what* to pair; it left *when* open, anywhere in the three-day report window.
+Because the interval is one-shot (`lastSettledPlusOne`), a third party could settle every other
+vault in the pool at a local trough, pinning each victim's minted weight at a minimum with no
+second attempt, and settle their own at a peak. The mitigation the `Calendar` docstring records
+for `lockPrices` — the harmed party calls it at `pointTime` and removes all discretion — no longer
+transferred, precisely because C-1 had stripped the locked price of any valuation role.
+
+The instant is now its own act: `B4Vault.snapshotNav(id)` captures the NAV and the price it was
+measured at, one-shot per interval, permissionless, confined to `Calendar.SNAPSHOT_WINDOW`. Settle
+values off that capture and refuses (`NavNotSnapshotted`) rather than substituting a later price.
+Three properties make this affordable. The owner pre-empts by capturing at `pointTime`, which is
+the `lockPrices` argument restored verbatim. Reporting liveness is untouched — the weight report
+still has until `reportDeadline`, and settle captures the instant itself when it runs inside the
+window, so the ordinary keeper path is still one call. And the stored price is what the in-kind
+operator cut values the basket on, so a settle running a day after the capture does not pay a fee
+computed from one price against a NAV computed from another — the C-1 mismatch in miniature.
+
+What was deliberately not done: freezing a shared per-interval price (that *is* C-1, and it
+measures at 83.3% of the basket mis-minted), and restricting the settle *caller* instead of the
+instant (an owner-preferred window destroys the uniformity that makes a keeper's single pass
+harmless, and hands every owner a repeatable, unpreemptable slice to pick their own peak).
+The residual, rated LOW: inside the settlement day an un-pre-empted vault's instant is still
+whoever-calls-first, costing one interval's *increment* rather than the standing base.
+
 `lockPrices` is retained solely as the marker that opens an interval for reporting
-(`lockedAt` gates `reportWeight`, `forfeitWeight`, `claimFor` and settle's window); the recorded
+(`lockedAt` gates `reportWeight`, `scaleWeight`, `claimFor` and settle's window); the recorded
 `lockedPxWad` no longer feeds any valuation. That queued cleanup is now **done**: because nothing
 consumes the record, the lock no longer refuses a zero read. It writes the settlement price as
 the fixed `1 USD` (C3), writes whatever each directional asset resolves to — a dead feed simply
@@ -292,7 +353,7 @@ unreportable interval whose inventory sweeps forward — delayed liveness, never
 
 | Constant | Value | Source |
 |---|---|---|
-| Snapshot window | 24 hours (the settlement day) | chosen; SPEC §6 requires a fixed window. Since C-1 the lock feeds no valuation, so the width is a **pure liveness** choice, not a price-discretion one: the point recurs only once every ~1–1.5 years, and an hour leaves no room to recover from a dead cron, an unfunded gas wallet or an RPC outage. Missing it defers settlement, never destroys it (`SnapshotWindow.t.sol`). The discretion that does remain is over the settle instant, not the lock — see settle-timing discretion above |
+| Snapshot window | 24 hours (the settlement day) | chosen; SPEC §6 requires a fixed window. Since C-1 the lock feeds no valuation, so the width is a **pure liveness** choice, not a price-discretion one: the point recurs only once every ~1–1.5 years, and an hour leaves no room to recover from a dead cron, an unfunded gas wallet or an RPC outage. Missing it defers settlement, never destroys it (`SnapshotWindow.t.sol`). Since F4 this window also bounds the settlement VALUATION instant, because `snapshotNav` is confined to it — see settle-timing discretion above |
 | Report window | 2 days after snapshot | chosen; liveness-only |
 | Distribution window | until the next interval materializes; then single sweep | chosen (D4) |
 | Post-halving free-exit window | 20 days (= W) | chosen ("a fixed window", SPEC §4) |
@@ -403,9 +464,10 @@ step never blocks the others.
   ecosystem-wide venue failure by assumption, not a B4-specific state.
 - Unreconciled market losses transiently overstate recorded perp margin until the next
   flat valuation (B2); self-heals on one crank (`reconcileHeals` invariant handler).
-- **Settle-timing discretion.** `settle` is permissionless and values at the live price, so its
-  caller picks the instant anywhere in the ≤3-day window from `pointTime` to `reportDeadline`;
-  two vaults on the same asset can report different weight for the same interval. Real P&L
+- **Settle-timing discretion.** Narrowed to the settlement day and pre-emptable (F4): the
+  valuation instant is the one-shot `snapshotNav` capture, so a caller picks it only within
+  `SNAPSHOT_WINDOW` and only until the owner takes it at `pointTime`. Two vaults on the same asset
+  can still report different weight for the same interval if neither owner pre-empts. Real P&L
   either way — a relative-weight fairness question, never a mint.
 - **Crank-timing MEV.** Every order-emitting step is permissionless and prices off the live
   venue read, so its caller picks the block and therefore the price an IOC is quoted at and the

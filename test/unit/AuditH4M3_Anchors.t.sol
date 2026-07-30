@@ -133,14 +133,49 @@ contract AuditH4M3_AnchorsTest is VaultTestBase {
         assertLt(capAfter, capBefore);
     }
 
-    /// The honest daily cadence still ratchets — the gate must not freeze a real move.
-    function test_M3_next_day_observation_still_ratchets() public {
+    /// The honest daily cadence still ratchets — the gate must not freeze a real move — but a
+    /// new high is served only once a SECOND close reaches it (AUDIT-2026-07-25 M-3's dispersion
+    /// remedy, built in AUDIT-2026-07-29). One close makes a candidate; two make an anchor.
+    /// That is exactly what makes the single at-close wick above worthless, and the price is
+    /// this one-day lag on a genuine move.
+    function test_M3_next_day_observation_ratchets_once_corroborated() public {
         uint256 start = GENESIS_TS + Calendar.P - Calendar.W + 1 days;
         _sampleDaily(start, 11, 5_000);
+
+        // One higher close: a candidate, not yet an anchor.
         vm.warp(start + 11 days);
         _setPx(6_000);
         pool.sampleAnchor(DIR);
+        (, uint256 mid,) = pool.peaks(DIR);
+        assertEq(mid, 5_000e18, "a single higher close is only a candidate");
+
+        // A second close at the same level on a DIFFERENT day corroborates it.
+        vm.warp(start + 12 days);
+        _setPx(6_000);
+        pool.sampleAnchor(DIR);
         (, uint256 peak,) = pool.peaks(DIR);
-        assertEq(peak, 6_000e18, "a new day's higher close does ratchet");
+        assertEq(peak, 6_000e18, "two distinct closes at the level do ratchet");
+    }
+
+    /// The lag is one day, not one window: the level the market actually held is never lost, it
+    /// is only served a close later. Pinning this stops the remedy from being tightened into
+    /// "the peak must be revisited near the end of the window", which would discard real tops.
+    function test_M3_corroboration_survives_a_later_lower_close() public {
+        uint256 start = GENESIS_TS + Calendar.P - Calendar.W + 1 days;
+        _sampleDaily(start, 11, 5_000);
+
+        vm.warp(start + 11 days);
+        _setPx(6_000);
+        pool.sampleAnchor(DIR);
+        vm.warp(start + 12 days);
+        _setPx(6_000);
+        pool.sampleAnchor(DIR);
+
+        // The market falls back for the rest of the window; the corroborated high stands.
+        vm.warp(start + 13 days);
+        _setPx(3_000);
+        pool.sampleAnchor(DIR);
+        (, uint256 peak,) = pool.peaks(DIR);
+        assertEq(peak, 6_000e18, "a corroborated high is never pulled back down");
     }
 }

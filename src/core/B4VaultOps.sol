@@ -14,7 +14,7 @@ import {IB4PoolPolicy} from "../interfaces/IB4PoolPolicy.sol";
 
 interface IB4PoolVault {
     function reportWeight(uint256 id, uint256 weight) external;
-    function forfeitWeight(uint256 id) external;
+    function scaleWeight(uint256 id, uint256 keepWad) external;
     function reportDeadline(uint256 id) external view returns (uint256);
     function intervalInfo(uint256 id)
         external
@@ -64,6 +64,73 @@ contract B4VaultOps is B4VaultEngine {
         emit PolicySelected(strategy, rg, rf, scaleWad);
     }
 
+    // ================================================================= settlement snapshot
+
+    /// @notice Capture the interval's valuation instant — permissionless, one-shot, and confined
+    ///         to the settlement day (`Calendar.SNAPSHOT_WINDOW`).
+    /// @dev AUDIT-2026-07-29 F4. Settlement is one-shot per interval and used to value the vault
+    ///      at the price of the instant `settle` ran, anywhere in the 3-day report window — so a
+    ///      third party picked the valuation instant for a vault it did not own, pinned that
+    ///      vault's minted weight at a trough, and the owner had no second attempt. The
+    ///      mitigation the `Calendar` docstring records for `lockPrices` ("the harmed party can
+    ///      call it at `pointTime` and remove all discretion") had stopped applying, because
+    ///      since C-1 the locked price feeds no valuation and the discretion had moved here.
+    ///
+    ///      Separating the valuation instant from the report restores it: the owner takes this at
+    ///      `pointTime` and there is nothing left for a front-runner to choose. It narrows the
+    ///      choosable span from three days to one, and reporting liveness is untouched — the
+    ///      weight report still has until `reportDeadline`, and the ordinary keeper path is still
+    ///      a single `settle` call, which captures the snapshot itself when it runs inside the
+    ///      window.
+    ///
+    ///      Deliberately NOT gated on the wrong-sign check that `opsSettle` applies: NAV is
+    ///      well-defined whatever the position's sign, and requiring flatness here would deny the
+    ///      owner the pre-emption at `pointTime` exactly when the crank has not finished closing
+    ///      — which is the moment the pre-emption matters most. Settle still enforces it.
+    ///      Idle IS required: only then has every in-flight leg credited its bucket, so NAV is
+    ///      exact (B2).
+    function opsSnapshotNav(uint256 intervalId) external onlyInitialized {
+        if (exitShareWad != 0) revert ExitPending();
+        _requireIdle();
+        if (intervalId + 1 <= lastSettledPlusOne) revert AlreadySettled();
+        if (settleNavIdPlusOne == intervalId + 1) revert AlreadySettled(); // one-shot
+        (uint64 pointTime, uint64 lockedAt,,) = IB4PoolVault(pool).intervalInfo(intervalId);
+        if (lockedAt == 0) revert NotSettleable();
+        if (
+            block.timestamp < pointTime
+                || block.timestamp > uint256(pointTime) + Calendar.SNAPSHOT_WINDOW
+        ) revert OutsideSnapshotWindow();
+        _reconcile();
+        _captureNav(intervalId);
+    }
+
+    /// @dev Measure and store the interval's NAV and the price it was measured at, together, at
+    ///      this instant. Storing the price is what lets settle pay the in-kind operator cut on
+    ///      the same basis the NAV was taken on when it runs a day later; using the live price
+    ///      there against a day-old NAV would re-create the C-1 mismatch in miniature.
+    function _captureNav(uint256 intervalId) internal returns (uint256 pxWad) {
+        pxWad = _livePxWad();
+        if (pxWad == 0) revert ZeroPrice();
+        uint256 nav = _navWad(pxWad);
+        settleNavWad = nav;
+        _settleNavPxWad = pxWad;
+        settleNavIdPlusOne = intervalId + 1;
+        emit SettleNavSnapshotted(intervalId, nav, pxWad);
+    }
+
+    /// @dev The valuation basis for `opsSettle`: reuse the captured snapshot, or capture it now if
+    ///      settle is still inside the settlement day. Past the window with nothing captured the
+    ///      interval simply defers, which is the documented cost of missing the snapshot window
+    ///      for `lockPrices` too — deferral (~0.94–1.5 years), never destruction.
+    function _snapshotNav(uint256 intervalId) internal returns (uint256) {
+        if (settleNavIdPlusOne == intervalId + 1) return _settleNavPxWad;
+        (uint64 pointTime,,,) = IB4PoolVault(pool).intervalInfo(intervalId);
+        if (block.timestamp > uint256(pointTime) + Calendar.SNAPSHOT_WINDOW) {
+            revert NavNotSnapshotted();
+        }
+        return _captureNav(intervalId);
+    }
+
     // ================================================================= settle
 
     /// @notice SPEC §8: checkpoint-priced NAV, wrong-sign rejection, reconcile before
@@ -91,22 +158,26 @@ contract B4VaultOps is B4VaultEngine {
         }
         _reconcile();
 
-        // Value the CURRENT composition at the CURRENT price (audit C-1). Valuing it at the
-        // interval's locked checkpoint price instead — a price up to 3 days old — was the
-        // defect: `_navWad` reads composition at call time, so every composition change
-        // inside the report window was measured against a stale reference and the gap read
-        // as interval profit no capital earned. The window is exactly when the calendar
-        // MANDATES a change (`Calendar.targetAt` is 0 at the point and ramps immediately
+        // Value the composition and the price TOGETHER, at one instant (audit C-1). Valuing the
+        // current composition at the interval's locked checkpoint price instead — a price up to
+        // 3 days old — was the defect: `_navWad` reads composition at call time, so every
+        // composition change inside the report window was measured against a stale reference and
+        // the gap read as interval profit no capital earned. The window is exactly when the
+        // calendar MANDATES a change (`Calendar.targetAt` is 0 at the point and ramps immediately
         // after, so a flattening product sells and a spot product buys), and `deposit` and
-        // `crank` are both reachable there — so no deposit-side rule can close it: only a
-        // shared basis can. `_finalizeExit` already values at the live price (C2), so this
-        // also makes settle and exit agree; while they disagreed, the gap between them was
-        // itself harvestable. Entry ledger and the NAV it is subtracted from are now always
-        // taken on the same basis.
-        uint256 pxWad = _livePxWad();
-        if (pxWad == 0) revert ZeroPrice();
+        // `crank` are both reachable there — so no deposit-side rule can close it: only a shared
+        // basis can. `_finalizeExit` values at the live price of its own instant (C2), the same
+        // kind of basis, so settle and exit still agree; while they disagreed, the gap between
+        // them was itself harvestable.
+        //
+        // WHICH instant is no longer the settle caller's choice (AUDIT-2026-07-29 F4). It is the
+        // one-shot snapshot below, confined to the settlement day, which the owner can take at
+        // `pointTime` to remove all discretion. Settle itself may still take it when it runs
+        // inside that window — the common keeper path, one call as before — but past the window
+        // it must use what was captured, or defer the interval.
+        uint256 pxWad = _snapshotNav(intervalId);
         // Idle ⇒ every in-flight leg has credited its bucket; NAV is exact.
-        uint256 nav = _navWad(pxWad);
+        uint256 nav = settleNavWad;
         uint256 e = entryLedgerWad;
         uint256 profit = nav > e ? nav - e : 0;
         uint256 virtualFee = Phi.wmul(profit, Phi.FEE_F);
@@ -295,12 +366,21 @@ contract B4VaultOps is B4VaultEngine {
         // A full exit (`keep == 0`) therefore zeroes the standing base, as SPEC §9 requires.
         // The call-ORDER asymmetry this used to leave — `settle` then `exit` kept the weight
         // already reported to the pool, `exit` then `settle` never reported it — is closed on
-        // the POOL side just below, by forfeiting the reported weight, not by letting the base
+        // the POOL side just below, by scaling the reported weight, not by letting the base
         // survive the exit: a vault that has left is a leaver, and the basket is funded by
         // leavers for the benefit of stayers. Keeping a claim while holding no capital inverts
         // that (AUDIT-2026-07-25 C-1 half B).
-        if (keep == 0 && lastSettledPlusOne != 0) {
-            IB4PoolVault(pool).forfeitWeight(lastSettledPlusOne - 1);
+        //
+        // Scaled on EVERY exit that follows a settle, by the SAME `keep` the base above uses —
+        // not only on a full one. Weight tracks the capital still standing behind it, so there
+        // is no boundary for an exit to sit just above: `initiateExit(WAD − 1)` used to pay out
+        // everything but flooring dust and keep 100% of the reported weight, because the pool
+        // side tested the exact equality `keep == 0` on a number the owner chooses
+        // (AUDIT-2026-07-29 F1). `keep == 0` still forfeits everything, so the full-exit rule
+        // is the endpoint of the ramp rather than a special case, and the two sides of the
+        // ledger now state one rule instead of two.
+        if (lastSettledPlusOne != 0) {
+            IB4PoolVault(pool).scaleWeight(lastSettledPlusOne - 1, keep);
         }
         exitShareWad = 0;
         // The exit flattened the perp to szi 0; the frozen structural stop is stale. Clear it so

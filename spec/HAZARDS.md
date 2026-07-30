@@ -216,9 +216,19 @@ its effect must be proven by a later on-chain state read.
     depth and pins its stop to `C`, never below a price the fall already traversed; a deep
     short deliberately sizes below `1×`. Verified on all completed cycles: the post-pivot
     price never returned to `C`, and the +99–103% bear-market rallies of cycles 1–2 — which
-    liquidate a flat-`φ` short — clear the structural stop. The max ratchet has the same
-    directional safety as the min: an unconfirmed peak falls back to the flat base, and more
-    sampling raises the recorded high ⇒ a further stop ⇒ **less** leverage.
+    liquidate a flat-`φ` short — clear the structural stop. An unconfirmed peak falls back to the
+    flat base, as on the long side.
+  - **The max ratchet does NOT have the same directional safety as the min** (corrected
+    2026-07-30; the earlier claim that it did was false and is what let both anchor findings
+    through). Within a cycle a higher recorded high pushes the stop further out and lowers
+    leverage — safe. But `peakC` is promoted into `prevPeak`, the next cycle's delta anchor, and
+    an inflated `Pp` shrinks `(C − Pp)`, pulling the stop toward `C` and **raising** leverage a
+    cycle later. So the peak side is exposed in BOTH directions: an overstated high harms the
+    next cycle (M-3), an understated one harms this cycle (F2). That asymmetry with the low side
+    — where a lower low is fail-safe in both cycles — is why the two sides use different value
+    rules, and why the peak side alone needs a fixed, non-choosable sampling instant plus
+    corroboration (`SPECIFICATION.md` §7b, `ANCHOR_CLOSE_WINDOW`). More sampling is still never
+    harmful on either side; what is harmful is letting one caller decide the recorded value.
 
 ---
 
@@ -235,7 +245,7 @@ its effect must be proven by a later on-chain state read.
   profit no capital earned.
   Requirement, therefore: settlement values the vault at the instant it runs, and the lock
   records prices **only** as an informational artefact plus the `lockedAt` marker that opens the
-  report window (it is what gates `reportWeight`, `forfeitWeight`, `claimFor` and settle's own
+  report window (it is what gates `reportWeight`, `scaleWeight`, `claimFor` and settle's own
   window). Because nothing consumes the recorded price, the lock MUST NOT refuse a zero read
   either: an all-or-nothing refusal would now defend nothing while letting a dead feed on ONE
   co-listed asset block reporting and claiming for the WHOLE pool — pure liveness cost for zero

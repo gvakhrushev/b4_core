@@ -473,7 +473,7 @@ contract ProtocolInvariantTest is VaultTestBase {
     /// Blind spot 4: no invariant read `weightOf` or `totalWeight`, so the accounting layer
     /// audit C-1 attacked was unasserted here. The pool's weight ledger is CLOSED — its
     /// `totalWeight` is exactly the sum of the registered reporters' weights, with no third
-    /// party and no residue left by a `forfeitWeight` — and no interval can ever hand out
+    /// party and no residue left by a `scaleWeight` — and no interval can ever hand out
     /// more than it materialized. Because `claimFor` computes nominal = bucket·w/totalWeight
     /// AT CLAIM TIME, the first identity is what bounds the sum of nominal claims by the
     /// bucket independently of the per-claim `remaining` clamp.

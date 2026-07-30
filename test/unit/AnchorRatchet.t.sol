@@ -215,15 +215,24 @@ contract AnchorRatchetTest is VenueTestBase {
 
     /// The peak window `[P−W, P)` ratchets the peak UP; a lower later price does not lower it.
     /// Sampled densely so the V9 density gate confirms the window and the getter exposes it.
+    ///
+    /// Since AUDIT-2026-07-29 the served value is the highest level reached at TWO distinct
+    /// daily closes, so a higher high is a candidate on its first close and the anchor on its
+    /// second — the dispersion remedy that makes a single at-close print worthless.
     function test_peak_window_ratchets_up_only() public {
         _sampleDailyAbs(GEN_TS + Calendar.P - Calendar.W + 1 days, 11, 40_000);
         assertEq(_peakC() / 1e18, 40_000, "peakC seeded and confirmed");
         assertEq(_prevPeak(), 0, "no prior peak yet");
 
         _at(Calendar.P - Calendar.W + 12 days);
-        _setBtc(52_000); // a higher high
+        _setBtc(52_000); // a higher high — one close, so still only a candidate
         pool.sampleAnchor(DIR);
-        assertEq(_peakC() / 1e18, 52_000, "peakC ratcheted up");
+        assertEq(_peakC() / 1e18, 40_000, "one close does not move the served anchor");
+
+        _at(Calendar.P - Calendar.W + 13 days);
+        _setBtc(52_000); // corroborated by a second, distinct close
+        pool.sampleAnchor(DIR);
+        assertEq(_peakC() / 1e18, 52_000, "peakC ratcheted up once corroborated");
 
         _at(Calendar.P - 2 days);
         _setBtc(45_000); // lower again

@@ -214,6 +214,14 @@ contract B4Vault is B4VaultEngine {
 
     // ================================================================= module dispatch
 
+    /// @notice Capture this interval's valuation instant, permissionlessly, inside the settlement
+    ///         day. The vault owner calls it at `pointTime` to remove every caller's discretion
+    ///         over the price their interval weight is minted at (AUDIT-2026-07-29 F4). Optional
+    ///         for liveness: `settle` captures it itself when it runs inside the same window.
+    function snapshotNav(uint256 intervalId) external nonReentrant {
+        _delegate(abi.encodeCall(B4VaultOps.opsSnapshotNav, (intervalId)));
+    }
+
     function settle(uint256 intervalId) external nonReentrant {
         _delegate(abi.encodeCall(B4VaultOps.opsSettle, (intervalId)));
     }

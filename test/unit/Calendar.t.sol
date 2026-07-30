@@ -144,4 +144,31 @@ contract CalendarTest is Test {
         // Either the new epoch's p1 (> lastOld) or its p2; never 0, never ≤ lastOld.
         assertGt(nextNew, lastOld);
     }
+
+    /// ONE DAY OUT OF THE TWENTY, and it is a named one: the settlement day is exactly the
+    /// eleventh day of the transition, and it opens exactly on the transition's tenth daily
+    /// CLOSE. Both grids therefore run on one clock — the anchor sampler's close grid is
+    /// anchored to the window opening `P − W`, the settlement day to `P − H`, and
+    /// `W − H = 10 days` exactly, so the day the interval is valued on is a close day and not
+    /// an instant that happens to fall between two of them.
+    ///
+    /// This is what makes "the settlement day" a structural object rather than an accident of
+    /// arithmetic: `snapshotNav` is confined to it (AUDIT-2026-07-29 F4), the anchor's close 10
+    /// lands in its first hour, and neither can drift into the other's day.
+    function test_settlement_day_is_the_tenth_daily_close_of_the_transition() public pure {
+        uint256 sinceWindowOpen = (Calendar.P - Calendar.H) - (Calendar.P - Calendar.W);
+        assertEq(sinceWindowOpen, Calendar.W - Calendar.H, "H measured from the window opening");
+        assertEq(sinceWindowOpen % 1 days, 0, "the settlement point IS a daily close");
+        assertEq(sinceWindowOpen / 1 days, 10, "the tenth one");
+        // The valuation window is one of the twenty days, wholly inside the transition.
+        assertEq(Calendar.SNAPSHOT_WINDOW, 1 days, "one day");
+        assertLe(
+            (Calendar.P - Calendar.H) + Calendar.SNAPSHOT_WINDOW,
+            Calendar.P,
+            "and it closes before the pivot, so it never leaks past the transition"
+        );
+        // The T-side settlement point sits the same ten days into its own window.
+        assertEq((Calendar.T + Calendar.H) - Calendar.T, Calendar.H, "T+H is day ten of [T, T+W)");
+        assertEq(Calendar.H % 1 days, 0, "also a whole number of days");
+    }
 }

@@ -386,7 +386,7 @@ The underlying code gap is **pre-existing** (identical in base) and the audit it
 8. **Finish M-1**: add the prescribed ledger write-down with an explicit measured event inside the `amount == 0` branch, and clamp the `_startReturn` call sites with `_min64(bucket, _spotBal(...))`. Note `B4Vault` has only 354 EIP-170 bytes left, so this may have to land in a module.
 9. **Finish L-6 as filed**: give `_startPerpOrder` a `returns (bool created)` and propagate it at `B4VaultOps.sol:201` and `B4VaultEngine.sol:807`. Add the prescribed test (live position, `perpF == 0`, `setMarkPx(PERP_MKT, 0)`, assert `crank() == false`).
 10. **Finish H-4**: expose `windowTag` from `B4Pool.anchors()` and select `floor_` only when the tag is this epoch's post-halving tag.
-11. **Finish M-3's peak side**: add the dispersion remedy the audit named (re-observation by a later distinct sample, or median-of-last-N).
+11. **Finish M-3's peak side**: add the dispersion remedy the audit named (re-observation by a later distinct sample, or median-of-last-N). — **DONE 2026-07-30 (AUDIT-2026-07-29 F2).** Built as re-observation: a level is served or promoted only once TWO distinct daily closes reach it. Leaving this half unbuilt turned out to be worse than an unfinished defence, because the first half — tying the value to the density slot — created a *new* finding in the opposite direction: whoever won the daily slot owned the value, so a squatter taking every slot at a low suppressed the true high while the density gate still confirmed, raising every structural short's leverage. Value binding is now separated from density counting entirely and confined to a daily CLOSE window on a grid fixed to the peak window's opening (SPEC §152 "max close"), which is what makes suppression impossible; corroboration is what makes a single at-close print worthless. Cost, stated: a top that prints at exactly one close is served a day late, bounded by the gap between the two highest closes.
 12. **Finish H-1 item 2**: book a sleeve's realised capital in the same transaction as its own finalize regardless of who cranked it.
 13. **Write the four missing regressions** (H-2, M-2, L-3, L-4) and the two missing bound tests (`BadSlippage`, `BadSettlement`). Write the audit's requested `test_fully_exited_vault_holds_no_pool_weight`. Flip at least one invariant profile off `setAuto(true,true,true)` so the campaign can observe the C-2 hazard class.
 14. **Reconcile the documents with the code** (NR-6): `B4VaultOps.sol:283`, `spec/TEST_PLAN.md:73`, `docs/07-fee-routing.md:388`, `docs/02-core-concepts.md:229`, `B4Pool.sol:29-30` and `:359-362`, `spec/HAZARDS.md` D1 and C5, `INVARIANTS.md:43`, `Keeper.sol:38-39`. In this codebase the normative text is the control; leaving `HAZARDS` D1 mandating a rule the code violates, with a test asserting its negation, is exactly the failure mode D1 exists to prevent.
@@ -419,6 +419,18 @@ the weight. That inverts the product's model — the basket is funded by leavers
 of stayers, so a vault holding no capital must not hold a claim on it, and "weight survives a
 full exit" re-opens the clone-recycling shape of C-1. Converged the two orders on *forfeiting*
 instead: new `B4Pool.forfeitWeight(id)`, called from `_finalizeExit` when `keep == 0`.
+
+> **SUPERSEDED by AUDIT-2026-07-29 F1 (2026-07-30).** The direction recorded here — converge on
+> forfeiting, not on keeping — stands and is unchanged. What did not survive is the *trigger*:
+> `keep == 0` is an exact-equality test on a number the vault owner chooses, so `x = WAD − 1`
+> paid out every unit of the position but flooring dust and kept 100% of the reported weight.
+> The accompanying decision that "a partial exit forfeits nothing" is therefore reversed: the
+> pool side now scales by `keep` on every exit (`B4Pool.scaleWeight(id, keepWad)`), which makes a
+> full exit the endpoint of a ramp instead of a special case. Both load-bearing properties below
+> are preserved verbatim. Note for future work: no threshold replaces the boundary safely — each
+> one has its own "just above" — and a trigger derived from the post-exit BASE is worse still,
+> because `(R + C·x)·keep` is re-inflated by the exiting share's own unsettled profit, whose
+> timing the owner controls.
 Two properties it is built to preserve, both load-bearing:
   - it is confined to `block.timestamp <= reportDeadline(id)` — exactly the window in which
     `reportWeight` is allowed and in which `claimFor` still reverts `ReportWindowOpen`. The two

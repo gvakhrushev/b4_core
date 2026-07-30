@@ -223,6 +223,7 @@ function recoverPerpSurplus() external;                               // onlyOwn
 function emergencyClearRecovery() external;                           // onlyOwner
 
 function crank() external returns (bool progressed);                  // permissionless
+function snapshotNav(uint256 intervalId) external;                    // permissionless
 function settle(uint256 intervalId) external;                         // permissionless
 function claimDeferred(address recipient, address token) external;    // permissionless
 
@@ -238,7 +239,8 @@ function strategyValueWad() external view returns (uint256);
 | `deposit` | owner | Directional token and/or USDC margin. Accepted throughout the cycle; a late entrant starts at the current interpolated target and reaches the full side at the end of the 20-day transition. Credits the **actual received delta** via a balance-before/after measurement, and adds the deposited value to `entryLedgerWad`. |
 | `crank` | anyone | Verify a pending intent, else one exit step, else one sync step (delegated to `B4VaultOps.opsPlanStep`). Liveness only. |
 | `initiateExit` | owner | Sets `exitShareWad ∈ (0, 1]`; the exit is then driven by the *live* position through permissionless cranks. |
-| `settle` | anyone | Delegates to `opsSettle`. |
+| `snapshotNav` | anyone | Delegates to `opsSnapshotNav`: captures this interval's NAV **and the price it was measured at**, together, at one instant. One-shot per interval, only inside `Calendar.SNAPSHOT_WINDOW` (the settlement day), requires an idle engine. The vault **owner** calls it at `pointTime` to remove every caller's discretion over the price their interval weight is minted at (F4); anyone may call it for liveness. Optional in the common path — `settle` captures it itself when it runs inside the same window. |
+| `settle` | anyone | Delegates to `opsSettle`. Values the interval off the captured snapshot, never off the price of the instant *it* runs; past the snapshot window with nothing captured it reverts `NavNotSnapshotted` and the interval defers to the next checkpoint. |
 | `recoverEvm` / `recoverCoreSpot` / `recoverPerpSurplus` | owner | Recovery of **unaccounted** surplus only (see §4.6). |
 | `emergencyClearRecovery` | owner | Only for a stuck *surplus-recovery* intent (`RecoverSpotDir`, `RecoverSpotUsdc`, `RecoverPerpPhase1/2`) and only after `EMERGENCY_TIMEOUT` (3 days) — else `NotRecoveryIntent` / `TooEarly`. Asset-transfer intents can never be discarded. |
 | `claimDeferred` | anyone | Retries a failed payout; pays **only the recorded recipient**. |
@@ -292,6 +294,7 @@ from that field.
 function advance() external returns (bool materialized);            // permissionless
 function lockPrices(uint256 id) external;                           // permissionless
 function reportWeight(uint256 id, uint256 weight) external;         // registered vaults only
+function scaleWeight(uint256 id, uint256 keepWad) external;         // registered vaults only
 function claimFor(uint256 id, address vault) external;              // permissionless
 function sweep(uint256 id) external;                                // permissionless
 function capture() external;                                        // permissionless
@@ -324,6 +327,7 @@ Behavior worth knowing:
 - **`advance`** materializes at most one passed settlement point per call and turns the accrued inventory into that interval's bucket. `lastPointTime` is monotonic, so points of a superseded epoch that were never reached are skipped by construction.
 - **`lockPrices`** is all-or-nothing: it commits only if *every* directional asset prices non-zero inside `Calendar.SNAPSHOT_WINDOW` (24 hours — the settlement day); otherwise it reverts so a later call in the window retries. Settlement USDC is fixed at 1 USD. Missing the window makes that interval unreportable — a liveness cost, not a custody one: settle may skip it, so the fee and reward weight are measured over the combined span at the next checkpoint.
 - **`reportWeight`** accepts only registered vaults (`NotAVault`), once per vault per interval, only after prices are locked and before `reportDeadline = pointTime + SNAPSHOT_WINDOW + REPORT_WINDOW` (2 days).
+- **`scaleWeight`** accepts only registered vaults and scales the caller's own already-reported weight by the share it KEPT on an exit, lowering `totalWeight` by the same amount, so a reported claim always tracks the capital still standing behind it. Called from `_finalizeExit` on every exit that follows a settle; `keep == 0` zeroes the weight, which is the full-exit rule as the endpoint of a ramp rather than a special case. Confined to the same pre-`reportDeadline` window as `reportWeight`, so `totalWeight` never moves while claims are open, and every non-applicable case is a silent no-op — it sits on the permissionless crank path, where a revert would freeze the exit with no admin to unstick it.
 - **`claimFor`** opens after the report window closes and pays the **vault's owner**, in kind, per asset: `nominal = bucket · w / W`, and on shortfall `actual = nominal · balance / liability` — reduced per claim, so the outcome is order-independent. **No internal swap ever happens.** A hostile basket token that reverts on `balanceOf` or on `transfer` defers only its own claim (`ClaimDeferred`) and leaves the healthy tokens payable and itself retryable.
 - **`sweep`** rolls an expired interval's unclaimed inventory back into `accruing` exactly once, leaving liability unchanged.
 - **`capture`** turns an uncommitted balance above recorded liability into inventory — measured receipt only. A donation becomes pool inventory, never vault profit. **`capturePenalty`** preserves that direct path for legacy pools; in a strict Product Pool only settlement plus the exiting vault's directional token enter `(policy, directional asset)` escrow. Another whitelisted token remains ordinary donation inventory.

@@ -71,6 +71,21 @@ abstract contract B4VaultStorage {
     /// Last pool interval this vault settled (id + 1; 0 = never).
     uint256 public lastSettledPlusOne;
 
+    /// Settlement NAV captured for the interval in `settleNavIdPlusOne` (WAD USD; id + 1, so
+    /// 0 = nothing captured). AUDIT-2026-07-29 F4: `settle` used to value the vault at the price
+    /// of the instant IT ran, anywhere in the 3-day report window, so a third party chose the
+    /// valuation instant for a vault it did not own and the owner could not pre-empt it — the
+    /// interval is one-shot, so the victim had no second attempt. The valuation instant is now
+    /// a separate, one-shot, permissionless act confined to `Calendar.SNAPSHOT_WINDOW`: the
+    /// owner removes all discretion by taking it at `pointTime`, which is exactly the mitigation
+    /// the `Calendar` docstring records for `lockPrices` and which C-1 had moved out of reach.
+    /// Reporting liveness is unchanged — the weight report still has until `reportDeadline`.
+    uint256 public settleNavWad;
+    uint256 public settleNavIdPlusOne;
+    /// Price the snapshot above was taken at, so the in-kind operator payment values the basket
+    /// on the SAME basis the NAV was measured on even when settle runs a day later.
+    uint256 internal _settleNavPxWad;
+
     /// Frozen structural liquidation target (WAD) of a held leveraged long (§7b margin control).
     /// Captured once at open and NOT re-derived while held — so a live price move or a
     /// permissionless anchor sample (which flips the regime / jumps at the halving) can never
@@ -152,6 +167,7 @@ abstract contract B4VaultStorage {
         uint256 indexed intervalId, uint256 navWad, uint256 profitWad, uint256 feePaidWad
     );
     event FeePaid(address operator, uint256 operatorValueWad, address referrer);
+    event SettleNavSnapshotted(uint256 indexed intervalId, uint256 navWad, uint256 pxWad);
     event ExitInitiated(uint256 shareWad);
     event ExitCancelled(uint256 shareWad);
     event ExitFinalized(
@@ -179,6 +195,8 @@ abstract contract B4VaultStorage {
     error FeeNotRepatriated(); // settle requires the EVM basket to cover the operator cut
     error AlreadySettled();
     error NotSettleable();
+    error NavNotSnapshotted(); // settle ran past the snapshot window with no captured NAV
+    error OutsideSnapshotWindow(); // the valuation instant is confined to the settlement day
     error BadShare();
     error NotRecoveryIntent();
     error TooEarly();

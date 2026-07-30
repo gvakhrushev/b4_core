@@ -49,7 +49,7 @@ contract StrictPoolHandler is VaultTestBase {
     bool public weightExceededLegitimate;
     /// The weight the pool recorded is not the base the vault holds, immediately after settle.
     bool public reportedWeightMismatch;
-    /// C-1 half B / `B4Pool.forfeitWeight`: a FULLY exited vault kept an in-window claim.
+    /// C-1 half B / `B4Pool.scaleWeight`: a FULLY exited vault kept an in-window claim.
     bool public weightSurvivedFullExit;
     /// B4: the entry ledger was credited by a permissionless crank (no capital arrived).
     bool public entryLedgerGrewOnCrank;
@@ -390,7 +390,7 @@ contract StrictPoolHandler is VaultTestBase {
         if (v.exitShareWad() != 0) return;
         // A quarter of the lane is a FULL exit. Left to `bound(xBps, 1, 10_000) == 10_000`
         // it is a 1-in-10^4 draw, and `fullExitsObserved` was 0 across every run — so the
-        // `forfeitWeight` property this campaign exists to assert was never once evaluated.
+        // `scaleWeight` property this campaign exists to assert was never once evaluated.
         uint256 x = xBps % 4 == 0 ? Phi.WAD : bound(uint256(xBps), 1, 9_999) * 1e14;
         vm.prank(v.owner());
         try v.initiateExit(x) {
@@ -696,7 +696,7 @@ contract StrictPoolInvariantTest is VaultTestBase {
     }
 
     /// The whole weight pipeline, driven deterministically and NON-VACUOUSLY: a real profit,
-    /// a real reported weight, then `B4Pool.forfeitWeight` taking it away on a full exit.
+    /// a real reported weight, then `B4Pool.scaleWeight` taking it away on a full exit.
     /// Every step is asserted, so this test cannot silently degrade into a no-op the way an
     /// unasserted fuzz lane can.
     function test_settle_reports_weight_and_a_full_exit_forfeits_it() public {
@@ -826,7 +826,7 @@ contract StrictPoolInvariantTest is VaultTestBase {
 
     /// The weight layer C-1 attacked, asserted as a closed ledger:
     ///   * `totalWeight` is exactly the sum of the registered reporters' weights — no third
-    ///     party, and no leftover after a `forfeitWeight`. Because `claimFor` computes
+    ///     party, and no leftover after a `scaleWeight`. Because `claimFor` computes
     ///     nominal = bucket·w/totalWeight AT CLAIM TIME, this identity is what bounds
     ///     Σ nominal by the bucket independently of the per-claim `remaining` clamp;
     ///   * a pool-owned sleeve never holds weight (it is registered as a sleeve, never as a
@@ -912,7 +912,7 @@ contract StrictPoolInvariantTest is VaultTestBase {
         assertFalse(handler.reportedWeightMismatch());
     }
 
-    /// C-1 half B / `B4Pool.forfeitWeight`: a fully-exited vault holds no in-window weight.
+    /// C-1 half B / `B4Pool.scaleWeight`: a fully-exited vault holds no in-window weight.
     function invariant_full_exit_holds_no_weight() public view {
         assertFalse(handler.weightSurvivedFullExit());
     }
