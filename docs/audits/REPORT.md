@@ -4,6 +4,13 @@
 proofs and an independent audit (SECURITY_MODEL §5). Nothing in this report claims venue
 semantics proven — local mocks cannot reproduce venue timing/atomicity.
 
+> **Latest pass — 2026-07-30 ([`REMEDIATION-2026-07-30.md`](REMEDIATION-2026-07-30.md)).** Closed
+> **F3 (High)** — a permissionless-`claimDeferred` / in-flight-return wedge that AUDIT-2026-07-29
+> had a verified patch for but never applied — plus the A1–A4 residuals and a newly-found
+> weight-integrity vector (deposit-in-window basis drop). 462 tests green, each fail-before/
+> pass-after; all contracts still within EIP-170 (`B4Vault` 141 B headroom). Full audit index:
+> [`README.md`](README.md).
+
 ## Proven locally (forge, mock venue)
 
 - `forge build` clean, `forge fmt --check` clean, full `forge test` green
@@ -11,7 +18,8 @@ semantics proven — local mocks cannot reproduce venue timing/atomicity.
   also green).
 - All mandatory regressions of TEST_PLAN §2–4 — the exact traps that survived prior
   audits — fail-before/pass-after with adversarial variants (see INVARIANTS.md).
-- All 18 SECURITY_MODEL §2 invariants traced to tests with honest GAPs (INVARIANTS.md).
+- All 19 SECURITY_MODEL §2 invariants (23 rows in INVARIANTS.md, incl. the four added by later
+  rounds) traced to tests with honest GAPs (INVARIANTS.md).
 - Contract sizes: every deployed contract under EIP-170; factory initcode under EIP-3860.
 - Two internal spec contradictions surfaced, resolved, confirmed by the product owner and
   **applied to the package** (2026-07-18): same-sign interpolation — no forced sale, fee
@@ -227,6 +235,9 @@ shipped code or the docs; none reopens a prior finding.
 - **F9 (High) — user docs sold the structural stop as shipped.** README/WHITEPAPER/docs/01 now
   mark it *designed* (math + anchors shipped & tested; engine sizes flat-`φ` pending the redo),
   with a per-row status column in the README protection table.
+  *(Superseded 2026-07-30: structural margin control was subsequently shipped in the engine and the
+  user docs updated to match — see the "Shipped since" fold-in below. This bullet is retained as the
+  record of the round it belonged to.)*
 - **F5/F6 (Medium) — false short-side claims corrected.** "Exceeds base only above `C`" was
   false (crossover is `maxStop/2`, below `C`); the window regime's stop is an extrapolation from
   the previous peak (unbounded as the top approaches `prevPeak`) — now stated, with a normative
@@ -310,10 +321,16 @@ C7 ("whole deposit deployed" absent — USDC deposits sit idle, dir-only Pro Max
 silently), C9/C10 (demo errors, since fixed). The audit record lists all 10 plus 5 uncovered
 surfaces the critic flagged and pre-registers the attack surface for the redo.
 
-**Next round (not started):** the full symmetric mechanism — `margin = notional/L` on both
-sides, whole deposit deployed, sizing price captured *with* its anchors and both frozen,
-refusal → spot-only (long) / flat base (short), the high-side ratchet, plus the mandated
-regressions: a test suite that crosses a halving with a held position, samples anchors
-mid-hold, and checks the venue liquidation against `stopWad`/`shortStopWad`.
-Design-before-code, then a fresh adversarial pass. Until then the engine sizes flat-`φ` and
-the leverage figures in the demo and docs are the design target, labelled as such.
+**Shipped since (fold-in as of 2026-07-30 — supersedes the "engine sizes flat-`φ`" text above and
+the F9 note):** the structural mechanism is wired in the engine. `margin = notional/L` on both
+sides is `B4VaultEngine._perpTargetMargin` / `_szTargetStructural`, sized so the venue liquidation
+lands on the confirmed structural stop; the stops come from `_longStopWad` / `_shortStopWad`
+consuming `B4Pool.anchors` / `peaks`, frozen for the life of a held position and re-derived only at
+`szi == 0`; both anchor ratchets and the density / two-close gates are shipped and tested
+(`StructuralLeverage*.t.sol`, `StructuralAB.t.sol`, `StructuralSizing.t.sol`,
+`V8B_StructuralAudit.t.sol`, and the survival record in the README). Documented flat-`φ` **fallbacks
+remain by design**, not as a pending redo: a pool-less engine harness (no anchor source), the
+long-side interim branches outside the confirmed-anchor zones (`_longStopWad`'s documented interim),
+and the single-vault historical backtest, which deliberately does not sample anchor windows and so
+exercises the safe genesis-flat fallback rather than a structural result. The residual redo items
+(halving volume-add, growth-rise ratchet floor, per-slice DCA) are named in SPEC §7b.

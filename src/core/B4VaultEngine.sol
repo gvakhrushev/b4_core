@@ -388,16 +388,33 @@ abstract contract B4VaultEngine is B4VaultStorage {
     ///      that window — settle's NAV, the fee it charges, the pool weight it mints, exit's
     ///      gross — was overstated by the in-flight amount.
     ///
-    ///      `deferredPayoutTotal` is deliberately NOT subtracted: it changes only inside
-    ///      settle / exit-finalize, both of which require an idle engine, so it is constant
-    ///      across a leg's lifetime and cancels in the delta.
+    ///      `deferredPayoutTotal` IS subtracted, on the same grounds as `opsRecoverEvm`:
+    ///      a deferred payout is value the vault physically holds but OWES its recorded
+    ///      recipient, so it is accounted, never "unaccounted". An earlier revision left it
+    ///      in, on the claim that it "changes only inside settle / exit-finalize, both of
+    ///      which require an idle engine". That was FALSE in one direction: `claimDeferred`
+    ///      is permissionless and carries no idle gate, so it lowered the EVM balance WITHOUT
+    ///      lowering the subtrahend, shrinking this measure under a live leg. A claim of `A`
+    ///      mid-flight left a `ReturnDir`/`ReturnUsdc` permanently short of `evmNeeded` while
+    ///      `decreased` kept the resend branch shut — an intent that can neither complete nor
+    ///      resend, which `emergencyClearRecovery` refuses (it takes `Recover*` kinds only),
+    ///      freezing every idle-gated entrypoint with no admin to unstick it. An honest keeper
+    ///      reaches `crankVault` then `retryDeferred` in ONE transaction, so this needed no
+    ///      attacker (AUDIT-2026-07-29 F3).
+    ///
+    ///      With it subtracted the measure is invariant to the whole deferred mechanism: a
+    ///      claim lowers `bal` and `deferredPayoutTotal` by the same `A` and cancels exactly (a
+    ///      failed transfer reverts, rolling both back together), and payouts are DEFERRED only
+    ///      inside settle / exit-finalize, which do require an idle engine — so the subtrahend
+    ///      cannot rise under a live leg either.
     ///
     ///      Liveness (A3/A7) is unchanged: the resend gate is still exactly `!decreased`,
     ///      and the only path that could drain this quantity out from under a live leg,
     ///      `opsRecoverEvm`, already requires an idle engine for both accounted tokens.
     function _unaccountedEvm(address token, bool isDir) internal view returns (uint256) {
         uint256 bal = IERC20(token).balanceOf(address(this));
-        uint256 booked = isDir ? dirEvm : usdcRotatedEvm + usdcMarginEvm;
+        uint256 booked =
+            deferredPayoutTotal[token] + (isDir ? dirEvm : usdcRotatedEvm + usdcMarginEvm);
         return bal > booked ? bal - booked : 0;
     }
 
@@ -450,11 +467,14 @@ abstract contract B4VaultEngine is B4VaultStorage {
 
     /// One IOC perp order. Reductions are reduce-only and never cross zero; a full close
     /// targets exact zero (A10). Non-reduce opens carry the $10 minimum (SPEC §7).
-    function _startPerpOrder(bool isBuy, uint64 szLots, bool reduceOnly) internal {
-        if (szLots == 0) return;
+    /// @return emitted true iff an IOC order was actually sent. A dead mark feed or a zero size
+    ///         emits nothing and returns false, so a planner never reports progress on a no-op
+    ///         (A13 / audit L-6): the caller holds and the keeper's bounded loop stops spinning.
+    function _startPerpOrder(bool isBuy, uint64 szLots, bool reduceOnly) internal returns (bool) {
+        if (szLots == 0) return false;
         CoreTypes.Position memory pos = _position();
         uint256 markWad = CoreReader.perpPxWad(_dir, true);
-        if (markWad == 0) return; // perp feed down: hold, never emit a px-0 order (V8-L-1)
+        if (markWad == 0) return false; // perp feed down: hold, never emit a px-0 order (V8-L-1)
         uint256 limitWad = isBuy
             ? Phi.mulDiv(markWad, 10_000 + PERP_ENVELOPE_BPS, 10_000)
             : Phi.mulDiv(markWad, 10_000 - PERP_ENVELOPE_BPS, 10_000);
@@ -475,6 +495,7 @@ abstract contract B4VaultEngine is B4VaultStorage {
             _perpLotsToSz8(szLots),
             reduceOnly
         );
+        return true;
     }
 
     function _positivePnl6(CoreTypes.Position memory pos, uint256 markWad)
@@ -838,8 +859,9 @@ abstract contract B4VaultEngine is B4VaultStorage {
 
         // 1. Wrong-sign (or should-be-zero) perp: reduce to exact zero first.
         if (pos.szi != 0 && (perpF == 0 || (pos.szi > 0) != (perpF > 0))) {
-            _startPerpOrder(pos.szi < 0, uint64(Phi.abs(pos.szi)), true);
-            return true;
+            // Hold (return false) if the mark feed is down: cannot flatten, and must NOT fall
+            // through to spot/perp sizing while a wrong-sign perp is still open.
+            return _startPerpOrder(pos.szi < 0, uint64(Phi.abs(pos.szi)), true);
         }
         // 2. Harvest claim: settle min(claim, available), clear.
         if (pendingHarvest6 > 0) {
@@ -1154,12 +1176,10 @@ abstract contract B4VaultEngine is B4VaultStorage {
         if (diffUsdWad <= bandUsd) return false;
         bool targetLong = perpF > 0;
         if (szTarget > absNow) {
-            _startPerpOrder(targetLong, szTarget - absNow, false);
-        } else {
-            // Shrink toward target: reduce-only, opposite side.
-            _startPerpOrder(!targetLong, absNow - szTarget, true);
+            return _startPerpOrder(targetLong, szTarget - absNow, false);
         }
-        return true;
+        // Shrink toward target: reduce-only, opposite side.
+        return _startPerpOrder(!targetLong, absNow - szTarget, true);
     }
 
     /// @dev The structural stop (WAD) for a leveraged LONG at price `pxWad`, selected by the

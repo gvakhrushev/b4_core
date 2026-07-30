@@ -47,6 +47,11 @@ contract B4VaultOps is B4VaultEngine {
     ///         pool validates the exact canonical strategy pair, scale and direction of
     ///         the product transition before any vault state changes.
     function opsSelectPolicy(address strategy, uint256 scaleWad) external onlyInitialized {
+        // Re-targeting mutates growth/fall; a leg already in flight was planned against the OLD
+        // target and would verify against the new one. Require idle. `targets()` is an external
+        // call to a not-yet-validated strategy address, so the entry (B4Vault.selectPolicy)
+        // carries `nonReentrant`; this cannot re-enter deposit/crank mid-selection.
+        _requireIdle();
         (int256 g, int256 f) = IStrategy(strategy).targets();
         if (!IB4PoolPolicy(pool).policyAllowedForVault(address(this), strategy, g, f, scaleWad)) {
             revert BadPolicy();
@@ -263,6 +268,39 @@ contract B4VaultOps is B4VaultEngine {
         return _planSyncStep();
     }
 
+    /// @dev Write down spot principal to the real Core spot balance — the spot analogue of
+    ///      `_reconcile` (which covers only perp margin). A vault's own spot balance normally
+    ///      only GROWS from outside (donations add; nothing external subtracts), so this is a
+    ///      no-op on the happy path. But a cross-margin liquidation reaching spot USDC, or a
+    ///      partial `spotSend`, can leave a booked bucket ABOVE the real balance; a Return leg
+    ///      for that phantom remainder then proves `decreased` yet never reaches
+    ///      `received >= evmNeeded` and livelocks the exit while NAV stays overstated (audit
+    ///      M-1, second clause). Called only at an idle engine (its callers require it), so any
+    ///      gap is a realized loss, not an in-flight leg of our own.
+    function _reconcileSpot() internal {
+        uint64 dirBal = _spotBal(_dir.coreToken);
+        if (coreDirWei > dirBal) {
+            emit LossReconciled(coreDirWei - dirBal);
+            coreDirWei = dirBal;
+        }
+        // Rotation and margin USDC share one Core token; funding is headroom-capped so their
+        // sum always fits uint64. Compare the SUM to the real balance, absorbing any shortfall
+        // from rotation (strategy) first, then margin.
+        uint64 rot = coreUsdcRotatedWei;
+        uint64 marg = coreUsdcMarginWei;
+        uint64 usdcBal = _spotBal(_usdc.coreToken);
+        // uint256 sum so this can NEVER revert-on-overflow: a revert here runs on the exit
+        // crank and would re-freeze the very exit this heals.
+        uint256 booked = uint256(rot) + marg;
+        if (booked > usdcBal) {
+            uint256 loss = booked - usdcBal;
+            uint64 fromRot = loss < rot ? uint64(loss) : rot; // ≤ rot
+            coreUsdcRotatedWei = rot - fromRot;
+            coreUsdcMarginWei = marg - uint64(loss - fromRot); // loss − fromRot ≤ marg
+            emit LossReconciled(uint64(loss));
+        }
+    }
+
     /// @dev One exit step: flatten to raw zero → harvest → reconcile → return all Core
     ///      principal → finalize. Strict flatness everywhere (A10); driven by the LIVE
     ///      position, resubmitting on partial fills (SPEC §9).
@@ -277,6 +315,7 @@ contract B4VaultOps is B4VaultEngine {
             return true;
         }
         _reconcile();
+        _reconcileSpot(); // write down spot principal above the real Core balance (audit M-1)
         if (perpMargin6 > 0) {
             _startFromPerp(Purpose.Margin, perpMargin6);
             return true;
