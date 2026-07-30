@@ -54,3 +54,6 @@ a permissionless **keeper** merely advances the machine.
 - [`../REPORT.md`](audits/REPORT.md) — the security dossier and full internal audit history
 - [`../SLITHER.md`](audits/SLITHER.md) — static-analysis triage
 - [`../SECURITY.md`](../SECURITY.md) — how to report a vulnerability
+- [`design/`](design/) — accepted design proposals, the structural state machine, and
+  [`CLEANROOM-HANDOFF.md`](design/CLEANROOM-HANDOFF.md): the prompt this repository was built
+  from, kept as provenance for why the code is shaped the way it is

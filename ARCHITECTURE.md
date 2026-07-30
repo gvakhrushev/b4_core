@@ -1,6 +1,8 @@
 # B4 — implementation architecture & design decisions
 
-Clean-room implementation of the `b4-greenfield` specification package. This document is
+Clean-room implementation of the specification package now in [`spec/`](spec/) — see
+[`docs/design/CLEANROOM-HANDOFF.md`](docs/design/CLEANROOM-HANDOFF.md) for the terms the build
+was handed over on. This document is
 normative for the implementation (HAZARDS G3): every place the package left freedom — or
 contradicted itself — the resolution is recorded here, in the same change as the code.
 
