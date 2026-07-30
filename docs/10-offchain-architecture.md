@@ -87,7 +87,7 @@ of `t = now − halvingTs` in `Calendar`, and a stale answer costs the user real
 | Value | Cost of being wrong |
 |---|---|
 | `freeExit(t)` | an exit priced at the `q ≈ 11.8%` penalty instead of free |
-| `depositOpen(t)` | a reverted deposit |
+| Current `targetAt(t)` | the late entrant's initial partial exposure |
 | `zoneAt(t)` / `targetAt(t, growth, fall)` | a wrong expectation of what the vault will do |
 
 Take `halvingTs` from `HalvingOracle.latest()` and evaluate the rest locally. Mirroring
@@ -194,7 +194,7 @@ step remains delayed liveness, never loss of funds.
 - [ ] Choose a `FeeRoute` (`operatorBps ≤ 3819`; a referrer, if set, takes a protected share of *your* payment).
 - [ ] Index the events above; expose `blockNumber` + timestamp on every response.
 - [ ] Serve live vault state via `eth_call`; never cache `navWad` / `currentTarget` as truth.
-- [ ] Compute zone, `freeExit` and `depositOpen` **client-side** from `HalvingOracle.latest()`.
+- [ ] Compute zone, `freeExit` and the current interpolated target **client-side** from `HalvingOracle.latest()`.
 - [ ] Run automation from a funded, authority-free gas wallet; alert on low balance.
 - [ ] Alert on the two settlement points specifically — the 24h lock window is the only hard deadline in the system, and it recurs only once every 1–1.5 years, so test the alarm long before you need it.
 - [ ] Verify the UI's read and exit paths still work with the backend switched off.

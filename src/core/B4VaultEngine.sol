@@ -9,8 +9,19 @@ import {CoreTypes} from "../venue/CoreTypes.sol";
 import {CoreReader} from "../venue/CoreReader.sol";
 import {CoreWriterLib} from "../venue/CoreWriterLib.sol";
 import {DescriptorLib} from "../venue/DescriptorLib.sol";
+import {StructuralLeverage} from "../libraries/StructuralLeverage.sol";
 import {IERC20} from "../interfaces/IERC20.sol";
 import {IHalvingOracle} from "../interfaces/IHalvingOracle.sol";
+
+/// @dev Minimal view of B4Pool for the structural-leverage anchors (SPECIFICATION §7b):
+///      confirmed lows for the long, confirmed peaks for the short.
+interface IB4PoolAnchors {
+    function anchors(uint256 assetIndex) external view returns (uint256 floor, uint256 cap);
+    function peaks(uint256 assetIndex)
+        external
+        view
+        returns (uint256 prevPeak, uint256 peakC, uint256 peakTag);
+}
 
 /// @title B4VaultEngine — the asynchronous execution engine.
 /// @notice The core discipline (HAZARDS A):
@@ -65,6 +76,41 @@ abstract contract B4VaultEngine is B4VaultStorage {
         return weiAmount / uint64(10 ** (_usdc.coreWeiDecimals - CoreTypes.PERP_USD_DECIMALS));
     }
 
+    /// The two Core-spot USDC sub-buckets label the SAME token: `coreUsdcRotatedWei` counts as
+    /// strategy value, `coreUsdcMarginWei` as perp collateral. Reclassifying moves value between
+    /// the strategy and margin sides of NAV with NO Core transaction (the sum, and thus the
+    /// actual Core balance, is unchanged). This is what lets a short be funded by selling spot
+    /// (V6-M-2): the fall's sale lands USDC in `rotated`, the short needs it in `margin`; the
+    /// recovery needs the reverse to buy spot back. Callers MUST follow it with the intent that
+    /// consumes the reclassified funds in the SAME step, so the crank reports progress (A13).
+    function _reclassifyUsdc(bool toMargin, uint64 needWei) internal {
+        if (toMargin) {
+            uint64 m = _min64(needWei, coreUsdcRotatedWei);
+            coreUsdcRotatedWei -= m;
+            coreUsdcMarginWei += m;
+        } else {
+            uint64 m = _min64(needWei, coreUsdcMarginWei);
+            coreUsdcMarginWei -= m;
+            coreUsdcRotatedWei += m;
+        }
+    }
+
+    /// EVM-side counterpart of `_reclassifyUsdc`. Steady-state custody is EVM, so a short's
+    /// funding proceeds are typically repatriated to `usdcRotatedEvm` before the perp step runs;
+    /// this reclassifies them to `usdcMarginEvm` so the margin fund path (`_startFund`) can carry
+    /// them back to Core as collateral. Same-token bookkeeping; NAV-neutral (V6-M-2).
+    function _reclassifyUsdcEvm(bool toMargin, uint256 amount) internal {
+        if (toMargin) {
+            uint256 m = Phi.min(amount, usdcRotatedEvm);
+            usdcRotatedEvm -= m;
+            usdcMarginEvm += m;
+        } else {
+            uint256 m = Phi.min(amount, usdcMarginEvm);
+            usdcMarginEvm -= m;
+            usdcRotatedEvm += m;
+        }
+    }
+
     function _livePxWad() internal view returns (uint256) {
         return CoreReader.spotPxWad(_dir);
     }
@@ -109,7 +155,9 @@ abstract contract B4VaultEngine is B4VaultStorage {
         }
         uint256 q = (px8 / step) * step; // rounded DOWN to the coarsest valid grid
         if (roundUp && q != px8) q += step; // SELL: round UP so we never sit below the floor
-        return uint64(q);
+        // Clamp before the narrowing cast (V8-I-7): above ~$1.8e11 the quantized price
+        // exceeds the uint64 ceiling and a raw cast would silently truncate mod 2^64.
+        return q > type(uint64).max ? type(uint64).max : uint64(q);
     }
 
     /// Read-convention perp px (6 − szDecimals decimals) — used for PnL notional math.
@@ -190,6 +238,8 @@ abstract contract B4VaultEngine is B4VaultStorage {
         if (wd < perpMargin6) {
             uint64 loss = perpMargin6 - wd;
             perpMargin6 = wd;
+            perpStopWad = 0; // the position closed adversely (e.g. a venue liquidation) — the
+            // frozen stop is stale; the next open re-derives from the live price.
             emit LossReconciled(loss);
         }
     }
@@ -267,6 +317,13 @@ abstract contract B4VaultEngine is B4VaultStorage {
         _snapshotBase(dirToken ? IntentKind.FundDir : IntentKind.FundUsdc, purpose, weiAmount);
         intent.snapSrcWei = _spotBal(d.coreToken);
         intent.firstCredit = !CoreReader.coreUserExists(address(this));
+        // PIN the activation allowance at creation (audit L-4). A `Fund` leg polls forever
+        // by design (A8: no resend, no abandon), and the allowance is denominated in TOKENS
+        // — `$5 / px`. Re-deriving it at the live price on every poll meant a price RISE
+        // shrank the allowance, lifting the completion threshold above a credit whose fee
+        // was already deducted at the older, lower price: the leg could then never complete
+        // and the vault would stall permanently. `snapAux` is unused by the funding legs.
+        intent.snapAux = intent.firstCredit ? _activationAllowanceWei(d) : 0;
         d.evmToken.safeTransfer(CoreTypes.systemAddress(d.coreToken), evmAmount);
         return true;
     }
@@ -290,6 +347,13 @@ abstract contract B4VaultEngine is B4VaultStorage {
             limitWad = Phi.mulDiv(pxWad, 10_000 - slippageBps, 10_000);
         }
         if (sz == 0) return false; // zero-size orders are never sent (SPEC §7)
+        // Post-flooring minimum-notional hold (V8-M-4): when one lot is worth more than
+        // (diff − $10), the floored order lands below the venue's $10 minimum and the
+        // live venue rejects it (resend wedge, H3). Re-check the EMITTED order's own
+        // notional at its limit price and hold — same shape as the planner's hold band.
+        if (Phi.mulDiv(uint256(sz), limitWad, 10 ** _dir.spotSzDecimals) < MIN_ORDER_USD_WAD) {
+            return false;
+        }
         _snapshotBase(IntentKind.SpotOrder, Purpose.Generic, inputWei);
         intent.isBuy = isBuy;
         intent.orderSz = sz;
@@ -308,13 +372,42 @@ abstract contract B4VaultEngine is B4VaultStorage {
         return true;
     }
 
+    /// @dev The EVM balance of `token` in excess of the buckets this vault already records
+    ///      for it — the RELIABLE receipt measure for a Core→EVM leg (A2).
+    ///
+    ///      A Core→EVM delivery is the only inflow that raises this WITHOUT simultaneously
+    ///      raising a recorded bucket, so it, not the raw balance, is the "destination
+    ///      received the full amount" A2 demands. Keying on the raw balance is the same
+    ///      defect audit C-2 fixed on the Core-spot destination ("an increase of the output
+    ///      proves nothing"), left standing on the EVM destination: ANY concurrent inflow —
+    ///      the owner's own `deposit`, which is reachable while an intent is pending, or a
+    ///      third-party transfer — satisfied the receipt and cleared the intent while the
+    ///      venue was still inside its debit-then-deliver window (A7). The value was then on
+    ///      neither side with no pending marker, so at an IDLE engine the recorded books
+    ///      exceeded the real assets (invariants 3/4/5/6/17) and every valuation taken in
+    ///      that window — settle's NAV, the fee it charges, the pool weight it mints, exit's
+    ///      gross — was overstated by the in-flight amount.
+    ///
+    ///      `deferredPayoutTotal` is deliberately NOT subtracted: it changes only inside
+    ///      settle / exit-finalize, both of which require an idle engine, so it is constant
+    ///      across a leg's lifetime and cancels in the delta.
+    ///
+    ///      Liveness (A3/A7) is unchanged: the resend gate is still exactly `!decreased`,
+    ///      and the only path that could drain this quantity out from under a live leg,
+    ///      `opsRecoverEvm`, already requires an idle engine for both accounted tokens.
+    function _unaccountedEvm(address token, bool isDir) internal view returns (uint256) {
+        uint256 bal = IERC20(token).balanceOf(address(this));
+        uint256 booked = isDir ? dirEvm : usdcRotatedEvm + usdcMarginEvm;
+        return bal > booked ? bal - booked : 0;
+    }
+
     /// Core spot → EVM return of recorded principal.
     function _startReturn(bool dirToken, Purpose purpose, uint64 weiAmount) internal {
         if (weiAmount == 0) return;
         CoreTypes.AssetDescriptor memory d = dirToken ? _dir : _usdc;
         _snapshotBase(dirToken ? IntentKind.ReturnDir : IntentKind.ReturnUsdc, purpose, weiAmount);
         intent.snapSrcWei = _spotBal(d.coreToken);
-        intent.snapEvm = IERC20(d.evmToken).balanceOf(address(this));
+        intent.snapEvm = _unaccountedEvm(d.evmToken, dirToken);
         CoreWriterLib.spotSend(CoreTypes.systemAddress(d.coreToken), d.coreToken, weiAmount);
     }
 
@@ -361,6 +454,7 @@ abstract contract B4VaultEngine is B4VaultStorage {
         if (szLots == 0) return;
         CoreTypes.Position memory pos = _position();
         uint256 markWad = CoreReader.perpPxWad(_dir, true);
+        if (markWad == 0) return; // perp feed down: hold, never emit a px-0 order (V8-L-1)
         uint256 limitWad = isBuy
             ? Phi.mulDiv(markWad, 10_000 + PERP_ENVELOPE_BPS, 10_000)
             : Phi.mulDiv(markWad, 10_000 - PERP_ENVELOPE_BPS, 10_000);
@@ -426,7 +520,7 @@ abstract contract B4VaultEngine is B4VaultStorage {
         if (intent.firstCredit) {
             // Tolerate the activation fee on the first credit (A9), but always require a
             // measured non-zero credit before completing.
-            uint64 allowance = _activationAllowanceWei(d);
+            uint64 allowance = intent.snapAux; // pinned at creation (L-4), never re-derived
             threshold = threshold > allowance + 1 ? threshold - allowance : 1;
         }
         if (delta < threshold) return false; // keep polling (A8): no resend, no dead zone
@@ -461,9 +555,22 @@ abstract contract B4VaultEngine is B4VaultStorage {
         uint64 curOut = _spotBal(outToken);
         uint64 inDelta = intent.snapSrcWei > curIn ? intent.snapSrcWei - curIn : 0;
         uint64 outDelta = curOut > intent.snapAux ? curOut - intent.snapAux : 0;
-        if (inDelta == 0 && outDelta == 0) {
+        // A2: only a self-caused DECREASE of the INPUT proves the IOC executed. An increase
+        // of the output proves nothing — anyone may transfer into a Core spot balance, so
+        // gating on `outDelta` let a 1-wei donation clear a still-live order before its
+        // timeout, with zero accounting, leaving the later fill entirely unaccounted
+        // (audit C-2). `outDelta` survives below only as the measured credit, capped.
+        //
+        // Clearing on timeout stays safe in every `inDelta == 0` case, because
+        // `inDelta == 0` means `curIn >= snapSrcWei`: the input bucket's ledger is never
+        // above the real balance. A genuine fill whose debit is masked by a concurrent
+        // top-up is exactly compensated (spend + top-up net to >= 0), so books still match
+        // assets and the received output is simply unaccounted, owner-recoverable surplus
+        // (A11) — the safe direction. Books can never exceed assets here.
+        if (inDelta == 0) {
             if (block.timestamp < intent.createdAt + RESEND_TIMEOUT) return false;
-            // IOC observed no fill: nothing to account; planner may issue a fresh order.
+            // IOC observed no measured input debit: nothing to account; planner may issue
+            // a fresh order.
             emit IntentCleared(IntentKind.SpotOrder);
             _clearIntent();
             return true;
@@ -497,8 +604,10 @@ abstract contract B4VaultEngine is B4VaultStorage {
         uint64 cur = _spotBal(d.coreToken);
         bool decreased = cur < intent.snapSrcWei;
         uint256 evmNeeded = DescriptorLib.coreToEvm(d, intent.amount);
-        uint256 evmBal = IERC20(d.evmToken).balanceOf(address(this));
-        uint256 received = evmBal > intent.snapEvm ? evmBal - intent.snapEvm : 0;
+        // A2: the receipt is the growth of the UNACCOUNTED EVM balance, never the raw
+        // balance — see `_unaccountedEvm`.
+        uint256 un = _unaccountedEvm(d.evmToken, isDir);
+        uint256 received = un > intent.snapEvm ? un - intent.snapEvm : 0;
         if (decreased && received >= evmNeeded) {
             if (isDir) {
                 coreDirWei -= _min64(intent.amount, coreDirWei);
@@ -517,6 +626,19 @@ abstract contract B4VaultEngine is B4VaultStorage {
         // A7: once the source decreased the leg executed — wait for delivery, NEVER resend.
         if (!decreased && block.timestamp >= intent.createdAt + RESEND_TIMEOUT) {
             uint64 amount = intent.amount <= cur ? intent.amount : cur; // defensive re-clamp
+            // A zero re-clamp is terminal, not defensive (audit M-1): a zero-amount
+            // spotSend can never decrease the source, so `decreased` stays false forever
+            // while this resend branch stays true forever — the intent never clears and
+            // every idle-gated entrypoint (settle, exit finalize, recovery) dies with it,
+            // permanently, with no admin to unstick it. Reaching here with `cur == 0`
+            // implies `snapSrcWei == 0` (otherwise `cur < snapSrcWei` and `decreased` would
+            // be true), so nothing was ever on Core to return and clearing owes no debit.
+            // A12: a timeout may schedule, never wedge.
+            if (amount == 0) {
+                emit IntentCleared(kind);
+                _clearIntent();
+                return true;
+            }
             intent.amount = amount;
             intent.createdAt = uint40(block.timestamp); // one live action at a time
             CoreWriterLib.spotSend(CoreTypes.systemAddress(d.coreToken), d.coreToken, amount);
@@ -663,8 +785,11 @@ abstract contract B4VaultEngine is B4VaultStorage {
         uint64 cur2 = _spotBal(d.coreToken);
         bool decreased = cur2 < intent.snapSrcWei;
         uint256 evmNeeded = DescriptorLib.coreToEvm(d, intent.amount);
-        uint256 evmBal = IERC20(d.evmToken).balanceOf(address(this));
-        uint256 received = evmBal > intent.snapEvm ? evmBal - intent.snapEvm : 0;
+        // Same A2 receipt rule as `_verifyReturn`, and it matters more here: this branch
+        // pays `evmNeeded` straight OUT to the owner, so a spoofed receipt would move
+        // accounted tokens against surplus that has not landed yet.
+        uint256 un = _unaccountedEvm(d.evmToken, kind == IntentKind.RecoverSpotDir);
+        uint256 received = un > intent.snapEvm ? un - intent.snapEvm : 0;
         if (decreased && received >= evmNeeded) {
             // Bounded surplus straight to the owner — no accounting callback (B6).
             d.evmToken.safeTransfer(owner, evmNeeded);
@@ -692,7 +817,7 @@ abstract contract B4VaultEngine is B4VaultStorage {
         CoreTypes.AssetDescriptor memory d = kind == IntentKind.RecoverSpotDir ? _dir : _usdc;
         _snapshotBase(kind, Purpose.Generic, weiAmount);
         intent.snapSrcWei = _spotBal(d.coreToken);
-        intent.snapEvm = IERC20(d.evmToken).balanceOf(address(this));
+        intent.snapEvm = _unaccountedEvm(d.evmToken, kind == IntentKind.RecoverSpotDir);
         CoreWriterLib.spotSend(CoreTypes.systemAddress(d.coreToken), d.coreToken, weiAmount);
     }
 
@@ -763,18 +888,26 @@ abstract contract B4VaultEngine is B4VaultStorage {
         if (targetValWad > dirValWad + band) {
             uint256 spendUsdWad = targetValWad - dirValWad;
             uint64 spendWei = _fromWad64(spendUsdWad, _usdc.coreWeiDecimals); // clamp, not wrap
+            // Buy spot from margin USDC too (V6-M-2 reverse): after a short closes, its margin
+            // returns to the margin sub-bucket; reclassify what rotation still lacks so the
+            // recovery buys BTC back. Followed immediately by the buy order below (progress).
+            if (coreUsdcRotatedWei < spendWei && coreUsdcMarginWei > 0) {
+                _reclassifyUsdc(false, spendWei - coreUsdcRotatedWei);
+            }
             if (
                 coreUsdcRotatedWei > 0
                     && _startSpotOrder(true, _min64(spendWei, coreUsdcRotatedWei))
             ) {
                 return true;
             }
+            // EVM-side reverse: a closed short's margin is repatriated to `usdcMarginEvm`;
+            // reclassify it to rotation so the recovery can fund a Core buy (V6-M-2).
+            uint256 spendEvm = DescriptorLib.coreToEvm(_usdc, spendWei);
+            if (usdcRotatedEvm < spendEvm && usdcMarginEvm > 0) {
+                _reclassifyUsdcEvm(false, spendEvm - usdcRotatedEvm);
+            }
             if (usdcRotatedEvm > 0) {
-                return _startFund(
-                    false,
-                    Purpose.Generic,
-                    Phi.min(DescriptorLib.coreToEvm(_usdc, spendWei), usdcRotatedEvm)
-                );
+                return _startFund(false, Purpose.Generic, Phi.min(spendEvm, usdcRotatedEvm));
             }
             return false; // nothing to buy with (or only sub-lot Core dust)
         }
@@ -790,6 +923,151 @@ abstract contract B4VaultEngine is B4VaultStorage {
         return false;
     }
 
+    /// @dev Fund perp margin toward `need6` from strategy USDC (the V6-M-2 reclassify path:
+    ///      rotated→margin on both Core and EVM sides, then ToPerp / Fund). Same-token,
+    ///      NAV-neutral reclassify followed IN THE SAME STEP by the intent that consumes it
+    ///      (A13). Returns true iff an intent was created; a margin-constrained or sub-unit
+    ///      top-up returns false so the caller sizes against the margin already present (M-1).
+    function _fundPerpMargin(uint64 need6) internal returns (bool) {
+        if (perpMargin6 >= need6) return false;
+        uint64 deficit6 = need6 - perpMargin6;
+        uint64 deficitWei = _usd6ToWei(deficit6);
+        if (coreUsdcMarginWei < deficitWei && coreUsdcRotatedWei > 0) {
+            _reclassifyUsdc(true, deficitWei - coreUsdcMarginWei);
+        }
+        if (coreUsdcMarginWei > 0 && _startToPerp(_min64(_weiToUsd6(coreUsdcMarginWei), deficit6)))
+        {
+            return true;
+        }
+        uint256 deficitEvm =
+            _fromWad(_toWad(deficit6, CoreTypes.PERP_USD_DECIMALS), _usdc.evmDecimals);
+        if (usdcMarginEvm < deficitEvm && usdcRotatedEvm > 0) {
+            _reclassifyUsdcEvm(true, deficitEvm - usdcMarginEvm);
+        }
+        if (
+            usdcMarginEvm > 0
+                && _startFund(false, Purpose.Margin, Phi.min(deficitEvm, usdcMarginEvm))
+        ) {
+            return true;
+        }
+        return false;
+    }
+
+    /// @dev The target perp margin (WAD) to deploy and, for a leveraged long, the structural
+    ///      stop. A leveraged long (Pro Max, g > 1) deploys the WHOLE strategy as margin ramped
+    ///      by the calendar (`navWad·perpF/g`) with the venue liquidation placed at `stopWad`;
+    ///      shorts / g ≤ 1 keep the flat-φ reserve (`notional·φ/maxLev`). Refusal / sub-min ⇒ 0.
+    ///      Split out to bound `_planPerpStep`'s stack frame.
+    function _perpTargetMargin(int256 perpF, uint256 v, uint256 pxWad, int64 szi)
+        internal
+        returns (uint256 marginNeedWad, uint256 stopWad, bool structural)
+    {
+        bool long = perpF > 0;
+        uint256 g = uint256(Phi.abs(long ? growthTarget : fallTarget));
+        // A perp LONG exists only for a leveraged product (Pro Max, g > 1 — Pro/B4/Mini hold
+        // spot); a perp SHORT exists for Pro (flat, pinned to C) and Pro Max (2-anchor). Both are
+        // margin-control structural. `pool != 0` guards the bare engine harness (flat-φ fallback).
+        structural = pool != address(0) && pxWad != 0 && (long ? g > Phi.WAD : perpF < 0);
+        if (structural) {
+            // The frozen stop is (re-)derived at the CURRENT price every idle crank WHILE FLAT
+            // (szi == 0), and held UNCHANGED once the position is live (szi != 0). Freezing only
+            // across the live span is what stops a price move or an anchor flip re-trading a HELD
+            // position (C1/C4); re-deriving while flat is what guarantees a full exit, a no-loss
+            // venue close (ADL/forced-deleverage), or a multi-crank async funding gap always opens
+            // against a FRESH stop — no stale value survives a flatten (kills the exit/close
+            // re-lever class the fan-out flagged). A refusal (long p ≤ stop / short p ≥ stop ⇒ s 0
+            // or on the wrong side) freezes nothing ⇒ marginNeed 0 ⇒ hold the un-leveraged USDC (C5).
+            if (szi == 0) {
+                uint256 s = long ? _longStopWad(pxWad) : _shortStopWad(pxWad);
+                perpStopWad = (s != 0 && (long ? pxWad > s : s > pxWad)) ? s : 0;
+                perpStopLong = long;
+            }
+            stopWad = perpStopWad;
+            // `g` is read LIVE while the stop is FROZEN, so a policy change to a zero-side
+            // pair while a position is held would divide by zero and make the
+            // permissionless `crank()` revert until the owner intervened — a liveness
+            // break, not a value bug (audit L-3). No target scale ⇒ no margin need ⇒ the
+            // planner unwinds through its normal zero-target path.
+            if (stopWad != 0 && g != 0) {
+                marginNeedWad = Phi.mulDiv(_navWad(pxWad), Phi.abs(perpF), g);
+            }
+        } else {
+            // Non-structural (flat-φ engine harness / a g ≤ 1 leg with no pool): drop any frozen
+            // stop while flat so it can never leak into a later structural open on this side.
+            if (szi == 0) perpStopWad = 0;
+            uint256 ntl = Phi.wmul(v, Phi.abs(perpF));
+            if (ntl >= MIN_ORDER_USD_WAD) {
+                marginNeedWad = Phi.mulDiv(ntl, Phi.PHI, uint256(_dir.perpMaxLeverage) * Phi.WAD);
+            }
+        }
+    }
+
+    /// @dev Structural target size (lots) placing the venue liquidation at `stop`. A held
+    ///      position's existing `absNow` lots already liquidate at `stop` given their frozen avg
+    ///      entry, so only the ADDED margin is sized — and at the live `mark`, the price a new
+    ///      slice actually fills at, so `szi_inc = Δm/|mark − stop|` keeps the increment's own
+    ///      liquidation on `stop` and the combined liquidation never drifts off it (critic:
+    ///      deposit/ramp add mis-priced at avg entry). A reduce/hold sizes at the (unchanged) avg
+    ///      entry. The whole position is finally capped at the venue max leverage (SPEC §7b): an
+    ///      unclamped structural size near an anchor implies L→∞ (rejected order / liquidation not
+    ///      at the stop); the clamp de-levers (liquidation FURTHER than the stop — the safe way).
+    function _szTargetStructural(
+        uint256 stopWad,
+        uint256 marginNeedWad,
+        uint256 avgEntryWad,
+        uint256 markWad,
+        uint64 absNow
+    ) internal view returns (uint64) {
+        bool long = perpStopLong;
+        uint256 denomEntry = long
+            ? (avgEntryWad > stopWad ? avgEntryWad - stopWad : 0)
+            : (stopWad > avgEntryWad ? stopWad - avgEntryWad : 0);
+        uint256 denomMark = long
+            ? (markWad > stopWad ? markWad - stopWad : 0)
+            : (stopWad > markWad ? stopWad - markWad : 0);
+        if (denomMark == 0) return absNow; // mark at/through the stop: no stop-pinned slice to add
+        uint256 dec = 10 ** _dir.perpSzDecimals;
+        uint256 effMarginWad =
+            Phi.min(marginNeedWad, _toWad(perpMargin6, CoreTypes.PERP_USD_DECIMALS));
+        uint256 backingWad = denomEntry == 0 ? 0 : Phi.mulDiv(absNow, denomEntry, dec);
+        uint256 szTarget; // in lots; kept in uint256 so a tiny denomMark can't overflow pre-clamp
+        if (effMarginWad > backingWad) {
+            // ADD (or fresh open, absNow 0): size the increment at the mark.
+            szTarget = uint256(absNow) + Phi.mulDiv(effMarginWad - backingWad, dec, denomMark);
+        } else if (denomEntry != 0) {
+            // REDUCE / hold: proportional at the avg entry keeps the remaining liquidation at stop.
+            szTarget = Phi.mulDiv(effMarginWad, dec, denomEntry);
+        } else {
+            return absNow;
+        }
+        // Cap at the venue max leverage BEFORE narrowing (maxSz ≈ margin·maxLev/mark is bounded).
+        // The clamp only limits NEW exposure (V8-L-4): after a clamped open a mark rise shrinks
+        // maxSz below the HELD size — floored at absNow so the clamp can never reduce a held
+        // position. Reductions remain the marginNeed path's job (szTarget < absNow above).
+        uint256 maxSz = Phi.mulDiv(effMarginWad * uint256(_dir.perpMaxLeverage), dec, markWad);
+        if (maxSz < absNow) maxSz = absNow;
+        return uint64(szTarget > maxSz ? maxSz : szTarget);
+    }
+
+    /// @dev Flat-φ size (lots): notional (`v·|perpF|`, capped by `margin·maxLev/φ`) at the live mark.
+    function _szTargetFlat(uint256 markWad, uint256 v, int256 perpF)
+        internal
+        view
+        returns (uint64)
+    {
+        uint256 capWad = Phi.mulDiv(
+            _toWad(perpMargin6, CoreTypes.PERP_USD_DECIMALS),
+            uint256(_dir.perpMaxLeverage) * Phi.WAD,
+            Phi.PHI
+        );
+        uint256 effTargetWad = Phi.min(Phi.wmul(v, Phi.abs(perpF)), capWad);
+        return uint64(
+            Phi.mulDiv(
+                Phi.mulDiv(effTargetWad, Phi.WAD, markWad), 10 ** _dir.perpSzDecimals, Phi.WAD
+            )
+        );
+    }
+
     function _planPerpStep(int256 perpF, CoreTypes.Position memory pos, uint256 v)
         internal
         returns (bool)
@@ -799,64 +1077,75 @@ abstract contract B4VaultEngine is B4VaultStorage {
         // The vault supports spot products (Mini/B4); a perp-bearing policy degrades to
         // its spot component (documented, ARCHITECTURE.md).
         if (_dir.perpMarket == CoreTypes.NO_MARKET) return false;
+        uint256 pxWad = _livePxWad();
+        // A dead spot feed is NOT "this leg is not structural" (audit H-2). Folding
+        // `pxWad != 0` into the `structural` predicate downstream sent a HELD, frozen-stop
+        // position onto the flat-φ rule computed from a price-suppressed strategy value,
+        // which sizes far below the live position and made the planner emit a reduce-only
+        // order closing most of it. Holding must also happen HERE, before
+        // `_perpTargetMargin`: making that function report `structural` with
+        // `marginNeedWad == 0` instead would fall into the zero-margin branch below and
+        // RETURN the margin of a live leveraged position, de-collateralizing it toward
+        // liquidation — strictly worse than the bug. With no price there is nothing sound
+        // to size, so hold: no order, no margin move, no stop rewrite. Every other
+        // zero-price path in the engine holds too, and the worst case is delayed liveness.
+        if (pxWad == 0) return false;
 
-        uint256 notionalTargetWad = Phi.wmul(v, Phi.abs(perpF));
-        if (notionalTargetWad < MIN_ORDER_USD_WAD) notionalTargetWad = 0;
+        // A leveraged LONG (Pro Max, base g > 1) is sized by MARGIN CONTROL against the new
+        // structural stop (STRUCTURAL-STATE-MACHINE.md §6) — NO engine-side frozen L: the venue's
+        // own entry is the frozen reference, so a HELD position is never re-adjusted (a price move
+        // or a halving anchor-flip can't re-lever it — C1/C4), and an exit/liquidation → szi 0
+        // re-derives from flat (nothing stale to clear). Shorts are margin-control structural
+        // too (Pro flat pinned to C / Pro Max 2-anchor); only a pool-less engine harness falls
+        // back to the flat-φ path — `pool != 0` guards it (no anchor source).
+        (uint256 marginNeedWad, uint256 stopWad, bool structural) =
+            _perpTargetMargin(perpF, v, pxWad, pos.szi);
 
-        if (notionalTargetWad == 0) {
-            // No perp target: return margin — only at strict raw zero (A10).
+        if (marginNeedWad == 0) {
+            // No perp target: return margin — only at strict raw zero (A10). The returned perp
+            // margin IS strategy capital (SPEC §5, post-V6-M-2) → reclassify it to the ROTATION
+            // bucket (NAV-neutral) and repatriate as strategy so the NEXT leg reads a non-zero
+            // strategyValue and sizes, instead of stranding in the vestigial owner reserve.
             if (pos.szi == 0 && perpMargin6 > 0) {
                 _startFromPerp(Purpose.Margin, perpMargin6);
                 return true;
             }
             if (coreUsdcMarginWei > 0) {
-                _startReturn(false, Purpose.Margin, coreUsdcMarginWei);
+                _reclassifyUsdc(false, coreUsdcMarginWei);
+                _startReturn(false, Purpose.Generic, coreUsdcRotatedWei);
+                return true;
+            }
+            // The EVM-side counterpart (audit M-2). Only the CORE margin bucket was
+            // reclassified here, so margin created on the EVM side by an exit — or left
+            // there by a margin return — stayed invisible to the planner for the whole
+            // zero-perp span: `_strategyValueWad` does not count it, so the next leg sized
+            // on an understated capital base. Same-token, NAV-neutral bucket move.
+            if (usdcMarginEvm > 0) {
+                _reclassifyUsdcEvm(false, usdcMarginEvm);
                 return true;
             }
             return false;
         }
 
-        // Safety reserve: notional ≤ margin·maxLev/φ ⇔ margin ≥ notional·φ/maxLev.
-        uint256 marginNeedWad =
-            Phi.mulDiv(notionalTargetWad, Phi.PHI, uint256(_dir.perpMaxLeverage) * Phi.WAD);
         uint64 marginNeed6 = uint64(_fromWad(marginNeedWad, CoreTypes.PERP_USD_DECIMALS));
-        if (perpMargin6 < marginNeed6) {
-            uint64 deficit6 = marginNeed6 - perpMargin6;
-            // Only report progress if a top-up intent was actually created; a sub-unit
-            // amount that rounds to a no-op must fall through and size the perp against the
-            // margin already present, never spin the crank (M-1).
-            if (
-                coreUsdcMarginWei > 0
-                    && _startToPerp(_min64(_weiToUsd6(coreUsdcMarginWei), deficit6))
-            ) {
-                return true;
-            }
-            uint256 deficitEvm =
-                _fromWad(_toWad(deficit6, CoreTypes.PERP_USD_DECIMALS), _usdc.evmDecimals);
-            if (
-                usdcMarginEvm > 0
-                    && _startFund(false, Purpose.Margin, Phi.min(deficitEvm, usdcMarginEvm))
-            ) {
-                return true;
-            }
-            // Margin-constrained or sub-unit top-up: fall through; notional capped by account.
-        }
+        if (_fundPerpMargin(marginNeed6)) return true;
 
-        uint256 notionalCapWad = Phi.mulDiv(
-            _toWad(perpMargin6, CoreTypes.PERP_USD_DECIMALS),
-            uint256(_dir.perpMaxLeverage) * Phi.WAD,
-            Phi.PHI
-        );
-        uint256 effTargetWad = Phi.min(notionalTargetWad, notionalCapWad);
         uint256 markWad = CoreReader.perpPxWad(_dir, true);
         if (markWad == 0) return false;
-        uint64 szTarget = uint64(
-            Phi.mulDiv(
-                Phi.mulDiv(effTargetWad, Phi.WAD, markWad), 10 ** _dir.perpSzDecimals, Phi.WAD
-            )
-        );
         uint64 absNow = uint64(Phi.abs(pos.szi));
-        uint256 bandUsd = Phi.max(Phi.bps(v, TOLERANCE_BPS), MIN_ORDER_USD_WAD);
+        // Held ⇒ the venue avg entry is the frozen reference for the existing lots; fresh ⇒ a new
+        // slice fills at the mark. `_szTargetStructural` sizes an ADD at the mark and a reduce/hold
+        // at the avg entry, and caps the whole position at the venue max leverage.
+        uint64 szTarget = structural
+            ? _szTargetStructural(
+                stopWad, marginNeedWad, pos.szi != 0 ? _avgEntryWad(pos) : markWad, markWad, absNow
+            )
+            : _szTargetFlat(markWad, v, perpF);
+
+        // Band by the larger of live strategy value and the target margin (a held structural
+        // position has strategyValue ≈ 0), so it doesn't collapse to the $10 floor and re-trade.
+        uint256 bandUsd =
+            Phi.max(Phi.bps(Phi.max(v, marginNeedWad), TOLERANCE_BPS), MIN_ORDER_USD_WAD);
         uint256 diffUsdWad = Phi.mulDiv(
             uint256(szTarget > absNow ? szTarget - absNow : absNow - szTarget) * markWad,
             1,
@@ -871,6 +1160,94 @@ abstract contract B4VaultEngine is B4VaultStorage {
             _startPerpOrder(!targetLong, absNow - szTarget, true);
         }
         return true;
+    }
+
+    /// @dev The structural stop (WAD) for a leveraged LONG at price `pxWad`, selected by the
+    ///      calendar regime (STRUCTURAL-STATE-MACHINE.md §3): the recovery DCA window
+    ///      (`OpeningGrowth`, anchored to the previous confirmed bottom `floor`); the
+    ///      post-halving volume-add window (`[0, W)`, anchored to this cycle's confirmed low
+    ///      `cap`); else the flat-φ growth rise (`stop = p/φ²`). Returns 0 to refuse (an entry
+    ///      at/below the stop, or an unconfirmed anchor). Reached only from the planner.
+    ///      Density gate (V8-M-1): `B4Pool.anchors()` WITHHOLDS an under-sampled `cap` as 0,
+    ///      which the `cap_ != 0` gates below then treat exactly like an absent anchor —
+    ///      the L-halving/L-post regimes skip and the long degrades to the fail-safe flat-φ
+    ///      rise instead of pinning the fixed MinStop to a sparse low.
+    function _longStopWad(uint256 pxWad) internal view returns (uint256) {
+        (uint256 floor_, uint256 cap_) = IB4PoolAnchors(pool).anchors(_dirAssetIndex);
+        uint256 t = IHalvingOracle(oracle).timeSinceHalving();
+        Calendar.Zone zone = Calendar.zoneAt(t);
+        if (zone == Calendar.Zone.OpeningGrowth) {
+            return StructuralLeverage.longStop(pxWad, floor_, 0); // L-win: B unknown, live p, anchor Pb
+        }
+        if (t < Calendar.W && floor_ != 0) {
+            // L-halving: anchor the 62-min, live p_day (audit H-4).
+            // STRUCTURAL-STATE-MACHINE §3 is normative here: `stop_day = p_day − (p_day − B)/φ`
+            // with `B` = the 62-min, worked as [p=3000, B=850 → 1671] (row PM5). The 62-min is
+            // what the halving flip promotes into `floor`; `cap` in `[0, W)` holds the
+            // still-forming minimum of the CURRENT post-halving window. Passing `cap` put a
+            // near-price anchor in the delta slot: `p − cap` is small by construction (same
+            // window as the live price) while `p − floor` is large (previous cycle), and since
+            // `L = p/(p − stop)` with `stop = p − (p − anchor)/φ`, the near anchor drives
+            // leverage to the venue clamp. The density gate did not catch it — it only
+            // confirms that the window's own minimum was sampled enough, not that the
+            // minimum is a structural bottom.
+            // `floor` needs no density check: it is only ever promoted from a confirmed
+            // window, so a non-zero floor is confirmed by construction.
+            return StructuralLeverage.longStop(pxWad, floor_, 0);
+        }
+        if (zone == Calendar.Zone.TerminalGrowth && cap_ != 0) {
+            // L-post: this cycle's low `B = cap_` is confirmed ⇒ the FIXED MinStop
+            // `B − (B − Pb)/φ`, deeper than flat-φ, so the venue liquidation can never sit above a
+            // level the market already printed and held (the mirror of the short's fixed maxStop —
+            // without it a leveraged long over-levers all of terminal growth and a retest of the
+            // cycle low liquidates a position the structural stop was designed to survive).
+            return StructuralLeverage.longStop(pxWad, floor_, cap_);
+        }
+        return StructuralLeverage.longStop(pxWad, 0, 0); // L-rise: flat φ (p/φ²) — documented interim
+    }
+
+    /// @dev The structural stop (WAD) for a leveraged SHORT at `pxWad`. Pro (base 1×): a flat
+    ///      `g×` short floored at the confirmed peak `C`. Pro Max (g > 1): the 2-anchor structural
+    ///      short (`prevPeak`, `C`), which degrades to flat φ at genesis. Returns 0 to refuse.
+    ///
+    ///      The confirmed peak `C` is fed ONLY in the post-pivot Fall regime and ONLY when it is
+    ///      THIS cycle's peak (`peakTag == epoch + 1`); everywhere else `C = 0`, so the S-win
+    ///      (OpeningFall, peak still forming) uses the live price `p` per the spec window rule, and
+    ///      a SKIPPED/stale peak window (peakTag from a prior cycle) never anchors the short to a
+    ///      systematically-too-low prior peak — which would over-lever it (the anti-conservative
+    ///      direction, unlike the mirror low ratchet whose stale value is fail-safe). This is the
+    ///      short mirror of `_longStopWad`'s zone gate; the venue-max clamp in `_szTargetStructural`
+    ///      backstops the diminishing-cycle window tail.
+    ///      Density gate (V8-M-1/V8-M-2): `B4Pool.peaks()` WITHHOLDS an under-sampled `peakC`
+    ///      as 0 — a sparse window or a single wick is treated exactly like "this cycle's peak
+    ///      unknown", so the short degrades to the clamp-backed window extrapolation off the
+    ///      (promotion-gated, hence confirmed) `prevPeak` instead of pinning the fixed maxStop
+    ///      inside the price range the market already proved.
+    function _shortStopWad(uint256 pxWad) internal view returns (uint256) {
+        (uint256 prevPeak, uint256 peakC, uint256 peakTag) =
+            IB4PoolAnchors(pool).peaks(_dirAssetIndex);
+        uint256 t = IHalvingOracle(oracle).timeSinceHalving();
+        uint256 c = (peakTag == IHalvingOracle(oracle).epoch() + 1
+                && Calendar.zoneAt(t) == Calendar.Zone.Fall)
+            ? peakC
+            : 0;
+        uint256 g = uint256(Phi.abs(fallTarget));
+        if (g <= Phi.WAD) return StructuralLeverage.shortFlatStop(pxWad, g, c);
+        return StructuralLeverage.shortStructStop(pxWad, prevPeak, c);
+    }
+
+    /// @dev The venue's average entry price (WAD, USD per directional unit) of a non-flat perp:
+    ///      `entryNtl` (1e6 USD absolute) over `|szi|` (lots), lifted to WAD. This is the
+    ///      venue's own frozen reference — a held position's margin-control sizing anchors to it,
+    ///      so no engine-side entry freeze is needed.
+    function _avgEntryWad(CoreTypes.Position memory pos) internal view returns (uint256) {
+        uint256 absSzi = Phi.abs(pos.szi);
+        if (absSzi == 0) return 0;
+        return Phi.mulDiv(
+            uint256(pos.entryNtl) * (10 ** _dir.perpSzDecimals),
+            Phi.WAD,
+            absSzi * (10 ** CoreTypes.PERP_USD_DECIMALS)
+        );
     }
 
     function _min64(uint64 a, uint64 b) internal pure returns (uint64) {

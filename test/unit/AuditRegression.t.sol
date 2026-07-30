@@ -149,7 +149,7 @@ contract AuditRegressionTest is VaultTestBase {
             perpMaxLeverage: 0,
             fixedUsd: false
         });
-        B4Pool p = new B4Pool(address(oracle), ds); // this test acts as factory
+        B4Pool p = new B4Pool(address(oracle), ds, address(this)); // this test acts as factory
         evil.setPool(p);
         MockVaultOwner mv = new MockVaultOwner(user);
         p.registerVault(address(mv));
@@ -216,7 +216,7 @@ contract AuditRegressionTest is VaultTestBase {
             perpMaxLeverage: 0,
             fixedUsd: false
         });
-        p = new B4Pool(address(oracle), ds); // this test acts as factory
+        p = new B4Pool(address(oracle), ds, address(this)); // this test acts as factory
         mv = new MockVaultOwner(user);
         p.registerVault(address(mv));
 

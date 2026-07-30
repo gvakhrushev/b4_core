@@ -176,9 +176,9 @@ contract V3CovCoverageDemoTest is VaultTestBase {
         }
         over[n + 1] = ubtcDescriptor();
         vm.expectRevert(B4Pool.TooManyAssets.selector);
-        new B4Pool(address(oracle), over);
+        new B4Pool(address(oracle), over, address(this));
 
-        B4Pool p = new B4Pool(address(oracle), ds); // this PoC acts as factory
+        B4Pool p = new B4Pool(address(oracle), ds, address(this)); // this PoC acts as factory
         V3MockVault vA = new V3MockVault(address(0xA));
         V3MockVault vB = new V3MockVault(address(0xB));
         p.registerVault(address(vA));

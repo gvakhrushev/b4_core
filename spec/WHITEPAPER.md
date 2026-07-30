@@ -46,22 +46,24 @@ Where a product carries leverage, the leverage is *designed* to be a **safety me
 for a short — a price the market has already printed and failed to regain. Across every
 completed cycle that stop is never touched, while a flat-`φ` position is liquidated by the
 recorded +99–103 % bear-market rallies (short side) or the −64 % COVID crash (long side); deep
-entries deliberately de-lever rather than chase. **Implementation status:** the sizing math and
-the anchor mechanism are specified and unit-tested, but the vault-engine sizing currently uses
-the flat base `φ` — the structural sizing is the pending §7b redo, and until it lands a
-leveraged product's realized liquidation is the flat-base distance, not the structural stop.
+entries deliberately de-lever rather than chase. **Implementation status:** shipped — the engine
+sizes a leveraged long or short by margin size so the venue's own liquidation sits at the
+structural stop, both sides (`docs/design/STRUCTURAL-STATE-MACHINE.md`); the halving volume-add,
+the growth-rise ratchet floor, and per-slice DCA remain documented interims.
 
 ## 3. The exposure equation
 
-For a signed target `n` (WAD directional beta), every product uses one decomposition:
+For a signed target `n` (WAD directional beta), a product is either **spot** or a **pure perp**:
 
 ```
-spot = clamp(n, 0, 1)
-perp = n - spot
+unlevered long (0 ≤ n ≤ 1): spot = n, perp = 0     (held in the asset — no funding, no liquidation)
+leverage or short (|n|>1 or n<0): spot = 0, perp = n   (a USDC-margined perpetual)
 ```
 
-`spot` is directional spot exposure; `perp` is residual perpetual exposure. A product is a
-`(growth, fall)` pair resolved and stored when the user selects it; a scale multiplies both,
+`spot` is directional spot exposure; `perp` is signed perpetual exposure. A leveraged position is
+a pure perp so it self-funds from USDC margin — never spot held alongside perp margin (that would
+double the exposure and pay funding on borrowed notional). A product is a `(growth, fall)` pair
+resolved and stored when the user selects it; a scale multiplies both,
 subject to the absolute ceiling `φ`.
 
 ## 4. Deterministic calendar

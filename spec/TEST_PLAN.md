@@ -72,6 +72,36 @@ These encode the exact traps of `HAZARDS.md`:
 14. **Dust-exit weight minting (`SPECIFICATION.md` §9).** Repeated dust partial exits MUST
     NOT inflate reward weight: `nextRewardBase = (R + C·x)·(1−x)` with `C·x` the exiting
     share's client share. Include an adversarial run of many tiny exits.
+15. **Exit-weight proportionality (`SPECIFICATION.md` §9, AUDIT-2026-07-29 F1).** Reported pool
+    weight MUST scale by `keep` on every exit, not only at `keep == 0`. Required cases:
+    `initiateExit(WAD − 1)` MUST leave a dust claim, not the full one; a 50% exit MUST leave
+    exactly half; a split exit (three 80% steps) MUST compound multiplicatively rather than
+    dodging; `totalWeight` MUST stay the exact sum of surviving `weightOf` entries; and an exit
+    finalized past `reportDeadline` MUST leave weights untouched, since scaling is confined to
+    the window in which `reportWeight` is allowed. No threshold variant is acceptable — a
+    boundary test on an owner-chosen number is defeated by sitting one wei above it, and a
+    condition read from the post-exit BASE is defeated by the `C·x` profit re-inflation.
+    (`AuditHalfB_ExitWeightOrder.t.sol`, `V6B_ExitFairness.t.sol` (iv).)
+16. **Settlement valuation instant (`SPECIFICATION.md` §8, AUDIT-2026-07-29 F4).** The instant a
+    vault's interval NAV is measured at MUST NOT be a settle caller's choice. Required cases: the
+    owner captures at `pointTime` and a later front-runner settling at a trough MUST mint weight
+    off the captured NAV, not off its own price (assert the settlement identity
+    `entryAfter = nav − operatorCut` against the captured `nav`, so the test fails if the live
+    price is used); a settle past `Calendar.SNAPSHOT_WINDOW` with nothing captured MUST revert
+    `NavNotSnapshotted` rather than valuing two days from the point; the capture MUST be one-shot,
+    refused even to the owner; the capture MUST be refused outside the window; reporting MUST still
+    succeed anywhere up to `reportDeadline` once captured; and a single `settle` inside the window
+    MUST still work with no separate call. The in-kind operator cut MUST be valued on the captured
+    basis, not the live one. (`AuditF4_SettleValuationInstant.t.sol`.)
+17. **Peak-anchor value binding (`SPECIFICATION.md` §7b, AUDIT-2026-07-25 M-3 +
+    AUDIT-2026-07-29 F2).** The peak VALUE must be decidable by no single caller. Required
+    cases, each fail-before: a squatter taking every daily density slot at a low MUST NOT
+    suppress an honest observation of the true high in the same close window; an off-close print
+    MUST NOT bind at all, however often it is spammed; a single AT-close print MUST be a
+    candidate only, binding once a second distinct close-day reaches it; the sampling window's
+    OPENING observation MUST carry no served value; and a corroborated high MUST survive later
+    lower closes. Density counting and value binding MUST remain separate mechanisms — sharing
+    one gate is what produced F2. (`AuditF2_PeakSlotSquat.t.sol`, `AuditH4M3_Anchors.t.sol`.)
 
 ## 4. Access / griefing / init
 

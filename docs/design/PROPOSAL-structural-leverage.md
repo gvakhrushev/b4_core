@@ -1,10 +1,16 @@
 # Design record: structural sizing — leverage bounded by confirmed extremes
 
-**Status (2026-07-22): mechanism fully specified for BOTH sides (spec §7b) and verified on
-all completed cycles; pure math + low-side ratchet shipped; engine sizing is flat-`φ` pending
-the §7b redo.** A first engine wiring was written, passed a shallow test set, was reported
+**Status (2026-07-23): SHIPPED for BOTH sides via margin control — the engine now sizes each
+position so the venue liquidation sits at the structural stop (confirmed low for a long, confirmed
+peak for a short), replacing the old flat-`φ` reserve. The normative behavior and worked acceptance
+numbers live in [`STRUCTURAL-STATE-MACHINE.md`](STRUCTURAL-STATE-MACHINE.md) (source of truth) and
+[spec §7b](../../spec/SPECIFICATION.md); AB tests (`test/unit/StructuralAB.t.sol`) and engine tests
+(`test/unit/StructuralSizing.t.sol`) pin them.** The record below is the post-mortem of the *first*
+engine wiring, which is why the mechanism was rebuilt — kept for the design history.
+
+A first engine wiring was written, passed a shallow test set, was reported
 done — then a dedicated post-implementation adversarial audit (see
-[`AUDIT-2026-07-structural-leverage.md`](AUDIT-2026-07-structural-leverage.md)) found it unsafe
+[`AUDIT-2026-07-structural-leverage.md`](../audits/AUDIT-2026-07-structural-leverage.md)) found it unsafe
 and it was reverted. Two independent Critical/High clusters:
 
 1. **The safety half was never implemented (audit C6).** The engine kept the pre-mechanism
@@ -239,12 +245,12 @@ prevBottom)·θ` and `stop = min(p − (p − MinStop)·θ, B)` — the exact re
 
 Done: spec §7b (both sides) + HAZARDS §C5; `StructuralLeverage` pure math for long AND short
 (`test/unit/StructuralLeverage.t.sol`, `StructuralLeverageShort.t.sol`); the low-side
-on-chain ratchet (`B4Pool.sampleAnchor`, `AnchorRatchet.t.sol`); the benchmark rebuilt on the
-held mechanic with structural sizing on both sides (`test/backtest/Backtest.t.sol`,
-`docs/11-backtest.md`).
+on-chain ratchet (`B4Pool.sampleAnchor`, `AnchorRatchet.t.sol`); the benchmark now drives the
+real contracts end-to-end (`test/backtest/BacktestReal.t.sol`, `docs/11-backtest.md`) — flat-`φ`,
+since the engine does not yet consume `StructuralLeverage`.
 
 Remaining — the §7b engine redo, requirements bound by
-[`AUDIT-2026-07-structural-leverage.md`](AUDIT-2026-07-structural-leverage.md):
+[`AUDIT-2026-07-structural-leverage.md`](../audits/AUDIT-2026-07-structural-leverage.md):
 
 1. `margin = notional/L`; assert the venue liquidation equals `stopWad`/`shortStopWad`
    (regression on the *liquidation price*, not order size).

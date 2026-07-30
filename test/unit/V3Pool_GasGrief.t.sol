@@ -7,6 +7,7 @@ import {B4Pool} from "src/core/B4Pool.sol";
 import {HalvingOracle} from "src/core/HalvingOracle.sol";
 import {Calendar} from "src/libraries/Calendar.sol";
 import {CoreTypes} from "src/venue/CoreTypes.sol";
+import {Origin} from "src/interfaces/ILayerZero.sol";
 
 /// @notice ERC20 whose balanceOf burns ~all forwarded gas. V2-1 contained REVERTING or
 ///         return-bombing balanceOf reads, but both _safeBalanceOf and SafeTransfer._call
@@ -76,7 +77,20 @@ contract V3PoolGasGriefTest is VenueTestBase {
         setUpVenue();
         endpoint = new MockLzEndpoint();
         oracle = new HalvingOracle(
-            address(endpoint), SRC_EID, SRC_SENDER, GENESIS_HEIGHT, GENESIS_TS, address(this)
+            address(endpoint), SRC_EID, SRC_SENDER, GENESIS_HEIGHT, address(this)
+        );
+        bytes memory genesisHeader = new bytes(80);
+        genesisHeader[68] = bytes1(uint8(GENESIS_TS));
+        genesisHeader[69] = bytes1(uint8(GENESIS_TS >> 8));
+        genesisHeader[70] = bytes1(uint8(GENESIS_TS >> 16));
+        genesisHeader[71] = bytes1(uint8(GENESIS_TS >> 24));
+        vm.prank(address(endpoint));
+        oracle.lzReceive(
+            Origin(SRC_EID, SRC_SENDER, 1),
+            bytes32(0),
+            abi.encode(GENESIS_HEIGHT, genesisHeader),
+            address(0),
+            ""
         );
 
         CoreTypes.AssetDescriptor[] memory ds = new CoreTypes.AssetDescriptor[](5);
@@ -102,7 +116,7 @@ contract V3PoolGasGriefTest is VenueTestBase {
             });
         }
         ds[4] = ubtcDescriptor(); // honest directional AFTER the griefers
-        pool = new B4Pool(address(oracle), ds); // test acts as factory
+        pool = new B4Pool(address(oracle), ds, address(this)); // test acts as factory
 
         vaultA = new MockVaultG(ownerA);
         pool.registerVault(address(vaultA));

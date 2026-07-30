@@ -63,6 +63,8 @@ contract VaultConfigTest is VaultTestBase {
             1,
             address(mini),
             1e18,
+            int256(Phi.WAD),
+            int256(Phi.WAD),
             100,
             defaultRoute()
         );
@@ -80,6 +82,8 @@ contract VaultConfigTest is VaultTestBase {
             1,
             address(mini),
             1e18,
+            int256(Phi.WAD),
+            int256(Phi.WAD),
             100,
             defaultRoute()
         );
@@ -100,7 +104,7 @@ contract VaultConfigTest is VaultTestBase {
         CoreTypes.AssetDescriptor[] memory ds = new CoreTypes.AssetDescriptor[](2);
         ds[0] = usdcDescriptor();
         ds[1] = ubtcDescriptor();
-        B4Pool rogue = new B4Pool(address(oracle), ds); // creator = this, not factory
+        B4Pool rogue = new B4Pool(address(oracle), ds, address(this)); // creator = this, not factory
         vm.expectRevert(B4Factory.NotAPool.selector);
         factory.createVault(
             address(rogue),
@@ -250,32 +254,27 @@ contract VaultConfigTest is VaultTestBase {
 
     function test_deposit_measuredDelta_and_entryLedger() public {
         B4Vault v = createVault(address(mini));
-        fundAndDeposit(v, 1e8, 1_000e6); // 1 BTC @ 100k + $1000 margin
+        fundAndDeposit(v, 1e8, 1_000e6); // 1 BTC @ 100k + $1000 USDC (strategy capital)
         assertEq(v.dirEvm(), 1e8);
-        assertEq(v.usdcMarginEvm(), 1_000e6);
+        assertEq(v.usdcRotatedEvm(), 1_000e6); // USDC is strategy capital now, not margin reserve
         assertEq(v.entryLedgerWad(), 101_000e18);
     }
 
-    function test_deposit_windows_closed_in_opening_subwindows() public {
-        B4Vault v = createVault(address(mini));
-        ubtc.mint(user, 3e8);
-        vm.prank(user);
-        ubtc.approve(address(v), 3e8);
+    function test_deposit_windows_allow_late_entry_at_current_target() public {
+        B4Vault v = createVault(address(proMax));
+        usdc.mint(user, 240_000e6);
+        vm.startPrank(user);
+        usdc.approve(address(v), type(uint256).max);
 
-        warpTo(Calendar.P - Calendar.H); // OpeningFall
-        vm.prank(user);
-        vm.expectRevert(B4VaultStorage.DepositWindowClosed.selector);
-        v.deposit(1e8, 0);
+        warpTo(Calendar.P - 5 days); // day 15: half of OpeningFall
+        v.deposit(0, 120_000e6);
+        assertApproxEqAbs(v.currentTarget(), -int256(Phi.PHI / 2), 1);
 
-        warpTo(Calendar.T + Calendar.H); // OpeningGrowth
-        vm.prank(user);
-        vm.expectRevert(B4VaultStorage.DepositWindowClosed.selector);
-        v.deposit(1e8, 0);
-
-        warpTo(Calendar.T + Calendar.W); // terminal growth: open
-        vm.prank(user);
-        v.deposit(1e8, 0);
-        assertEq(v.dirEvm(), 1e8);
+        warpTo(Calendar.T + 15 days); // day 15: half of OpeningGrowth
+        v.deposit(0, 120_000e6);
+        assertApproxEqAbs(v.currentTarget(), int256(Phi.PHI / 2), 1);
+        vm.stopPrank();
+        assertEq(v.entryLedgerWad(), 240_000e18);
     }
 
     /// An unsolicited transfer never increases accounting (B1) and is owner-recoverable.

@@ -45,14 +45,30 @@ library Calendar {
     /// the closing leg `[P−W, P−H)` from the opening leg `[P−H, P)`. Locking the price is
     /// permissionless and may happen anywhere in this window.
     ///
-    /// Width is a liveness/discretion trade-off, decided deliberately. Wider = more
-    /// discretion over WHICH price in the window becomes canonical, and the locked price
-    /// drives NAV → profit → the performance fee, so a late caller could favour a higher
-    /// price. Two things bound that: the harmed party (the vault owner, who wants a LOWER
-    /// price and therefore a smaller fee) can simply call `lockPrices` at `pointTime` and
-    /// remove all discretion; and every participant in the pool benefits from the same
-    /// single lock, so the number of independent parties able to close the window grows
-    /// with participation. Against that, a one-hour window recurring roughly once every
+    /// It is ONE named day out of the transition's twenty, not an instant that happens to fall
+    /// between two of them: `W − H = 10 days` exactly, so the settlement point opens precisely on
+    /// the transition's TENTH daily close, and the anchor sampler's close grid — anchored to the
+    /// window opening `P − W` — puts its own close 10 inside this day's first
+    /// `ANCHOR_CLOSE_WINDOW`. The valuation clock and the anchor clock are therefore the same
+    /// clock, and the day closes before the pivot, so it never leaks past the transition.
+    /// (`Calendar.t.sol::test_settlement_day_is_the_tenth_daily_close_of_the_transition`.)
+    ///
+    /// Width is a liveness/discretion trade-off, decided deliberately — but note what the
+    /// window does NOT decide any more. Since AUDIT-2026-07-25 C-1 the locked price feeds no
+    /// valuation at all: settlement values the vault at the instant IT runs, so `lockPrices`
+    /// only marks the interval reportable and records the prices as an informational
+    /// record. The discretion this docstring used to reason about — "a late caller could
+    /// favour a higher price, but the harmed party can call `lockPrices` at `pointTime` and
+    /// remove all discretion" — therefore no longer lives here. It moved to `settle`, and for a
+    /// while nothing there answered it, which is AUDIT-2026-07-29 F4. It is answered again by
+    /// `B4Vault.snapshotNav`, a one-shot valuation capture confined to THIS window, where the
+    /// pre-emption argument applies verbatim: the owner takes it at `pointTime` and no caller has
+    /// a price left to choose. So this window's width now bounds the valuation discretion of
+    /// settlement as well, which is a second reason to keep it no wider than the settlement day.
+    /// What still argues for width here is liveness alone: every
+    /// participant in the pool benefits from the same single lock, so the number of
+    /// independent parties able to close the window grows with participation. And a one-hour
+    /// window recurring roughly once every
     /// 1–1.5 years leaves no room for a human to react to a failed cron, an unfunded gas
     /// wallet or an RPC outage — infrastructure rot over that gap is the dominant real
     /// risk, not price gaming. 24h buys a full working day of manual recovery.
@@ -69,10 +85,10 @@ library Calendar {
     enum Zone {
         Growth, // [0, P−W)
         ClosingGrowth, // [P−W, P−H): growth target → 0
-        OpeningFall, // [P−H, P): 0 → fall target (deposits closed)
+        OpeningFall, // [P−H, P): 0 → fall target
         Fall, // [P, T)
         ClosingFall, // [T, T+H): fall target → 0
-        OpeningGrowth, // [T+H, T+W): 0 → growth target (deposits closed)
+        OpeningGrowth, // [T+H, T+W): 0 → growth target
         TerminalGrowth // [T+W, next accepted fact)
     }
 
@@ -111,18 +127,15 @@ library Calendar {
         return growth;
     }
 
-    /// @notice spot = clamp(n, 0, 1); perp = n − spot (SPECIFICATION §3).
+    /// @notice Decompose the signed target `n` into a spot leg and a perp leg (SPECIFICATION §5).
+    ///         The spot leg exists ONLY for an unlevered long (`0 ≤ n ≤ 1`) — held in the asset
+    ///         itself, no funding cost and no liquidation. Any leverage (`|n| > 1`) or any short
+    ///         (`n < 0`) is a **pure perp** position: `spot = 0`, `perp = n`. This makes Pro Max
+    ///         symmetric — a `φ` perp long in growth, a `φ` perp short in the fall — and lets the
+    ///         whole leveraged position self-fund by selling the deposited spot into margin.
     function decompose(int256 n) internal pure returns (int256 spot, int256 perp) {
-        spot = n;
-        if (spot < 0) spot = 0;
-        if (spot > int256(Phi.WAD)) spot = int256(Phi.WAD);
+        spot = (n >= 0 && n <= int256(Phi.WAD)) ? n : int256(0);
         perp = n - spot;
-    }
-
-    /// @notice Deposits are closed in the two 0→… sub-windows (SPECIFICATION §4).
-    function depositOpen(uint256 t) internal pure returns (bool) {
-        Zone z = zoneAt(t);
-        return z != Zone.OpeningFall && z != Zone.OpeningGrowth;
     }
 
     /// @notice Free exits cover all four transition zones plus a fixed window after each

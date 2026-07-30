@@ -41,21 +41,23 @@ Pool-level phase, then a per-vault loop. Every per-vault call and every optional
 
 | # | Call | Effect |
 |---|---|---|
-| 1 | `pool.advance()` in a loop until it returns `false` | Materializes every passed settlement point (bounded — 2 points per epoch) |
-| 2 | `pool.lockPrices(count - 1)` | Locks checkpoint prices for the newest interval; all-or-nothing, reverts unless every directional asset prices non-zero |
-| 3 | `pool.sweep(count - back)` for `back = 2 .. window + 1` | Rolls unclaimed inventory of expired intervals back into the accruing basket; `window = min(count - 1, SWEEP_LOOKBACK = 16)` |
-| 4 | `pool.capture()` | Turns any balance above recorded liability (donations, exit penalties) into pool inventory |
-| 5 | `pool.currentReportable()` | Reads `(exists, id)` — the latest interval whose report window is still open |
-| 6 | `this.crankVault(v, maxVaultSteps)` | Up to `maxVaultSteps` vault cranks; stops early on the first non-progressing or reverting step |
-| 7 | `this.settleVault(v, reportId)` | Only if step 5 said reportable — `v.settle(reportId)` |
-| 8 | `pool.claimFor(count - 1, vaults[i])` | Distributes the latest interval in kind to that vault's recorded owner |
-| 9 | `this.retryDeferred(v)` | Retries every deferred payout for the vault's route participants |
+| 1 | Strict pool only: `foldPenalty(policy, asset)`, `initiateSleeveExit(policy, asset)`, `crankSleeve(policy, asset)` | Folds only measured penalty escrow into its fixed strategy sleeve, realizes that sleeve only in a free-exit window, and advances it through the ordinary async engine. Each `policy × asset` call is isolated; each sleeve is cranked for at most `maxVaultSteps` steps. |
+| 2 | `pool.advance()` in a loop until it returns `false` | Materializes every passed settlement point (bounded — 2 points per epoch) |
+| 3 | `pool.lockPrices(count - 1)` | Locks checkpoint prices for the newest interval; all-or-nothing, reverts unless every directional asset price is non-zero |
+| 4 | `pool.sweep(count - back)` for `back = 2 .. window + 1` | Rolls unclaimed inventory of expired intervals back into the accruing basket; `window = min(count - 1, SWEEP_LOOKBACK = 16)` |
+| 5 | `pool.capture()` | Legacy basket only: turns donations and other balance surplus into ordinary pool inventory. Strict-product exit penalties never use this route. |
+| 6 | `pool.currentReportable()` | Reads `(exists, id)` — the latest interval whose report window is still open |
+| 7 | `this.crankVault(v, maxVaultSteps)` | Up to `maxVaultSteps` vault cranks; stops early on the first non-progressing or reverting step |
+| 8 | `this.settleVault(v, reportId)` | Only if step 6 said reportable — `v.settle(reportId)` |
+| 9 | `pool.claimFor(count - 1, vaults[i])` | Distributes the latest interval in kind to that vault's recorded owner |
+| 10 | `this.retryDeferred(v)` | Retries every deferred payout for the vault's route participants |
 
-Steps 6–9 run per entry of `vaults[]`. The function ends with `emit Cranked(address(pool), vaults.length, advanced)`, where `advanced` counts the steps that actually made progress — a useful health signal for an operator's monitoring.
+Steps 7–10 run per entry of `vaults[]`. The function ends with `emit Cranked(address(pool), vaults.length, advanced)`, where `advanced` counts the steps that actually made progress — a useful health signal for an operator's monitoring.
 
 Two details worth internalising:
 
 - **The sweep window is a catch-up window, not a single interval.** If several intervals materialized while no keeper was running, each expired-unswept one still has to roll its inventory forward. `sweep()` is idempotent — `AlreadySwept` / `NotExpired` revert into the `try`/`catch` — so the loop only ever advances legitimate state, and `SWEEP_LOOKBACK = 16` keeps it bounded.
+- **A strict penalty cannot become an immediate claimant windfall.** `capturePenalty()` measures only settlement plus the exiting vault's directional token into `penaltyEscrow[policy][asset]`; any other whitelisted token is ordinary donation inventory. Only `foldPenalty` can move the exact two-token escrow into the matching immutable sleeve. When a calendar free-exit window opens, `initiateSleeveExit` returns its realized value to `accruing`.
 - **Only the latest interval is claimed.** Older intervals were served while they were the latest and are swept before they fall to `count - 2`, so claiming further back would be a no-op.
 
 ### `retryDeferred` in detail
@@ -107,7 +109,7 @@ Recommended operating pattern:
 
 - **Baseline:** run `crank` on a routine schedule (minutes-level) whenever any pool has live vaults. Idle cranks are cheap — `advance()` returns `false`, vault cranks return `false`, everything else reverts into a `catch`.
 - **Around transitions:** during a 20-day transition window — which `H` always divides into two 10-day halves, and which an opposite-sign or zero-endpoint pair additionally crosses zero at — the calendar target moves continuously, so vaults are actively re-syncing. Minutes-level cadence here keeps each async leg verified promptly and keeps rebalances near their target.
-- **At and immediately after a settlement point:** `lockPrices` is accepted only within `SNAPSHOT_WINDOW = 24 hours` of the point — the settlement day. Lock **early**, ideally at `pointTime`: the window's width is deliberate slack for recovering from a dead cron, not licence to shop for a price, and locking early is in the vault owner's own interest (a lower locked price means a smaller fee). Missing the day entirely is not catastrophic — see below.
+- **At and immediately after a settlement point:** `lockPrices` is accepted only within `SNAPSHOT_WINDOW = 24 hours` of the point — the settlement day. Lock **early**, ideally at `pointTime`. Since AUDIT-2026-07-25 C-1 the locked price no longer feeds any valuation — `lockPrices` survives only as the marker that opens the interval for reporting — so the window's width is pure liveness slack for recovering from a dead cron. What now matters for the price is *when `settle` runs*, so settle promptly too. Missing the day entirely is not catastrophic — see below.
 - **Through the report window:** `settle` requires an idle engine, and it must land before `reportDeadline(id) = pointTime + SNAPSHOT_WINDOW + REPORT_WINDOW`. An in-flight leg completes within `RESEND_TIMEOUT ≈ 1 hour`, comfortably inside a >2-day window, so steady cranking through the window is enough.
 - **After the report window closes:** claims open (`claimFor` reverts with `ReportWindowOpen` until then). Keep cranking so distribution happens before the interval expires and is swept.
 
@@ -135,7 +137,7 @@ The only caller-supplied inputs to `crank` are *which* pool, *which* vault addre
 | Stalled step | Consequence | Recovery |
 |---|---|---|
 | `advance()` late | Points materialize late | Loop catches up; `lastPointTime` is monotonic |
-| `lockPrices` misses the 1h window | That interval is unreportable | Its inventory is swept forward into the next accruing basket |
+| `lockPrices` misses the 24-hour snapshot window | That interval is unreportable | Its inventory is swept forward into the next accruing basket |
 | A vault crank reverts | That vault's intent stays pending | Any later call retries; other vaults are unaffected |
 | `settle` misses the report window | No reward weight for that interval | Ledger unchanged; the next checkpoint settles normally |
 | `claimFor` token transfer fails | That token's payout is deferred | `ClaimDeferred` emitted; `claimed`/`remaining`/`liability` untouched, fully retryable |
@@ -144,7 +146,7 @@ The only caller-supplied inputs to `crank` are *which* pool, *which* vault addre
 
 Two structural guarantees back this table:
 
-1. **Every step is independently callable.** `Keeper` is periphery convenience only. `pool.advance()`, `pool.lockPrices(id)`, `pool.sweep(id)`, `pool.capture()`, `pool.claimFor(id, vault)`, `vault.crank()`, `vault.settle(id)` and `vault.claimDeferred(recipient, token)` are all permissionless entry points that can be invoked directly from any address. If `Keeper` were unusable, the protocol would still be fully operable one call at a time.
+1. **Every step is independently callable.** `Keeper` is periphery convenience only. `pool.advance()`, `pool.lockPrices(id)`, `pool.sweep(id)`, `pool.capture()`, `pool.foldPenalty(policy, asset)`, `pool.initiateSleeveExit(policy, asset)`, `pool.crankSleeve(policy, asset)`, `pool.claimFor(id, vault)`, `vault.crank()`, `vault.settle(id)` and `vault.claimDeferred(recipient, token)` are all permissionless entry points that can be invoked directly from any address. If `Keeper` were unusable, the protocol would still be fully operable one call at a time.
 2. **Isolation is enforced at every boundary.** Per-step `try`/`catch`, the self-call wrappers, per-token deferral in `claimFor`, and the revert-free, gas-capped, return-bomb-capped `_safeBalanceOf` used for untrusted basket tokens all exist so that a hostile or broken component degrades to *skipped work*, not to a bricked pool.
 
 Residual liveness risk lives at the venue: an ecosystem-wide HyperCore failure could stall an in-flight intent past a report window. That is documented as a liveness residual, not a custody one.
@@ -157,4 +159,4 @@ Residual liveness risk lives at the venue: an ecosystem-wide HyperCore failure c
 - [`spec/HAZARDS.md`](../spec/HAZARDS.md) — hazard register (async execution, keeper liveness, deferred payouts)
 - [`spec/SECURITY_MODEL.md`](../spec/SECURITY_MODEL.md) — trust boundaries, deliberate exclusions (§4), funded release gates (§5)
 - [`INVARIANTS.md`](../INVARIANTS.md) — invariants a crank must never violate
-- [`REPORT.md`](../REPORT.md) — security dossier and internal adversarial audit rounds (an independent external audit and the funded venue gates are still outstanding)
+- [`REPORT.md`](audits/REPORT.md) — security dossier and internal adversarial audit rounds (an independent external audit and the funded venue gates are still outstanding)

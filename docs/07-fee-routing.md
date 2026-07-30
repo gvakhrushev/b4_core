@@ -263,25 +263,54 @@ function _payBucket(address token, uint256 bucket, uint256 x, ExitSplit memory s
 }
 ```
 
-The operator leg goes through `_routeFee`, so the referrer carve-out applies identically on the exit path. The pool leg goes through the same pay-or-defer `_payOut`: if the transfer fails, the penalty is recorded as a deferred payout to the pool address and stays permissionlessly retryable via `claimDeferred`, so `capture()` only accounts it once the transfer actually lands. Once the tokens are there, the pool **accounts** them:
+The operator leg goes through `_routeFee`, so the referrer carve-out applies identically on the
+exit path. The pool leg goes through the same pay-or-defer `_payOut`: if the transfer fails, the
+penalty is recorded as a deferred payout to the pool address and stays permissionlessly retryable
+via `claimDeferred`. Once the tokens are there, the vault calls the guarded accounting path:
 
 ```solidity
 if (s.poolWad > 0) {
-    try IB4PoolVault(pool).capture() {} catch {}
+    try IB4PoolVault(pool).capturePenalty() {} catch {}
 }
 ```
 
-The `try/catch` is deliberate: a griefing co-asset in the pool must never be able to freeze an exit (V3-POOL-1). The tokens are already at the pool; any later permissionless `capture()` re-accounts them.
+The `try/catch` is deliberate: a griefing co-asset in the pool must never be able to freeze an
+exit (V3-POOL-1). The tokens are already at the pool; a later permissionless call can account a
+failed capture. In a legacy generic pool, `capturePenalty()` preserves the historical
+`capture() → accruing` behavior. A strict Product Pool follows the separate lifecycle below.
 
 ---
 
 ## 5. How the pool distributes
 
+### Strict product pools: carry the strategy with the penalty
+
+`B4ProductFactory` offers exactly five product-pool choices: four isolated pools (Mini `1`, B4
+`2`, Pro `4`, Pro Max `8`) and one aggregate pool (`15`). The configured canonical strategy
+addresses and mask are immutable. In a strict pool a non-free user exit does **not** immediately
+become a claim basket: `capturePenalty()` records only settlement plus that vault's directional
+token by `(product, directional asset)` in `penaltyEscrow`; `foldPenalty(product, asset)` deposits
+those exact tokens into that product's pool-owned sleeve. Another whitelisted token that happens
+to be at the pool is ordinary donation inventory, never cross-directional penalty escrow.
+
+The sleeve has no operator, no discretionary target and no arbitrary recipient. It inherits the
+live price and confirmed anchors at fold time. The pinned regressions cover the meaningful
+boundaries: Pro at `$6k` with a confirmed `$5k` peak opens a `$12k` stop; a deep Pro entry at
+`$2k` remains pinned at `$5k`; Pro Max with prior peak `$1k` and confirmed peak `$5k` uses the
+exact `φ` stop `$7,472.135954…`; its long with previous/confirmed 62-lows `$500/$2,000` uses
+the exact `$1,072.949…` stop. A post-halving exit inside the first 20 days has no penalty at all,
+so there is no contradictory sleeve trade in that window.
+
+Live sleeve capital is excluded from ordinary claim liability. Only during a free exit window
+can `initiateSleeveExit` close it; the next `crankSleeve` captures its returned tokens into
+`accruing`. Thus the aggregate pool joins products only after each sleeve has realised, while an
+isolated pool never receives a different product's capital.
+
 `B4Pool` holds a **basket** — the settlement descriptor at index 0 plus 1..N directional descriptors (`MAX_DIRECTIONAL = 8`) — and never swaps between them.
 
 | Step | Function | Who | What happens |
 | --- | --- | --- | --- |
-| Inventory in | `capture()` | anyone | any balance above `liability[token]` becomes `accruing[i]`, and `liability[token] = bal`. Measured receipt only (D2): a donation becomes inventory, never vault profit. |
+| Inventory in | `capture()` / strict sleeve exit | anyone | A legacy penalty or donation balance above `liability[token]` becomes `accruing[i]`. In a strict pool, only a realised free-window sleeve exit enters `accruing`. Both use measured receipt only (D2). |
 | New interval | `advance()` | anyone | materializes the next passed settlement point; the whole `accruing` basket becomes that interval's fixed `bucket[i]` / `remaining[i]`. |
 | Price lock | `lockPrices(id)` | anyone | within `SNAPSHOT_WINDOW = 24 hours` of `pointTime` (the settlement day); index 0 is fixed at `Phi.WAD` (USDC = 1 USD, decision C3), every directional index must price non-zero or the call reverts — all-or-nothing (D1). |
 | Weights | `reportWeight(id, w)` | the vault, from `settle` | one report per vault per interval, until `reportDeadline = pointTime + 24 hours + 2 days`. |
@@ -360,7 +389,11 @@ Same vault, `x = 1e18` (100 %), `nav = 101,000`, `E = 100,000`, `Calendar.freeEx
 
 Exact WAD values: `penalty = 11,921.432863739379648000`, `operatorWad = 17.217950758962106128`, `poolWad = 11,904.214912980417541872`, `ownerWad = 89,078.567136260620352000`. At full precision `ownerWad + operatorWad + poolWad = 101,000.000000000000000000 = grossWad` exactly; the truncated column above sums to `100,999.999998`, which is the display convention, not a leak.
 
-Every one of `ownerWad`, `operatorWad`, `poolWad` is paid **in kind**, bucket by bucket, at the same value ratios. `poolWad` lands in the pool as tokens and is picked up by `capture()` into `accruing`, i.e. it becomes inventory for the *next* materialized interval — funding the clients who stayed.
+Every one of `ownerWad`, `operatorWad`, `poolWad` is paid **in kind**, bucket by bucket, at the
+same value ratios. In a legacy pool, `poolWad` is picked up into `accruing` for the next
+materialized interval. In a strict Product Pool it first becomes measured product escrow, then
+trades only through that product's sleeve and becomes `accruing` only after the sleeve's
+free-window exit.
 
 ### 6.3 The same exit inside a free window
 
@@ -390,7 +423,7 @@ There is no path by which claiming DIR converts into USDC or vice versa: the poo
 
 - No protocol admin, no owner-of-protocol, no upgrade proxy, no pause. The only privileged role is the vault's own fixed owner, whose `onlyOwner` powers (`deposit`, `selectPolicy`, `initiateExit`, the three recovery entrypoints that return unaccounted or surplus assets to the owner, and `emergencyClearRecovery`) act on that vault's own capital and cannot alter the route, the fee constants, or anything belonging to another vault or to the pool.
 - Strategies (`StrategyMini`, `StrategyB4`, `StrategyPro`, `StrategyProMax` in `src/periphery/ReferenceStrategies.sol`) are **view-only**: they return a `(growth, fall)` target pair and hold no authority over funds or fees.
-- The keeper (`src/periphery/Keeper.sol`) is permissionless and calls nothing but permissionless entry points — `advance`, `lockPrices`, `sweep`, `capture`, `claimFor` and the `currentReportable` view on the pool, and `crank`, `settle`, `claimDeferred` on each vault. It cannot change a route, choose a target, market or price, or redirect a payout: every recipient is fixed vault state.
+- The keeper (`src/periphery/Keeper.sol`) is permissionless and calls nothing but permissionless entry points — `advance`, `lockPrices`, `sweep`, `capture`, `claimFor` and the `currentReportable` view on the pool, plus (for strict pools) `foldPenalty`, `crankSleeve`, and free-window `initiateSleeveExit`; and `crank`, `settle`, `claimDeferred` on each vault. It cannot change a route, choose a target, market or price, or redirect a payout: every recipient is fixed vault state.
 - `FEE_F`, `EXIT_Q`, `MAX_OPERATOR_BPS`, `MIN_REFERRER_BPS` are `internal constant` — changing them requires deploying different bytecode, i.e. a different protocol.
 
-Further reading: [`spec/SPECIFICATION.md`](../spec/SPECIFICATION.md) §2 (route), §8 (settlement), §9 (exit); [`spec/HAZARDS.md`](../spec/HAZARDS.md) B5 and D1–D5; [`INVARIANTS.md`](../INVARIANTS.md); [`REPORT.md`](../REPORT.md) for the internal adversarial-review history behind V3-ACCT-1 and V3-POOL-1 (an independent external audit remains an unmet release gate — [`spec/SECURITY_MODEL.md`](../spec/SECURITY_MODEL.md) §5).
+Further reading: [`spec/SPECIFICATION.md`](../spec/SPECIFICATION.md) §2 (route), §8 (settlement), §9 (exit); [`spec/HAZARDS.md`](../spec/HAZARDS.md) B5 and D1–D5; [`INVARIANTS.md`](../INVARIANTS.md); [`REPORT.md`](audits/REPORT.md) for the internal adversarial-review history behind V3-ACCT-1 and V3-POOL-1 (an independent external audit remains an unmet release gate — [`spec/SECURITY_MODEL.md`](../spec/SECURITY_MODEL.md) §5).

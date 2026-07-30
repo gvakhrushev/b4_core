@@ -132,9 +132,22 @@ its effect must be proven by a later on-chain state read.
 - **B3 · Keep unrealized and unverified value out.** Unrealized PnL and unverified Core
   surplus never enter the realized ledger; owner-deposited margin stays separate from strategy
   capital.
-- **B4 · Entry ledger integrity.** A deposit adds its current value to the interval entry
-  ledger so new principal cannot read as profit; changing token form (spot↔USDC, margin moves)
-  MUST NOT change the entry ledger.
+- **B4 · Entry ledger integrity — one price basis, or none of it works.** A deposit adds its
+  current value to the interval entry ledger so new principal cannot read as profit; changing
+  token form (spot↔USDC, margin moves) MUST NOT change the entry ledger.
+  That is necessary and **not sufficient**. The entry ledger and the NAV it is subtracted from
+  MUST be taken on the **same price basis**. Valuing the vault's composition *as read at
+  settlement time* against a price *fixed earlier* breaks it, because the composition can
+  still move in between — and at a settlement point the calendar **mandates** that it moves:
+  the target is exactly 0 there and ramps immediately after, so a flattening product sells and
+  a spot product buys, both at live prices, inside the very window whose price is frozen. Every
+  such move is then measured against a stale reference and the gap reads as interval profit no
+  capital earned; `f` of it mints a pro-rata claim on a shared basket funded from other users'
+  exit penalties, and the mirror case silently writes an honest depositor's basis down.
+  A deposit-side rule cannot repair this: the crank reaches the same window, is permissionless,
+  and never touches the entry ledger, so the rotation path bypasses any deposit guard.
+  *(Real Critical with a committed exploit — $676 of cost took $833,333 of the basket — found
+  in the ninth review round after surviving eight. See `docs/audits/AUDIT-2026-07-25-full-security.md` C-1.)*
 - **B5 · Floor toward the protocol.** All fixed-point division floors; fees, penalties, cuts,
   and pool claims never round up; residual dust stays with the protocol/pool.
 - **B6 · Bounded, callback-free surplus recovery for spot AND perp.** Surplus above recorded
@@ -203,19 +216,43 @@ its effect must be proven by a later on-chain state read.
     depth and pins its stop to `C`, never below a price the fall already traversed; a deep
     short deliberately sizes below `1×`. Verified on all completed cycles: the post-pivot
     price never returned to `C`, and the +99–103% bear-market rallies of cycles 1–2 — which
-    liquidate a flat-`φ` short — clear the structural stop. The max ratchet has the same
-    directional safety as the min: an unconfirmed peak falls back to the flat base, and more
-    sampling raises the recorded high ⇒ a further stop ⇒ **less** leverage.
+    liquidate a flat-`φ` short — clear the structural stop. An unconfirmed peak falls back to the
+    flat base, as on the long side.
+  - **The max ratchet does NOT have the same directional safety as the min** (corrected
+    2026-07-30; the earlier claim that it did was false and is what let both anchor findings
+    through). Within a cycle a higher recorded high pushes the stop further out and lowers
+    leverage — safe. But `peakC` is promoted into `prevPeak`, the next cycle's delta anchor, and
+    an inflated `Pp` shrinks `(C − Pp)`, pulling the stop toward `C` and **raising** leverage a
+    cycle later. So the peak side is exposed in BOTH directions: an overstated high harms the
+    next cycle (M-3), an understated one harms this cycle (F2). That asymmetry with the low side
+    — where a lower low is fail-safe in both cycles — is why the two sides use different value
+    rules, and why the peak side alone needs a fixed, non-choosable sampling instant plus
+    corroboration (`SPECIFICATION.md` §7b, `ANCHOR_CLOSE_WINDOW`). More sampling is still never
+    harmful on either side; what is harmful is letting one caller decide the recorded value.
 
 ---
 
 ## D. Pool and distribution
 
-- **D1 · Commit the checkpoint-price lock only after ALL assets priced.** If the lock is set
-  before pricing and one asset transiently prices to zero/reverts, the zero is committed with
-  no retry and settle reverts for every vault sharing that token for the whole window. Leave
-  the interval unlocked on any failure so a later call within the snapshot window retries.
-  *(Real freeze-an-interval bug.)*
+- **D1 · The checkpoint-price lock marks an interval REPORTABLE; it MUST NOT be a valuation
+  basis.** Two lessons, in the order they were learned.
+  (i) A lock committed before every asset priced, with one asset transiently reading zero or
+  reverting, commits the zero with no retry, and settle then reverts for every vault sharing
+  that token for the whole window. *(Real freeze-an-interval bug.)*
+  (ii) The deeper lesson — B4, and the C-1 Critical — is that the lock must not feed a
+  valuation **at all**: a price frozen up to three days before the composition that is measured
+  against it puts the entry ledger and the NAV on two different bases, and the gap reads as
+  profit no capital earned.
+  Requirement, therefore: settlement values the vault at the instant it runs, and the lock
+  records prices **only** as an informational artefact plus the `lockedAt` marker that opens the
+  report window (it is what gates `reportWeight`, `scaleWeight`, `claimFor` and settle's own
+  window). Because nothing consumes the recorded price, the lock MUST NOT refuse a zero read
+  either: an all-or-nothing refusal would now defend nothing while letting a dead feed on ONE
+  co-listed asset block reporting and claiming for the WHOLE pool — pure liveness cost for zero
+  safety gain (H3). Record what resolves, skip what does not, commit the marker regardless. A
+  missed lock must remain merely an unreportable interval whose inventory sweeps forward
+  (liveness, never custody), and a poisoned record must be unable to mis-price anything, because
+  nothing reads it.
 - **D2 · Liability discipline.** Pool liability grows only by real token receipt; distribution
   never exceeds nominal liability; `token balance ≥ total liability` is an invariant.
 - **D3 · Order-independent loss socialization.** On a shortfall, recompute each claim's haircut
@@ -225,6 +262,37 @@ its effect must be proven by a later on-chain state read.
   interval and never changes total liability.
 - **D5 · Retryable per-token claims.** A failed token transfer leaves that token's claim
   retryable without reverting the already-successful token claims.
+- **D6 · Committed escrow is neither liability nor claimable inventory — keep it in its own
+  book.** In a strict Product Pool a non-free exit's penalty is committed to the exiting vault's
+  matching `(product, directional asset)` sleeve while that capital trades. If those tokens are
+  counted as claim liability, the shortfall ratio becomes `balance / (claims + escrow)` and an
+  otherwise fully-solvent interval haircuts every claimant — including holders of an unrelated
+  product in the same pool — for capital that is merely in flight. Requirement: maintain a
+  SECOND measured book (physical `escrowHeld` per token, plus `penaltyEscrow` keyed by product ×
+  direction × asset), exclude it from liability AND from the shortfall balance, and hold
+  `balance ≥ liability + escrowHeld` as the pool invariant. Escrow rejoins ordinary inventory
+  only by physical receipt after the sleeve's free-window exit — never by a bookkeeping move,
+  and never while the sleeve is live. The sleeve destination must be write-once at pool
+  creation, so no caller can ever choose a different strategy, recipient or cross-product
+  transfer.
+- **D7 · Attribute a penalty to the exit that DELIVERED it — a measured receipt inside a bounded
+  window, never "whatever is currently unattributed".** Escrowing the pool's entire uncommitted
+  balance of the eligible tokens lets any dust exit sweep co-resident donations, another vault's
+  uncaptured penalty and returned sleeve capital into a sleeve of its own choosing. Value never
+  leaves the pool, but it leaves ordinary claim inventory — which is the same harm to a
+  claimant. Requirement: snapshot the balances immediately BEFORE the exit pushes its penalty
+  in, and escrow `min(unattributed, measured increase since the snapshot)`. Consume the snapshot
+  as it is read, so that a missing or already-used snapshot yields a receipt of zero and the
+  value falls through to claim inventory — the safe direction — BY CONSTRUCTION rather than by
+  discipline at a single paired call site. Eligibility is the exiting vault's own immutable
+  `(product, directional asset)` key; every other whitelisted token is an ordinary donation.
+  Both pool-side calls sit on the permissionless exit path, so both MUST be failure-isolated: a
+  pool-side revert may never freeze an exit (H3), and un-captured value stays in the pool for a
+  later capture. Note the residual this leaves under a callback-bearing basket token — three
+  transfers run inside the measurement window (`SECURITY_MODEL.md` §3), which is why the
+  honest-ERC20 exclusion in `SECURITY_MODEL.md` §4 is load-bearing here. *(Real High: the
+  capture escrowed 61,803,398 where the exit's own penalty was 11,803,398 —
+  AUDIT-2026-07-25 H-1.)*
 
 ---
 

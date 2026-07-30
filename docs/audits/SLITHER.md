@@ -10,19 +10,20 @@ slither . --foundry-out-directory out --filter-paths "test/|lib/|script/" \
   --exclude-dependencies --checklist --markdown-root . > slither-report.md
 ```
 
-Result (0.11.4, whole-repo run with `slither.config.json` triage applied):
-30 contracts, 95 detectors, 131 results; `slither . --fail-high` exits 0. **No high-severity
-finding is real** — each is a false positive (delegatecall-proxy analysis, canonical mulDiv,
-intentional strict-equality) or an accepted informational item. Two Medium reentrancy
+Result policy: `slither . --fail-high` must exit 0. Exact contract/detector/result counts are
+release artifacts and MUST be regenerated after every source change; do not treat an old count
+as current evidence. **No accepted high-severity detector finding is carried as waived debt** —
+each high result must be triaged as a false positive or fixed. Two Medium reentrancy
 detectors were eliminated by adding checks-effects-interactions ordering (defense-in-depth
 beyond the existing guards); one Low was fixed with a zero-check. Regenerate the full report
 with the command above. (The V3/V4 gas-cap and keeper-isolation hardening account for the
 current informational deltas: `too-many-digits` fires on the two `500000` literals in
-`SafeTransfer._call` plus the `B4Factory` EIP-1167 clone assembly — `B4Pool._safeBalanceOf`
-uses the named constant `TOKEN_READ_GAS`, so it does not fire; `uninitialized-local` is 3 —
-`B4VaultOps._finalizeExit`'s `ExitSplit s` plus `Keeper.crank`'s `reportable`/`reportId`,
-all intentional; `Keeper.crank`'s cyclomatic complexity rose with its per-step try/catch
-isolation — all style/informational, unchanged in class.)
+`SafeTransfer._call` plus the two immutable EIP-1167 creator modules —
+`B4Pool._safeBalanceOf` uses the named constant `TOKEN_READ_GAS`, so it does not fire;
+`uninitialized-local` includes intentionally zero-initialized structs/counters in
+`B4VaultOps`, `Keeper`, `B4FactoryVaultCreator`, and `B4Pool`; `Keeper.crank`'s cyclomatic
+complexity rose with its per-step try/catch isolation — all style/informational, unchanged
+in security class.)
 
 ## High impact — all false positives (verified)
 
@@ -39,17 +40,17 @@ isolation — all style/informational, unchanged in class.)
 | `reentrancy-no-eth` | `opsSettle`, `_finalizeExit` | **Fixed (defense-in-depth).** Both were already unreachable for reentry — every `B4VaultOps` entry is reached only through a `nonReentrant` `B4Vault` entrypoint (`crank`/`settle`/`recover*`), which Slither can't see across the delegatecall dispatch. Reordered to checks-effects-interactions anyway (ledger writes / `lastSettledPlusOne` before the external `pool.capture()` / `reportWeight`); behavior-identical (the moved writes are independent of the transfer results), and the detector no longer fires. |
 | `divide-before-multiply` | `Phi.mulDiv`, `_lotsToSz8` | **FP / intentional.** In `mulDiv` the `/twos` and modular-inverse steps are exact bit operations (fuzz-proven). In `_lotsToSz8`, `maxLots = uint64.max/scale` then `maxLots*scale` is deliberately the largest multiple of `scale` ≤ uint64.max — the intended clamp ceiling. |
 | `incorrect-equality` | `_verifyIntent` (enum `==`), `_planPerpStep` (`szi == 0`) | **FP / intentional.** Enum comparisons are exact; the raw `szi == 0` checks are the mandated strict custody flatness (HAZARDS A10 — must be exactly zero, never an epsilon). |
-| `uninitialized-local` (×3) | `_finalizeExit` `ExitSplit s`; `Keeper.crank` `reportable`/`reportId` | **Intentional.** `ExitSplit s`'s zero-init is load-bearing: in a free-window exit `s.poolWad` correctly stays 0, fields set before use. `reportable`/`reportId` default to `false`/`0` and are only overwritten inside `try pool.currentReportable()`; on a catch they stay at the safe zero (no settle attempted) — the zero-init is the fallback (V3-VENUE-1 isolation). |
-| `unused-return` | `HalvingProver.publish` (LZ `MessagingReceipt`), `opsSettle` (partial `intervalInfo` destructure) | **Intentional.** The receipt is not needed (delivery is idempotent by height on the receiver); the settle destructure reads only `lockedAt` by design. |
+| `uninitialized-local` | Zero-initialized structs/counters in `_finalizeExit`, `Keeper.crank`, `B4FactoryVaultCreator.createVault`, `sampleAnchor`, `_quantizePx8` | **Intentional.** Solidity's zero initialization is used as a fail-safe default: free exits keep `poolWad = 0`; caught keeper reads leave `reportable = false`; the vault-init struct is filled before use; `kind`/`digits` are assigned on every reachable continuation. |
+| `unused-return` | `HalvingProver.publish` receipt, partial tuple destructures, initial sleeve `crank()` | **Intentional.** Delivery is idempotent by height; ignored tuple fields are not needed; `foldPenalty` deliberately attempts the first permissionless crank but does not require synchronous progress. |
 
 ## Low / Informational — triaged
 
 | Detector | Disposition |
 |---|---|
-| `missing-zero-check` (init params `owner_`/`pool_`/`oracle_`, prover `delegate_`) | Set once by the trusted `B4Factory`/deploy script, which pass `msg.sender` / validated addresses; a zero would be a caught deploy misconfiguration, not an attack. The one silent-failure case — the `ops` delegatecall target — now reverts `ZeroOps`. |
+| `missing-zero-check` (factory/oracle/implementation/init params, prover/oracle delegates) | Set once by the deployment path or immutable factory flow. Invalid oracle/bootstrap state now fails closed at pool creation (`OracleNotBootstrapped`); invalid descriptors fail at binding; a zero implementation fails atomically on clone/init. The one silent delegatecall-target case — `B4Vault.ops` — reverts `ZeroOps`. |
 | `locked-ether` (`HalvingOracle` payable `lzReceive`, no withdraw) | Intentional: `lzReceive` must be `payable` per the LayerZero V2 receiver interface; the endpoint sends no value for the fact message, and the oracle never holds user funds. Adding an ether-withdraw would introduce a privileged mover, contradicting F1 (no privileged transfer). Force-sent ether is a griefer burning their own funds — no protocol impact. |
-| `reentrancy-events` | Benign event-ordering after a CoreWriter emission / LZ send (no callback into us); all sites run under the vault's `nonReentrant` crank guard. |
-| `missing-inheritance` (`B4Pool` vs `IB4PoolVault`) | Cosmetic. `IB4PoolVault` is a call-site interface local to `B4VaultOps`; ABI compatibility is exercised by the integration tests. Not coupled deliberately. |
+| `reentrancy-benign` / `reentrancy-events` | State-changing public pool/vault paths are guarded or use immutable/self-controlled callees; flagged post-call capture/event sites do not grant caller-selected recipients or repeatable credit. Covered by pool, sleeve, async, and invariant suites. |
+| `missing-inheritance` (`B4Pool` vs local call-site interfaces) | Cosmetic. The interfaces are local consumer views; ABI compatibility is exercised by integration tests and deliberately not coupled by inheritance. |
 | `timestamp` | Intended: the deterministic calendar is a pure function of block time; halving acceptance uses no wall-clock window (HAZARDS E1). |
 | `assembly`, `low-level-calls` | Intended: `Phi.mulDiv` 512-bit math and `SafeTransfer` return-data handling (return-bomb-safe) use assembly / low-level calls by design. |
 | `calls-loop` | Loops are bounded by the pool's `MAX_DIRECTIONAL` whitelist (F2). |

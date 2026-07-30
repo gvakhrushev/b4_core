@@ -15,7 +15,7 @@ Operator procedure for building, deploying, configuring and gating a B4 deployme
 | --- | --- |
 | Toolchain | Foundry (`forge`, `cast`) |
 | Solidity | `0.8.28`, pinned in `foundry.toml` (`solc_version = "0.8.28"`) |
-| EVM version | `cancun` (`evm_version` in `foundry.toml`) |
+| EVM version | `cancun` (`evm_version` in `foundry.toml`) — **the target chain MUST have EIP-1153 and EIP-5656 live; see gate 16 in §6** |
 | Optimizer | enabled, `optimizer_runs = 200` |
 | Libraries | vendored under `lib/`, locked by `foundry.lock` |
 
@@ -31,7 +31,7 @@ FOUNDRY_PROFILE=deep forge test --match-path 'test/invariant/*'   # deep invaria
 
 The `deep` profile in `foundry.toml` raises fuzz runs to 4096 and invariant runs/depth to 512/256.
 Static-analysis configuration lives in `slither.config.json`; results and their disposition are
-recorded in [`SLITHER.md`](../SLITHER.md) and [`REPORT.md`](../REPORT.md).
+recorded in [`SLITHER.md`](audits/SLITHER.md) and [`REPORT.md`](audits/REPORT.md).
 
 Record the exact compiler version, optimizer settings, library commits and source hashes — they are
 the input to the reproducible-build manifest required by gate §5.14.
@@ -41,25 +41,40 @@ the input to the reproducible-build manifest required by gate §5.14.
 ## 2. Deployment order
 
 `script/Deploy.s.sol` deploys in this order because the later steps consume earlier addresses as
-constructor arguments: `B4Vault` takes `ops`, and `B4Factory` takes `oracle` and
-`vaultImplementation`. `B4VaultOps` itself takes no constructor arguments.
+constructor arguments: `B4Vault` takes `ops` **and `recovery`**, and `B4Factory` takes `oracle`,
+`vaultImplementation` **and `poolDeployer`**. `B4VaultOps`, `B4VaultRecovery` and
+`B4PoolDeployer` themselves take no constructor arguments.
 
-1. **`HalvingOracle`** — the LayerZero receiver holding the proven halving fact.
+`B4PoolDeployer` must be deployed **once and passed by address** to every factory. A factory
+that constructed its own would embed `B4Pool`'s ~18 KB of creation code again and blow EIP-170 —
+which is exactly the shape the split removed (see `ARCHITECTURE.md`, "Contract size").
+
+1. **`HalvingOracle`** — deploy the empty LayerZero receiver with immutable expected bootstrap height/path, then publish the proven bootstrap header through `HalvingProver` before deploying pools.
 2. **`B4VaultOps`** — the delegatecall'd operations module (separate deployment for EIP-170 /
    EIP-3860 headroom).
-3. **`B4Vault` implementation** — `constructor(address ops_)`; reverts on a zero ops address and
-   sets `_initialized = true` so the implementation itself can never be initialized.
-4. **`B4Factory`** — `constructor(address oracle_, CoreTypes.AssetDescriptor memory settlement_,
-   address vaultImplementation_)`; the settlement descriptor is validated against the venue by
-   `DescriptorLib.verifySettlement` inside the constructor.
+3. **`B4VaultRecovery`** — the second delegatecall module: the cold path (owner surplus
+   recovery, deferred-payout retry). Same terms as `ops` — immutable, unrepointable.
+4. **`B4PoolDeployer`** — holds `B4Pool`'s creation code. Deploy once; reuse for both factories.
+5. **`B4Vault` implementation** — `constructor(address ops_, address recovery_)`; reverts on a
+   zero module address and sets `_initialized = true` so the implementation itself can never be
+   initialized.
+6. **`B4Factory`** — `constructor(address oracle_, CoreTypes.AssetDescriptor memory settlement_,
+   address vaultImplementation_, address poolDeployer_)`; reverts `ZeroPoolDeployer` on a zero
+   deployer; the settlement descriptor is validated against the venue by
+   `DescriptorLib.verifySettlement` inside the constructor. The factory may be deployed before
+   bootstrap, but `createPool` (and `B4ProductFactory.createProductPool`) reverts
+   `OracleNotBootstrapped` until the proven fact is accepted.
 
 ```solidity
-HalvingOracle oracle = new HalvingOracle(
-    lzEndpoint, srcEid, srcSender, genesisHeight, genesisTs, configurator
-);
+HalvingOracle oracle =
+    new HalvingOracle(lzEndpoint, srcEid, srcSender, bootstrapHeight, configurator);
+// Citrea side: HalvingProver.publish(bootstrapHeight, bootstrapHeader, options)
+require(oracle.halvingHeight() == bootstrapHeight, "bootstrap fact missing");
 B4VaultOps ops = new B4VaultOps();
-B4Vault implementation = new B4Vault(address(ops));
-new B4Factory(address(oracle), usdc, address(implementation));
+B4VaultRecovery recoveryModule = new B4VaultRecovery();
+B4PoolDeployer poolDeployer = new B4PoolDeployer();
+B4Vault implementation = new B4Vault(address(ops), address(recoveryModule));
+new B4Factory(address(oracle), usdc, address(implementation), address(poolDeployer));
 ```
 
 `HalvingProver` (`src/citrea/HalvingProver.sol`) is deployed **separately on the Citrea side** —
@@ -83,17 +98,25 @@ authority over funds, and the Keeper is a permissionless crank with no privilege
 | `LZ_ENDPOINT` | address | LayerZero V2 endpoint on the target network |
 | `CITREA_EID` | uint | source endpoint id of the Citrea side |
 | `PROVER_ADDRESS_B32` | bytes32 | `HalvingProver` address, bytes32-encoded — the only accepted sender |
-| `GENESIS_HALVING_HEIGHT` | uint | deploy-time anchor height; must be non-zero and a multiple of 210000 |
-| `GENESIS_HALVING_TS` | uint | timestamp taken from that halving header; non-zero, not in the future |
+| `BOOTSTRAP_HALVING_HEIGHT` | uint | exact first proven height expected from the immutable LayerZero sender; non-zero and a multiple of 210000 |
 | `LZ_CONFIGURATOR` | address | temporary LayerZero delegate — removed one-shot after configuration |
 | `USDC_EVM` | address | canonical linked USDC EVM token |
-| `USDC_CORE_INDEX` | uint | its Core token index |
+| `USDC_CORE_INDEX` | uint | its Core token index — **must be `0`**, the venue's quote token; any other value reverts `BadSettlement` in the factory constructor |
 
 The settlement descriptor built by the script hard-codes `evmDecimals = 6`, `coreWeiDecimals = 8`,
 `spotSzDecimals = 0`, `spotMarket`/`perpMarket` = `CoreTypes.NO_MARKET`, `perpMaxLeverage = 0` and
 `fixedUsd = true`. These are placeholders in the script's own words and **must** be confirmed against
 the live venue (gates §5.1) — `verifySettlement` will revert on a mismatch with the token-info
 precompile, which is the intended failure mode.
+
+`USDC_CORE_INDEX` is the one field that is **not** merely cross-checked against the venue: binding
+requires it to be `0`, the venue's quote token. `usdClassTransfer` moves the venue's USDC
+unconditionally, so a factory bound to any other linked token would create vaults whose funding leg
+watches a balance the transfer never touches — an unhealable freeze rather than a mispricing
+(`spec/SECURITY_MODEL.md` §3). Deploying against a network whose quote token is not index 0 is
+therefore a **deployment-time revert (`BadSettlement`), never a runtime failure**: the factory
+cannot be constructed, so no pool, vault or user funds can exist behind the misconfiguration.
+Confirm the index under gate §5.1 before broadcasting.
 
 ```bash
 forge script script/Deploy.s.sol:Deploy --rpc-url "$RPC_URL" --broadcast --verify
@@ -109,9 +132,9 @@ following requires a full redeployment:
 
 | Fixed at | What is frozen |
 | --- | --- |
-| `HalvingOracle` constructor | `endpoint`, `srcEid`, `srcSender` (immutables); genesis height/timestamp anchor |
+| `HalvingOracle` constructor | `endpoint`, `srcEid`, `srcSender`, and expected `bootstrapHeight` (immutables); no timestamp or accepted fact exists until authenticated delivery |
 | `B4Vault` implementation constructor | `ops` (the delegatecall target) |
-| `B4Factory` constructor | `oracle`, `vaultImplementation`, the stored settlement descriptor |
+| `B4Factory` constructor | `oracle`, `vaultImplementation`, immutable creator module, and the stored settlement descriptor |
 | `B4Pool` constructor | the full descriptor set (settlement + up to `MAX_DIRECTIONAL = 8` directional assets); duplicate EVM or Core tokens are rejected |
 | `B4Factory.createVault` | owner, pool, execution identity, directional descriptor, `slippageBps`, and the `FeeRoute` — all bound atomically in one transaction (no front-run window, no half-initialized state) |
 
@@ -229,18 +252,18 @@ After creation, the owner funds the vault with `deposit(uint256 dirAmount, uint2
 anyone may drive it with `crank()` / `settle(uint256 intervalId)` / `claimDeferred`, or via
 `Keeper.crank(pool, vaults, maxVaultSteps)`.
 
-`deposit` is owner-only and accepted only while the calendar deposit window is open — deposits are
-closed in the two 0→target sub-windows `[P−H, P)` and `[T+H, T+W)` (`Calendar.depositOpen`, else
-`DepositWindowClosed`) — and only while no exit is pending (`exitShareWad == 0`, else
-`ExitPending`).
+`deposit` is owner-only, accepted throughout the cycle, and blocked only while an exit is pending.
+A late entry joins the current interpolated target (50% at day 15 of a 20-day transition) and the
+ordinary crank reaches the full target at day 20.
 
 ---
 
 ## 6. Funded release gates (mandatory)
 
-`SECURITY_MODEL.md` §5 lists fifteen items that **cannot be proven off-chain** and must be
-demonstrated with funded transactions on the target network. Restated as operator checks, each
-producing a recorded transaction hash and observed values:
+`SECURITY_MODEL.md` §5 lists sixteen items that **cannot be proven off-chain** and must be
+demonstrated on the target network — items 1–15 with funded transactions, item 16 with a single
+`eth_call` **before anything is deployed**. Restated as operator checks, each producing a recorded
+transaction hash (or call result) and observed values:
 
 | # | Gate | Actionable check |
 | --- | --- | --- |
@@ -259,11 +282,88 @@ producing a recorded transaction hash and observed values:
 | 13 | Delegate removal | `delegate() == address(0)` and `delegateRenounced() == true` on both sides, plus a zero delegate at the endpoint (section 4). |
 | 14 | Reproducible build | Deployed-runtime-bytecode equality for **every** contract via a reproducible-build manifest — including contracts carrying constructor immutables — with published constructor args and pool descriptors. |
 | 15 | Gas calibration | Calibrate precompile gas costs against live values and confirm any per-call gas caps. |
+| 16 | **Cancun opcodes live** | Prove EIP-1153 (`TSTORE`/`TLOAD`) and EIP-5656 (`MCOPY`) are active on the target chain **before deploying anything** — see "Gate 16" below. |
+
+### Gate 16 — EIP-1153 / EIP-5656 precondition (run this first)
+
+Everything is compiled at `evm_version = "cancun"`. Two Cancun opcodes actually reach the deployed
+runtime, and they fail in opposite ways — which is why the probe must cover both, and why only one
+of them is a *silent* hazard.
+
+**`MCOPY` (EIP-5656) — loud and universal.** solc 0.8.28 emits it for every dynamic memory copy, so
+it sits in the deployed runtime of nearly every contract here — `B4Vault`, `B4VaultOps`,
+`B4VaultRecovery`, `B4Pool`, `B4Factory`, `B4ProductFactory`, `B4ProductPoolCreator`,
+`HalvingOracle`. In `B4Pool` the single site is the `abi.decode` of precompile returndata inside
+`CoreReader`, on the path `advance()` uses to lock checkpoint prices. A chain without EIP-5656
+therefore breaks **loudly and everywhere** and no one could miss it: no interval locks its prices,
+no vault reads Core state, and nothing is ever distributed.
+
+**`TSTORE` / `TLOAD` (EIP-1153) — silent and narrow.** Exactly three sites, all in
+`B4Pool.beginPenalty` / `B4Pool.capturePenalty`, which use transient storage to measure the receipt
+of a non-free exit's penalty. `B4VaultOps._finalizeExit` calls **both** inside `try/catch`,
+deliberately, so that a pool-side failure can never freeze a user's exit. The consequence on a chain
+that has `MCOPY` but not EIP-1153 is the one failure mode in this system that is silent:
+
+- both calls revert on the unknown `TSTORE`/`TLOAD` opcode;
+- both reverts are swallowed by `_finalizeExit`'s `try/catch`; the exit completes normally;
+- `penaltyEscrow` / `escrowHeld` never accrue, so `foldPenalty` never funds a sleeve and
+  `SECURITY_MODEL.md` §2 invariant 19 is inert;
+- **no revert, no event and no view reports any of this.**
+
+Nothing is lost in that case: the penalty tokens are already physically at the pool, and the
+transient-free permissionless `capture()` — whose whole call path (`_captureToAccruing`,
+`_safeBalanceOf`, `_unaccounted`) touches neither opcode — still books them into ordinary claim
+inventory, where they are distributed at the next checkpoint. The damage is that the strict Product
+Pool silently degrades into the legacy shared basket. There is no admin to switch it back on — the
+only remedy is redeployment on a Cancun-capable chain, which is why this is a **precondition, not a
+post-check**.
+
+Run the probe against the exact RPC you will deploy through. It exercises `TSTORE`, `TLOAD` and
+`MCOPY` and returns `0xb4` only if all three are live:
+
+```
+runtime  0x60b460425d60425c6000526020600060205e60206020f3
+
+60 b4   PUSH1 0xb4        60 42  PUSH1 0x42     5d  TSTORE      # EIP-1153 store
+60 42   PUSH1 0x42        5c     TLOAD                          # EIP-1153 load  -> 0xb4
+60 00   PUSH1 0x00        52     MSTORE                         # mem[0x00] = 0xb4
+60 20   PUSH1 0x20        60 00  PUSH1 0x00     60 20 PUSH1 0x20
+5e      MCOPY                                                   # EIP-5656 copy 0x00 -> 0x20
+60 20   PUSH1 0x20        60 20  PUSH1 0x20     f3  RETURN      # return mem[0x20..0x40]
+```
+
+Preferred form — a state-override `eth_call`, so nothing is deployed and nothing is spent:
+
+```bash
+PROBE=0x60b460425d60425c6000526020600060205e60206020f3
+cast call --rpc-url "$RPC_URL" \
+  --override-code 0x00000000000000000000000000000000000B4B4B:$PROBE \
+  0x00000000000000000000000000000000000B4B4B
+# PASS: 0x00000000000000000000000000000000000000000000000000000000000000b4
+# FAIL: an "invalid opcode" / "NotActivated" error  -> DO NOT DEPLOY
+```
+
+If the RPC rejects state overrides, deploy the probe once and call it (the runtime above wrapped in
+a 12-byte constructor; the deployed code must read back byte-for-byte as `$PROBE`):
+
+```bash
+INIT=0x6017600c60003960176000f360b460425d60425c6000526020600060205e60206020f3
+cast send --rpc-url "$RPC_URL" --private-key "$KEY" --create $INIT
+cast code --rpc-url "$RPC_URL" "$PROBE_ADDR"   # expect $PROBE
+cast call --rpc-url "$RPC_URL" "$PROBE_ADDR"   # expect 0x...00b4
+```
+
+To isolate EIP-1153 alone (no `MCOPY`), the 16-byte runtime is
+`0x60b460425d60425c60005260206000f3`, same expected return.
+
+Record the RPC endpoint, chain id, block number and the returned word alongside the other gates. A
+`FAIL` is disqualifying: **do not deploy the factory, and do not create a pool**, because a pool
+created on a non-Cancun chain is immutable and cannot be repaired.
 
 **Mainnet MUST NOT proceed until these are recorded and independently reviewed.** Given the earlier
 engagement (a permanent-freeze High that survived three audit rounds), `SECURITY_MODEL.md` §5 further
 recommends that the async completion/retry, harvest-quota and recovery paths receive a **dedicated
-independent audit round of their own**. Audit history and disposition are in [`REPORT.md`](../REPORT.md).
+independent audit round of their own**. Audit history and disposition are in [`REPORT.md`](audits/REPORT.md).
 
 Additionally, unresolved by any gate and accepted as residuals: market association (no canonical
 token↔perp statement exists — the immutable descriptor supplies it and **the user must verify it**),
@@ -282,11 +382,12 @@ Publish, for the deployment to be reviewable:
 - each pool's full descriptor set and the `dirDescriptorHash` of every directional asset;
 - the LayerZero configuration (endpoint, EIDs, libraries, DVNs) and both `DelegateRenounced`
   transactions;
-- the transaction hashes and observed values for all fifteen funded gates.
+- the transaction hashes and observed values for all fifteen funded gates, plus the gate-16
+  Cancun probe (RPC endpoint, chain id, block number, returned word).
 
 ## Further reading
 
 - [`spec/SECURITY_MODEL.md`](../spec/SECURITY_MODEL.md) — trust model, invariants, residuals, gates
 - [`spec/HAZARDS.md`](../spec/HAZARDS.md) — hazard register (A7/A9/A10/A11, E1–E4, F1/F3)
 - [`spec/SPECIFICATION.md`](../spec/SPECIFICATION.md) · [`spec/REQUIREMENTS.md`](../spec/REQUIREMENTS.md) · [`spec/TEST_PLAN.md`](../spec/TEST_PLAN.md)
-- [`ARCHITECTURE.md`](../ARCHITECTURE.md) · [`INVARIANTS.md`](../INVARIANTS.md) · [`REPORT.md`](../REPORT.md) · [`SLITHER.md`](../SLITHER.md)
+- [`ARCHITECTURE.md`](../ARCHITECTURE.md) · [`INVARIANTS.md`](../INVARIANTS.md) · [`REPORT.md`](audits/REPORT.md) · [`SLITHER.md`](audits/SLITHER.md)

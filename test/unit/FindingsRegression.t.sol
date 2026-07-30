@@ -47,7 +47,7 @@ contract MockVaultB {
 }
 
 /// @notice Fail-before/pass-after regressions for the adjudicated external discovery
-///         findings (see REPORT.md, "External discovery-report adjudication").
+///         findings (see docs/audits/REPORT.md, "External discovery-report adjudication").
 contract FindingsRegressionTest is VaultTestBase {
     EngineHarness h;
 
@@ -182,7 +182,7 @@ contract FindingsRegressionTest is VaultTestBase {
             fixedUsd: false
         });
         ds[2] = ubtcDescriptor();
-        B4Pool p = new B4Pool(address(oracle), ds); // this test acts as factory
+        B4Pool p = new B4Pool(address(oracle), ds, address(this)); // this test acts as factory
         MockVaultB mv = new MockVaultB(user);
         p.registerVault(address(mv));
 
@@ -457,9 +457,13 @@ contract FindingsRegressionTest is VaultTestBase {
     }
 
     /// A perp-bearing policy (Pro) on a spot-only vault degrades to its spot component:
-    /// the fall regime rotates to USDC (no short), owner USDC margin sits inert but is
-    /// paid at exit, and an external perp top-up is still recoverable — all without
-    /// touching a perp market. (Documented degradation, ARCHITECTURE.md.)
+    /// the fall regime rotates to USDC (no short), and an external perp top-up is still
+    /// recoverable — all without touching a perp market. (Documented degradation,
+    /// ARCHITECTURE.md.)
+    /// V8-L-8: expectations updated to the post pure-perp routing — the $5k USDC deposit is
+    /// STRATEGY CAPITAL in the rotated bucket (not an inert owner-margin reserve), so the
+    /// fall rotation carries the WHOLE $25k strategy to USDC and the full exit pays it out
+    /// (less one penalty). Same intent: degrade gracefully, recover surplus, exit whole.
     function test_D_spot_only_perp_policy_degrades_and_recovers() public {
         soltoken = new MockERC20("SOL", 18);
         CoreTypes.AssetDescriptor[] memory dirs = new CoreTypes.AssetDescriptor[](1);
@@ -482,17 +486,21 @@ contract FindingsRegressionTest is VaultTestBase {
         vm.startPrank(user);
         soltoken.approve(address(v), 100e18);
         usdc.approve(address(v), 5_000e6);
-        v.deposit(100e18, 5_000e6); // $20,000 dir + $5,000 owner margin
+        v.deposit(100e18, 5_000e6); // $20,000 dir + $5,000 USDC — both strategy capital now
         vm.stopPrank();
+
+        // NEW ROUTING: the $5k is strategy capital (rotated), not an inert owner reserve.
+        assertEq(v.usdcRotatedEvm(), 5_000e6);
+        assertEq(v.usdcMarginEvm(), 0);
 
         // Fall regime: spot component is 0 ⇒ rotate the directional to USDC; the perp
         // short (−1) is inexpressible and simply skipped — no perp market ever touched.
         warpTo(Calendar.P);
         crankUntilIdle(v, 30);
         assertEq(v.dirEvm(), 0);
-        assertEq(v.usdcRotatedEvm(), 20_000e6);
+        assertEq(v.usdcRotatedEvm(), 25_000e6, "whole strategy rotates to USDC");
         assertEq(v.perpMargin6(), 0); // never allocated
-        assertEq(v.usdcMarginEvm(), 5_000e6); // owner margin inert, still accounted
+        assertEq(v.usdcMarginEvm(), 0);
 
         // An external Core perp top-up is recoverable via the two-phase path (uses the
         // user-level usd-class-transfer, no perp market id).
@@ -502,14 +510,14 @@ contract FindingsRegressionTest is VaultTestBase {
         crankUntilIdle(v, 5);
         assertEq(usdc.balanceOf(user), 250e6);
 
-        // Full exit at the fall plateau (non-free) pays out the inert margin too, less
-        // the single penalty on the whole 25k NAV. Owner ≈ 25k·(1−q) + 250 recovery ≈
-        // 22,300 — decisively above the 17,890 it would be if margin were NOT included.
+        // Full exit at the fall plateau (non-free) pays out the whole $25k NAV, less the
+        // single penalty, plus the 250 recovery. Owner ≈ 25k·(1−q) + 250 ≈ 22,300 —
+        // decisively above the 17,890 it would be if the USDC leg were NOT included.
         vm.prank(user);
         v.initiateExit(1e18);
         crankUntilIdle(v, 10);
         assertEq(v.exitShareWad(), 0);
-        assertGt(usdc.balanceOf(user), 22_000e6); // margin was in the payout basket
+        assertGt(usdc.balanceOf(user), 22_000e6); // the whole strategy was in the payout
         assertLt(usdc.balanceOf(user), 22_500e6);
     }
 

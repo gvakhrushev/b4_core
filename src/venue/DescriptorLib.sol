@@ -41,7 +41,7 @@ library DescriptorLib {
             // legacy position precompile takes a uint16 id, so a wider id would silently
             // alias an UNRELATED market in every flatness/verification read — orders to
             // one market, custody proofs from another. Support requires the wide
-            // position read confirmed on the funded venue first (REPORT.md).
+            // position read confirmed on the funded venue first (docs/audits/REPORT.md).
             if (d.perpMarket > type(uint16).max) revert PerpIdUnsupported();
             // Perp px normalization uses `10^(6 − perpSzDecimals)`; > 6 would underflow.
             if (d.perpSzDecimals > 6) revert PerpMismatch();
@@ -65,6 +65,14 @@ library DescriptorLib {
         // (venue-legal per-token) would underflow-panic every perp-bearing vault built on
         // this factory. Reject it at binding.
         if (s.coreWeiDecimals < CoreTypes.PERP_USD_DECIMALS) revert BadSettlement();
+        // The settlement descriptor must BE the venue's quote asset, not merely something
+        // flagged `fixedUsd`. `usdClassTransfer` moves the venue's USDC unconditionally, so
+        // a factory bound to any other linked token would have `_startToPerp` watching a
+        // balance the transfer never touches: no completion, resend forever, and — because
+        // an asset-transfer intent may never be discarded (HAZARDS A6) — an unhealable
+        // freeze on every perp-bearing vault it creates. `fixedUsd` is the deployer's claim;
+        // this is the check. Index 0 is the venue's quote token.
+        if (s.coreToken != 0) revert BadSettlement();
         _verifyToken(s);
     }
 

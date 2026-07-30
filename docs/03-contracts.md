@@ -4,7 +4,7 @@ A contract-by-contract reference of everything that ships under `src/` — what 
 
 > **Status.** B4 is **pre-mainnet and not externally audited**. Venue semantics (CoreWriter action execution and atomicity, Core account activation, precompile ABI/gas) are **not locally provable** and are mandatory funded release gates — see [`spec/SECURITY_MODEL.md`](../spec/SECURITY_MODEL.md) §5. Nothing here should be read as a production-readiness claim.
 >
-> For the design rationale behind these boundaries, read [`ARCHITECTURE.md`](../ARCHITECTURE.md). Normative behavior lives in [`spec/SPECIFICATION.md`](../spec/SPECIFICATION.md); the hazard catalogue in [`spec/HAZARDS.md`](../spec/HAZARDS.md); invariants in [`INVARIANTS.md`](../INVARIANTS.md); the security dossier and internal adversarial-review history in [`REPORT.md`](../REPORT.md) (an independent external audit is still outstanding).
+> For the design rationale behind these boundaries, read [`ARCHITECTURE.md`](../ARCHITECTURE.md). Normative behavior lives in [`spec/SPECIFICATION.md`](../spec/SPECIFICATION.md); the hazard catalogue in [`spec/HAZARDS.md`](../spec/HAZARDS.md); invariants in [`INVARIANTS.md`](../INVARIANTS.md); the security dossier and internal adversarial-review history in [`REPORT.md`](audits/REPORT.md) (an independent external audit is still outstanding).
 
 ---
 
@@ -12,7 +12,8 @@ A contract-by-contract reference of everything that ships under `src/` — what 
 
 ```
 src/
-  core/       B4Factory  B4Vault  B4VaultStorage  B4VaultEngine  B4VaultOps  B4Pool  HalvingOracle
+  core/       B4Factory  B4ProductFactory  B4FactoryVaultCreator  B4ProductPoolCreator
+              B4Vault  B4VaultStorage  B4VaultEngine  B4VaultOps  B4Pool  HalvingOracle
   citrea/     HalvingProver
   periphery/  Keeper  ReferenceStrategies (StrategyMini/B4/Pro/ProMax)
   venue/      CoreTypes  CoreReader  CoreWriterLib  DescriptorLib
@@ -65,9 +66,14 @@ The protocol targets **one venue: HyperEVM + HyperCore**. There is no multi-venu
 
 ## 3. `src/core/B4Factory.sol`
 
-**Responsibility.** Permissionless deployment of pools, and atomic creation + binding of vault clones. It holds no funds, has no owner, and stores only two immutables, the write-once settlement descriptor, and two registries (`isPool`, `isVault`).
+**Responsibility.** Permissionless deployment of pools, and atomic creation + binding of vault
+clones. It holds no funds and has no owner. It stores immutable `oracle`,
+`vaultImplementation`, and `vaultCreator` addresses, the write-once settlement descriptor, and
+two registries (`isPool`, `isVault`).
 
-**Constructor state.** `oracle`, `vaultImplementation` (both `immutable`), and the settlement descriptor, which is validated by `DescriptorLib.verifySettlement` before it is stored.
+**Constructor state.** `oracle`, `vaultImplementation`, and the newly deployed fixed
+`B4FactoryVaultCreator` module (all `immutable`), plus the settlement descriptor, which is
+validated by `DescriptorLib.verifySettlement` before it is stored.
 
 ```solidity
 function createPool(CoreTypes.AssetDescriptor[] calldata directional) external returns (address poolAddr);
@@ -86,12 +92,36 @@ function settlementDescriptor() external view returns (CoreTypes.AssetDescriptor
 
 | Entrypoint | Caller | Notes |
 |---|---|---|
-| `createPool` | anyone | Every directional descriptor is checked with `DescriptorLib.verifyDirectional` against the venue before the `B4Pool` is deployed. |
+| `createPool` | anyone | First requires `oracle.halvingHeight() != 0` (`OracleNotBootstrapped`); then checks every directional descriptor with `DescriptorLib.verifyDirectional` before deploying the `B4Pool`. |
 | `createVault` | anyone | `msg.sender` becomes the vault's permanent `owner`. Reverts `NotAPool` / `UnknownDescriptor` if the pool or descriptor hash is unknown. |
 
-The vault is created as a **minimal EIP-1167 clone** of `vaultImplementation` (`_clone`, reverting `CloneFailed` on a failed `create`), then `initialize`d and registered with the pool — owner, pool, oracle, both descriptors, policy, scale, slippage and the immutable fee route are all bound in that single transaction, so there is no half-initialized vault and no front-run window.
+The immutable `B4FactoryVaultCreator` module is reached by `delegatecall` and creates a **minimal
+EIP-1167 clone** of `vaultImplementation` (`_clone`, reverting `CloneFailed` on a failed
+`create`). It then `initialize`s and registers the clone with the pool in the same transaction —
+owner, pool, oracle, both descriptors, policy, scale, slippage and the immutable fee route are
+bound atomically, so there is no half-initialized vault and no front-run window.
 
 **It may NOT:** hold or move user funds; upgrade or re-point `vaultImplementation`; endorse a pool. **Permissionless pool creation is not endorsement** — any descriptor set that passes venue verification can be deployed by anyone (`spec/REQUIREMENTS.md` §1).
+
+---
+
+### 3.1 Strict product deployment: `B4ProductFactory`
+
+`B4ProductFactory` is the immutable deployment path for exactly five choices: isolated Mini,
+B4, Pro and Pro Max pools (`policyMask` `1/2/4/8`), or aggregate mask `15`. It has the same
+checked settlement and directional-descriptor boundary as `B4Factory`, but uses immutable
+delegate-only creator modules to stay below EIP-170. The modules execute in the factory's
+context, so pool registration and vault creation remain atomic; they are not upgrade modules.
+`createProductPool` also reverts `OracleNotBootstrapped` while the oracle has no accepted
+bootstrap fact; the check lives in the lightweight factory wrapper, not the size-constrained
+pool-creator module.
+
+At pool creation it fixes the four canonical reference strategy addresses. For every enabled
+product and directional asset it creates one pool-owned sleeve. At user-vault creation it admits
+only the exact configured canonical target pair at scale `1`; `B4Pool` records the vault's
+immutable product and directional index. The pool, not a caller, later determines which sleeve
+may receive a measured penalty. Aggregate mask `15` permits only product upgrades; isolated
+pools permit no cross-product selection.
 
 ---
 
@@ -180,6 +210,7 @@ function initialize(
     address owner_, address pool_, address oracle_,
     CoreTypes.AssetDescriptor calldata dir_, CoreTypes.AssetDescriptor calldata usdc_,
     uint256 dirAssetIndex_, address strategy, uint256 scaleWad,
+    int256 growth, int256 fall,
     uint16 slippageBps_, FeeRoute calldata route_
 ) external;
 
@@ -192,6 +223,7 @@ function recoverPerpSurplus() external;                               // onlyOwn
 function emergencyClearRecovery() external;                           // onlyOwner
 
 function crank() external returns (bool progressed);                  // permissionless
+function snapshotNav(uint256 intervalId) external;                    // permissionless
 function settle(uint256 intervalId) external;                         // permissionless
 function claimDeferred(address recipient, address token) external;    // permissionless
 
@@ -203,18 +235,19 @@ function strategyValueWad() external view returns (uint256);
 | Entrypoint | Caller | What it may / may not do |
 |---|---|---|
 | `initialize` | anyone, once — consumed atomically by the factory | One-shot; the guard is `_initialized`, **not** a factory check — re-entry reverts `AlreadyInitialized`. `B4Factory.createVault` clones and initializes in the same transaction, so no third party can ever reach an uninitialized clone. Re-verifies both descriptors against the venue, bounds `slippageBps ≤ 500`, validates the fee route, resolves the policy. |
-| `selectPolicy` | owner | Reads `IStrategy.targets()` **once** and stores the resolved `(growthTarget, fallTarget)`. Bounds: `0 < scaleWad ≤ 10e18`, `|base| ≤ 10e18`, `|resolved| ≤ φ`. Blocked while an exit is pending. A later product/scale change rebalances in place — it is never exit or penalty logic. |
-| `deposit` | owner | Directional token and/or USDC margin. Only in an open calendar window (`Calendar.depositOpen`, else `DepositWindowClosed`). Credits the **actual received delta** via a balance-before/after measurement, and adds the deposited value to `entryLedgerWad`. |
+| `selectPolicy` | owner | Reads `IStrategy.targets()` **once** and stores the resolved `(growthTarget, fallTarget)`. Bounds: `0 < scaleWad ≤ 10e18`, `|base| ≤ 10e18`, `|resolved| ≤ φ`. Blocked while an exit is pending. Legacy pools rebalance in place; strict pools admit only their canonical product direction (aggregate upgrades only, isolated pools no cross-product change). |
+| `deposit` | owner | Directional token and/or USDC margin. Accepted throughout the cycle; a late entrant starts at the current interpolated target and reaches the full side at the end of the 20-day transition. Credits the **actual received delta** via a balance-before/after measurement, and adds the deposited value to `entryLedgerWad`. |
 | `crank` | anyone | Verify a pending intent, else one exit step, else one sync step (delegated to `B4VaultOps.opsPlanStep`). Liveness only. |
 | `initiateExit` | owner | Sets `exitShareWad ∈ (0, 1]`; the exit is then driven by the *live* position through permissionless cranks. |
-| `settle` | anyone | Delegates to `opsSettle`. |
+| `snapshotNav` | anyone | Delegates to `opsSnapshotNav`: captures this interval's NAV **and the price it was measured at**, together, at one instant. One-shot per interval, only inside `Calendar.SNAPSHOT_WINDOW` (the settlement day), requires an idle engine. The vault **owner** calls it at `pointTime` to remove every caller's discretion over the price their interval weight is minted at (F4); anyone may call it for liveness. Optional in the common path — `settle` captures it itself when it runs inside the same window. |
+| `settle` | anyone | Delegates to `opsSettle`. Values the interval off the captured snapshot, never off the price of the instant *it* runs; past the snapshot window with nothing captured it reverts `NavNotSnapshotted` and the interval defers to the next checkpoint. |
 | `recoverEvm` / `recoverCoreSpot` / `recoverPerpSurplus` | owner | Recovery of **unaccounted** surplus only (see §4.6). |
 | `emergencyClearRecovery` | owner | Only for a stuck *surplus-recovery* intent (`RecoverSpotDir`, `RecoverSpotUsdc`, `RecoverPerpPhase1/2`) and only after `EMERGENCY_TIMEOUT` (3 days) — else `NotRecoveryIntent` / `TooEarly`. Asset-transfer intents can never be discarded. |
 | `claimDeferred` | anyone | Retries a failed payout; pays **only the recorded recipient**. |
 
 Fee-route validation (`_validateRoute`): `operatorBps ≤ Phi.MAX_OPERATOR_BPS` (3819); a non-zero rate requires a non-zero operator address; a referrer requires a non-zero operator rate and `referrerBps ∈ [3819, 10000]`; a zero referrer must carry a zero `referrerBps`.
 
-**A vault may NOT:** be paused, upgraded, or administered; change its owner, pool, descriptors or fee route after `initialize`; let a keeper choose a target, market, price or recipient; accept a deposit in a closed window; or credit an amount it did not measure.
+**A vault may NOT:** be paused, upgraded, or administered; change its owner, pool, descriptors or fee route after `initialize`; let a keeper choose a target, market, price or recipient; or credit an amount it did not measure.
 
 ### 4.6 `B4VaultOps.sol` — settle / exit-finalize / recovery module
 
@@ -229,9 +262,9 @@ function opsRecoverCoreSpot(bool dirToken) external;                   // onlyIn
 function opsRecoverPerpSurplus() external;                             // onlyInitialized
 ```
 
-**Settlement (`opsSettle`).** Requires no pending exit (`ExitPending` when `exitShareWad != 0`), an idle engine, an unsettled interval, locked checkpoint prices, and a still-open report window (`NotSettleable` / `AlreadySettled`). A perp position whose sign disagrees with the interval's target reverts `WrongSignPerp` — the previous regime's exposure must pass through a verified zero first. Then: reconcile → value NAV at the pool's **locked** checkpoint price → `profit = max(nav − entryLedger, 0)` → `virtualFee = profit · f` (`Phi.FEE_F = φ⁻⁵/2`) → `operatorCut = virtualFee · operatorBps` → `clientShare = virtualFee − operatorCut`. The operator cut is paid **in kind** proportionally from the EVM basket; if the basket cannot cover it, settle reverts `FeeNotRepatriated` rather than waiving the cut. `entryLedgerWad` is re-anchored to `nav − paid`, `rewardBaseWad += clientShare`, and the new reward base is reported to the pool as this interval's weight — once.
+**Settlement (`opsSettle`).** Requires no pending exit (`ExitPending` when `exitShareWad != 0`), an idle engine, an unsettled interval, locked checkpoint prices, and a still-open report window (`NotSettleable` / `AlreadySettled`). A perp position whose sign disagrees with the interval's target reverts `WrongSignPerp` — the previous regime's exposure must pass through a verified zero first. Then: reconcile → value NAV at the **live** price of the settlement instant (never at a price fixed earlier — see `HAZARDS.md` B4 and AUDIT-2026-07-25 C-1; a zero read reverts `ZeroPrice`) → `profit = max(nav − entryLedger, 0)` → `virtualFee = profit · f` (`Phi.FEE_F = φ⁻⁵/2`) → `operatorCut = virtualFee · operatorBps` → `clientShare = virtualFee − operatorCut`. The operator cut is paid **in kind** proportionally from the EVM basket; if the basket cannot cover it, settle reverts `FeeNotRepatriated` rather than waiving the cut. `entryLedgerWad` is re-anchored to `nav − paid`, `rewardBaseWad += clientShare`, and the new reward base is reported to the pool as this interval's weight — once.
 
-**Exit (`_planExitStep` → `_finalizeExit`).** Flatten the perp to raw zero → settle any harvest claim → reconcile → return **all** Core principal (rotated USDC, margin USDC, directional) → finalize. Finalization values NAV at the live price, then splits the exiting share in kind. Inside a free window (`Calendar.freeExit`) the owner receives the gross less the proportional operator cut. Outside it, **one** penalty `q = Phi.EXIT_Q = φ⁻³/2` of the gross is withheld; the operator payment is *carved from* that penalty, never added, and the remainder is transferred to the pool, which then accounts it via `capture()` (wrapped in `try/catch` so a griefing co-asset can never freeze the exit). Ledgers scale by `(1 − x)` so repeated partial exits can neither mint nor duplicate weight.
+**Exit (`_planExitStep` → `_finalizeExit`).** Flatten the perp to raw zero → settle any harvest claim → reconcile → return **all** Core principal (rotated USDC, margin USDC, directional) → finalize. Finalization values NAV at the live price, then splits the exiting share in kind. Inside a free window (`Calendar.freeExit`) the owner receives the gross less the proportional operator cut. Outside it, **one** penalty `q = Phi.EXIT_Q = φ⁻³/2` of the gross is withheld; the operator payment is *carved from* that penalty, never added, and the remainder is transferred to the pool, which calls `capturePenalty()` in a guarded `try/catch` so a griefing co-asset cannot freeze the exit. Legacy pools account it directly; strict pools bind it to the matching product sleeve until a free-window sleeve exit. Ledgers scale by `(1 − x)` so repeated partial exits can neither mint nor duplicate weight.
 
 **Payouts never freeze the vault.** `_payOut` uses `SafeTransfer.tryTransfer`; a failing recipient (e.g. a blacklisted address) has the amount recorded in `deferredPayout` and emitted as `PayoutDeferred`, retryable permissionlessly. Deferred amounts stay accounted and are explicitly excluded from unaccounted-EVM recovery.
 
@@ -249,15 +282,31 @@ All three pay the **owner** only. None of them can touch accounted principal, an
 
 ## 5. `src/core/B4Pool.sol`
 
+**Deployment.** Created through the shared `B4PoolDeployer`, which holds this contract's
+creation code so neither factory embeds it (EIP-170 — see `ARCHITECTURE.md`). The deployer
+passes its own caller as `factory_`, so the value is what `msg.sender` was under the previous
+inline `new B4Pool(...)`; authority still flows only from a factory's `isPool` registry, never
+from that field.
+
 **Responsibility.** The shared reward basket for one descriptor set: settlement intervals, checkpoint prices, per-vault weights, and in-kind distribution. Deployed by `B4Factory.createPool`; `factory`, `oracle` and `assetCount` are immutable. Asset index `0` is always the settlement descriptor; indices `1..N` are the directional descriptors, `N ≤ MAX_DIRECTIONAL = 8`, keyed by full `descriptorHash`. Duplicate descriptors, or two descriptors sharing an `evmToken` or `coreToken`, are rejected at construction.
 
 ```solidity
 function advance() external returns (bool materialized);            // permissionless
 function lockPrices(uint256 id) external;                           // permissionless
 function reportWeight(uint256 id, uint256 weight) external;         // registered vaults only
+function scaleWeight(uint256 id, uint256 keepWad) external;         // registered vaults only
 function claimFor(uint256 id, address vault) external;              // permissionless
 function sweep(uint256 id) external;                                // permissionless
 function capture() external;                                        // permissionless
+function capturePenalty() external;                                 // registered vault only
+function foldPenalty(uint8 policy, uint256 assetIndex) external returns (bool); // permissionless
+function initiateSleeveExit(uint8 policy, uint256 assetIndex) external returns (bool); // free window
+function crankSleeve(uint8 policy, uint256 assetIndex) external returns (bool); // permissionless
+function cancelSleeveExit(uint8 policy, uint256 assetIndex) external returns (bool); // dead-feed escape
+function recoverSleeveEvm(uint8 policy, uint256 assetIndex, uint256 tokenIndex) external; // permissionless
+function recoverSleeveCoreSpot(uint8 policy, uint256 assetIndex, bool dirToken) external;  // permissionless
+function recoverSleevePerpSurplus(uint8 policy, uint256 assetIndex) external;              // permissionless
+function clearSleeveRecovery(uint8 policy, uint256 assetIndex) external;                   // permissionless
 function registerVault(address vault) external;                     // factory only
 
 // views
@@ -278,9 +327,12 @@ Behavior worth knowing:
 - **`advance`** materializes at most one passed settlement point per call and turns the accrued inventory into that interval's bucket. `lastPointTime` is monotonic, so points of a superseded epoch that were never reached are skipped by construction.
 - **`lockPrices`** is all-or-nothing: it commits only if *every* directional asset prices non-zero inside `Calendar.SNAPSHOT_WINDOW` (24 hours — the settlement day); otherwise it reverts so a later call in the window retries. Settlement USDC is fixed at 1 USD. Missing the window makes that interval unreportable — a liveness cost, not a custody one: settle may skip it, so the fee and reward weight are measured over the combined span at the next checkpoint.
 - **`reportWeight`** accepts only registered vaults (`NotAVault`), once per vault per interval, only after prices are locked and before `reportDeadline = pointTime + SNAPSHOT_WINDOW + REPORT_WINDOW` (2 days).
+- **`scaleWeight`** accepts only registered vaults and scales the caller's own already-reported weight by the share it KEPT on an exit, lowering `totalWeight` by the same amount, so a reported claim always tracks the capital still standing behind it. Called from `_finalizeExit` on every exit that follows a settle; `keep == 0` zeroes the weight, which is the full-exit rule as the endpoint of a ramp rather than a special case. Confined to the same pre-`reportDeadline` window as `reportWeight`, so `totalWeight` never moves while claims are open, and every non-applicable case is a silent no-op — it sits on the permissionless crank path, where a revert would freeze the exit with no admin to unstick it.
 - **`claimFor`** opens after the report window closes and pays the **vault's owner**, in kind, per asset: `nominal = bucket · w / W`, and on shortfall `actual = nominal · balance / liability` — reduced per claim, so the outcome is order-independent. **No internal swap ever happens.** A hostile basket token that reverts on `balanceOf` or on `transfer` defers only its own claim (`ClaimDeferred`) and leaves the healthy tokens payable and itself retryable.
 - **`sweep`** rolls an expired interval's unclaimed inventory back into `accruing` exactly once, leaving liability unchanged.
-- **`capture`** turns any balance above recorded liability into inventory — measured receipt only. This is also how an exit penalty enters the pool: the vault transfers, then calls `capture()`. A donation becomes pool inventory, never vault profit.
+- **`capture`** turns an uncommitted balance above recorded liability into inventory — measured receipt only. A donation becomes pool inventory, never vault profit. **`capturePenalty`** preserves that direct path for legacy pools; in a strict Product Pool only settlement plus the exiting vault's directional token enter `(policy, directional asset)` escrow. Another whitelisted token remains ordinary donation inventory.
+- **Strict sleeves** are created only by `B4ProductFactory` for the immutable canonical policy and directional asset. `foldPenalty` zero-resets allowance, transfers only the recorded escrow into that sleeve, and starts the ordinary engine. `crankSleeve` is permissionless. `initiateSleeveExit` works only in `Calendar.freeExit`; only then can returned sleeve capital be captured into `accruing` and later claimed. `escrowHeld` is excluded from ordinary claim shortfall accounting while the sleeve is live.
+- **Sleeve owner-escapes.** A sleeve is created with `owner == pool`, so the pool is the only address that can satisfy the vault's `onlyOwner`. `cancelSleeveExit` relays `B4Vault.cancelExit` and is the pool-side half of the dead-feed escape (INVARIANTS row 20); it is refused unless the sleeve's exit is provably unable to finalize — the directional spot price reads zero **and** the sleeve still holds directional value, the exact complement of `_finalizeExit`'s deferral test — so it can never be used to grief a healthy sleeve exit. Honest bound on what it buys: while the feed is still dead, cancelling does **not** on its own restore a *directional* `foldPenalty` — `B4Vault.deposit` reverts `ZeroPrice` in its own directional branch (H-3) — it restores the settlement-only fold, returns the sleeve to the sync planner instead of pinning it on the exit machine, and makes it usable the instant the feed returns. `recoverSleeveEvm` / `recoverSleeveCoreSpot` / `recoverSleevePerpSurplus` relay the vault's own bounded `balance − recorded` recovery (HAZARDS B6); the recipient is the vault's immutable `owner`, i.e. this pool, and the arrival is admitted by measured delta into `accruing` + `liability`, so recovered surplus is distributed by reported weight like any other inventory. `recoverSleeveEvm` names a token by **whitelist index**, never by address, so everything it can move has a drain path; a non-whitelisted airdrop stays in the sleeve. `clearSleeveRecovery` relays `emergencyClearRecovery` and is mandatory alongside them: a recovery intent the venue never completes would otherwise block the sleeve's crank and strand its principal. None of these lets a caller choose an address, an amount or a recipient.
 - Untrusted token reads go through `_safeBalanceOf`: a `staticcall` with gas capped at `TOKEN_READ_GAS = 100_000` and the return copy bounded to 32 bytes, so a hostile token can neither revert, OOG, nor return-bomb the loop.
 
 **The pool may NOT:** be administered, paused or upgraded; hold authority over any vault; swap assets; or grow its liability other than by measured receipt.
@@ -345,7 +397,7 @@ function settleVault(B4Vault v, uint256 reportId) external returns (bool);
 function retryDeferred(B4Vault v) external returns (uint256);
 ```
 
-`crank` performs, each step isolated in `try/catch` so one unavailable step never strands the rest: `pool.advance()` in a loop → `pool.lockPrices(latest)` → `pool.sweep(id)` for each expired interval in a bounded catch-up window (`SWEEP_LOOKBACK = 16`, walking back from the second-newest interval) → `pool.capture()` → per vault `crankVault` (up to `maxVaultSteps` `vault.crank()` calls), `settleVault` when an interval is reportable, `pool.claimFor(latest, vault)`, and `retryDeferred`.
+`crank` performs, each step isolated in `try/catch` so one unavailable step never strands the rest: for a strict pool it bounded-loops the immutable `4 × MAX_DIRECTIONAL` sleeve domain (`foldPenalty` → free-window `initiateSleeveExit` → up to `maxVaultSteps` `crankSleeve` calls), then `pool.advance()` in a loop → `pool.lockPrices(latest)` → `pool.sweep(id)` for each expired interval in a bounded catch-up window (`SWEEP_LOOKBACK = 16`, walking back from the second-newest interval) → `pool.capture()` → per vault `crankVault` (up to `maxVaultSteps` `vault.crank()` calls), `settleVault` when an interval is reportable, `pool.claimFor(latest, vault)`, and `retryDeferred`.
 
 The three wrappers are `external` but self-guarded with `require(msg.sender == address(this), "self")`. They exist because a high-level call into a **codeless** address reverts via the compiler's `extcodesize` pre-check in the *caller's* frame, which a local `try/catch` cannot catch — routing through an external self-call keeps that revert inside a catchable external call, so one malformed vault entry can never roll back the whole crank.
 
@@ -390,7 +442,7 @@ Venue addresses (`CORE_WRITER = 0x33…33`, the read precompiles `0x800`–`0x81
 Action encoding and emission: `iocOrder(asset, isBuy, limitPx, sz, reduceOnly)` (rejects zero size as defense in depth; `limitPx`/`sz` are `1e8` fixed point, deliberately *unlike* the szDecimals-scaled read conventions — callers convert), `spotSend(destination, token, weiAmount)`, `usdClassTransfer(ntl, toPerp)`. Header restates the rule: **emitting an action is not evidence it executed.**
 
 ### `DescriptorLib.sol`
-Descriptor validation and unit conversion. `verifyDirectional` rejects a `fixedUsd` descriptor or one colliding with the settlement token, verifies the spot pair is exactly `(coreToken, settlement.coreToken)`, bounds `spotSzDecimals ≤ 8`, and for a perp-bearing descriptor rejects ids above `uint16` (`PerpIdUnsupported` — the legacy position precompile takes a `uint16`, so a wider id would silently alias an unrelated market), bounds `perpSzDecimals ≤ 6`, rejects isolated-only perps (`PerpNotCrossMarginable`), and matches `szDecimals` / `maxLeverage`. A spot-only descriptor must zero its perp fields. `verifySettlement` requires `fixedUsd`. `_verifyToken` rejects a `coreToken` wider than `uint32`, sanity-checks decimal spreads, and cross-checks `evmContract` / `weiDecimals` / `szDecimals` / `evmExtraWeiDecimals` against the token-info precompile. `evmToCore` clamps to `uint64` rather than truncating; `coreToEvm` floors.
+Descriptor validation and unit conversion. `verifyDirectional` rejects a `fixedUsd` descriptor or one colliding with the settlement token, verifies the spot pair is exactly `(coreToken, settlement.coreToken)`, bounds `spotSzDecimals ≤ 8`, and for a perp-bearing descriptor rejects ids above `uint16` (`PerpIdUnsupported` — the legacy position precompile takes a `uint16`, so a wider id would silently alias an unrelated market), bounds `perpSzDecimals ≤ 6`, rejects isolated-only perps (`PerpNotCrossMarginable`), and matches `szDecimals` / `maxLeverage`. A spot-only descriptor must zero its perp fields. `verifySettlement` requires `fixedUsd`, requires `coreWeiDecimals ≥ 6` (below that the engine's `10 ** (coreWeiDecimals − PERP_USD_DECIMALS)` underflow-panics every perp-bearing vault), and requires `coreToken == 0` — the settlement descriptor must **be** the venue's quote asset, not merely carry the deployer's `fixedUsd` flag, because `usdClassTransfer` moves the venue's USDC unconditionally and any other linked token would leave `_startToPerp` watching a balance the transfer never touches (no completion, resend forever, and an asset-transfer intent may never be discarded — an unhealable freeze). `_verifyToken` rejects a `coreToken` wider than `uint32`, sanity-checks decimal spreads, and cross-checks `evmContract` / `weiDecimals` / `szDecimals` / `evmExtraWeiDecimals` against the token-info precompile. `evmToCore` clamps to `uint64` rather than truncating; `coreToEvm` floors.
 
 > **The token↔perp association itself has no canonical on-chain statement.** The immutable descriptor supplies it, and the user must verify it before signing (`spec/SECURITY_MODEL.md` §3).
 
@@ -401,8 +453,8 @@ Descriptor validation and unit conversion. `verifyDirectional` rejects a `fixedU
 | Library | Responsibility |
 |---|---|
 | `Phi.sol` | Fixed-point math and protocol constants. `WAD = 1e18`; `PHI`, `PHI_SQ`, `INV_PHI`; fee `FEE_F = φ⁻⁵/2`; exit penalty `EXIT_Q = φ⁻³/2`; `MAX_OPERATOR_BPS = 3819`, `MIN_REFERRER_BPS = 3819`; policy bounds `MAX_BASE_TARGET = MAX_SCALE = 10e18`. Full-precision `mulDiv` (512-bit product, reverts on overflow or zero divisor), `wmul`, `bps`, `min`, `max`, `abs`. **Every division floors toward the protocol** — fees, penalties, cuts and pool claims never round up. |
-| `StructuralLeverage.sol` | Pure leverage math: `L = min(g·p/(p−floor), p/(p−cap))` for a leveraged long, bounded by the cycle's confirmed structural lows ([SPECIFICATION §7b](../spec/SPECIFICATION.md)), with the `(floor, cap)` anchors ratcheted on-chain by `B4Pool.sampleAnchor`. Unit tests pin the March-2020 survival case, the ratchet flip and genesis. **NOT consumed by the engine yet** — the `B4VaultEngine._planPerpStep` wiring was reverted after the 2026-07-21 audit (it never posted `margin = notional/L`, and re-levered a held position at the halving); the engine sizes leveraged perps flat-`φ`. See `../AUDIT-2026-07-structural-leverage.md` and `../PROPOSAL-structural-leverage.md`. |
-| `Calendar.sol` | Pure cycle geometry over `t = now − halvingTs`. `CYCLE = 1460 days`, `W = 20 days`, `H = 10 days`, pivots `P = CYCLE/φ²` (growth→fall) and `T = CYCLE/φ` (fall→growth), `SNAPSHOT_WINDOW = 24 hours`, `REPORT_WINDOW = 2 days`, `POST_FACT_FREE_EXIT = W`. `zoneAt` (7 zones), `targetAt` (piecewise split at zero for opposite-sign or zero-endpoint pairs; **strictly same-sign pairs interpolate directly and never synthesize a zero** — so `StrategyMini` (1,1) never trades, yet is still fee'd on interval profit), `decompose(n)` = `spot = clamp(n, 0, 1); perp = n − spot`, `depositOpen`, `freeExit`, `nextSettlementPoint` (the two fixed instants `P−H` and `T+H` per epoch). After `T+W` the calendar rests in terminal growth until the next accepted fact. |
+| `StructuralLeverage.sol` | Pure structural stop and leverage math for both sides. `B4Pool.sampleAnchor` ratchets density-confirmed lows and highs; `B4VaultEngine._planPerpStep` consumes those anchors through margin control, freezes the resulting stop at open, and clears it only on flip/exit/liquidation. Missing or under-sampled anchors fail safe to the flat base. Unit tests pin the acceptance matrix, ratchet density, and historical survival boundaries. |
+| `Calendar.sol` | Pure cycle geometry over `t = now − halvingTs`. `CYCLE = 1460 days`, `W = 20 days`, `H = 10 days`, pivots `P = CYCLE/φ²` (growth→fall) and `T = CYCLE/φ` (fall→growth), `SNAPSHOT_WINDOW = 24 hours`, `REPORT_WINDOW = 2 days`, `POST_FACT_FREE_EXIT = W`. `zoneAt` (7 zones), `targetAt` (piecewise split at zero for opposite-sign or zero-endpoint pairs; **strictly same-sign pairs interpolate directly and never synthesize a zero** — so `StrategyMini` (1,1) never trades, yet is still fee'd on interval profit), `decompose(n)` (unlevered long `0≤n≤1` → `spot = n, perp = 0`; leverage/short → `spot = 0, perp = n`, a pure perp), `freeExit`, `nextSettlementPoint` (the two fixed instants `P−H` and `T+H` per epoch). After `T+W` the calendar rests in terminal growth until the next accepted fact. |
 | `BtcHeader.sol` | The 80-byte header binding: `hash` = dSHA256 in Bitcoin-internal byte order, `timestamp` = little-endian `uint32` at offset 68, `HALVING_PERIOD = 210_000`, `HEADER_LENGTH = 80`. The light client's stored byte-order convention is a funded integration gate. |
 | `SafeTransfer.sol` | Minimal ERC-20 helpers tolerating missing/malformed return data. `safeTransfer` / `safeTransferFrom` revert on failure; **`tryTransfer` never reverts, whatever the token returns** — the fail-soft pool claim path and the pay-or-defer payout path depend on that. Gas forwarded to a token is capped at 500,000 and the return copy at 32 bytes, so a hostile token can neither return-bomb nor gas-drain a loop. Directional assets are required to be plain ERC-20s; rebasing and fee-on-transfer tokens are excluded by `spec/SECURITY_MODEL.md` §4. |
 
@@ -429,5 +481,5 @@ Deliberate exclusions matter as much as inclusions: carry-style operation is an 
 
 - [`ARCHITECTURE.md`](../ARCHITECTURE.md) — deep design rationale for every boundary above
 - [`INVARIANTS.md`](../INVARIANTS.md) — the invariant list these contracts are built to preserve
-- [`REPORT.md`](../REPORT.md) — status dossier and internal adversarial-review rounds; an independent external audit is a mandatory unmet release gate · [`SLITHER.md`](../SLITHER.md) — static-analysis triage
+- [`REPORT.md`](audits/REPORT.md) — status dossier and internal adversarial-review rounds; an independent external audit is a mandatory unmet release gate · [`SLITHER.md`](audits/SLITHER.md) — static-analysis triage
 - [`spec/SPECIFICATION.md`](../spec/SPECIFICATION.md) · [`spec/WHITEPAPER.md`](../spec/WHITEPAPER.md) · [`spec/HAZARDS.md`](../spec/HAZARDS.md) · [`spec/SECURITY_MODEL.md`](../spec/SECURITY_MODEL.md) · [`spec/REQUIREMENTS.md`](../spec/REQUIREMENTS.md) · [`spec/TEST_PLAN.md`](../spec/TEST_PLAN.md)

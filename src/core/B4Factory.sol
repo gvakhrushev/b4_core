@@ -1,58 +1,57 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.28;
 
-import {B4Pool} from "./B4Pool.sol";
-import {B4Vault} from "./B4Vault.sol";
+import {IB4PoolDeployer} from "./B4PoolDeployer.sol";
+import {B4FactoryStorage, B4FactoryVaultCreator} from "./B4FactoryVaultCreator.sol";
 import {B4VaultStorage} from "./B4VaultStorage.sol";
 import {CoreTypes} from "../venue/CoreTypes.sol";
 import {DescriptorLib} from "../venue/DescriptorLib.sol";
+import {IHalvingOracle} from "../interfaces/IHalvingOracle.sol";
 
-/// @title B4Factory — permissionless pool creation and atomic vault binding.
-/// @notice No authority anywhere (F1): the factory holds no funds, has no owner, and only
-///         deploys immutable configurations. Vault creation atomically binds owner, pool,
-///         execution identity, stored targets and the immutable fee route in one
-///         transaction — no front-run window, no half-initialized state (F3).
-contract B4Factory {
+/// @title B4Factory — permissionless legacy-pool creation and atomic vault binding.
+/// @notice The strict four-product path is `B4ProductFactory`; this ABI remains intact
+///         for generic pools. Creation code is sharded into a fixed delegate module to
+///         keep both paths deployable under EIP-170.
+contract B4Factory is B4FactoryStorage {
     address public immutable oracle;
     address public immutable vaultImplementation;
-    CoreTypes.AssetDescriptor internal _settlement;
-
-    mapping(address => bool) public isPool;
-    mapping(address => bool) public isVault;
+    address public immutable vaultCreator;
 
     event PoolCreated(address indexed pool, uint256 directionalAssets);
     event VaultCreated(
         address indexed vault, address indexed owner, address indexed pool, bytes32 dirHash
     );
 
+    error CloneFailed();
     error NotAPool();
     error UnknownDescriptor();
-    error CloneFailed();
+    error OracleNotBootstrapped();
+    error ZeroPoolDeployer();
 
-    /// @param vaultImplementation_ pre-deployed B4Vault implementation (bound to its
-    ///        B4VaultOps module by immutable). Deployed separately to respect EIP-3860;
-    ///        both are part of the reproducible-build manifest (SECURITY_MODEL §5.14).
     constructor(
         address oracle_,
         CoreTypes.AssetDescriptor memory settlement_,
-        address vaultImplementation_
+        address vaultImplementation_,
+        address poolDeployer_
     ) {
+        if (poolDeployer_ == address(0)) revert ZeroPoolDeployer();
+        poolDeployer = poolDeployer_;
         oracle = oracle_;
         DescriptorLib.verifySettlement(settlement_);
         _settlement = settlement_;
         vaultImplementation = vaultImplementation_;
+        vaultCreator = address(new B4FactoryVaultCreator());
     }
 
     function settlementDescriptor() external view returns (CoreTypes.AssetDescriptor memory) {
         return _settlement;
     }
 
-    /// @notice Permissionless pool creation — not endorsement (REQUIREMENTS §1). Every
-    ///         directional descriptor is validated against the venue before binding.
     function createPool(CoreTypes.AssetDescriptor[] calldata directional)
         external
         returns (address poolAddr)
     {
+        if (IHalvingOracle(oracle).halvingHeight() == 0) revert OracleNotBootstrapped();
         CoreTypes.AssetDescriptor[] memory all =
             new CoreTypes.AssetDescriptor[](directional.length + 1);
         all[0] = _settlement;
@@ -60,14 +59,11 @@ contract B4Factory {
             DescriptorLib.verifyDirectional(directional[i], _settlement);
             all[i + 1] = directional[i];
         }
-        poolAddr = address(new B4Pool(oracle, all));
+        poolAddr = IB4PoolDeployer(poolDeployer).deploy(oracle, all);
         isPool[poolAddr] = true;
         emit PoolCreated(poolAddr, directional.length);
     }
 
-    /// @notice Create a vault: msg.sender becomes the fixed owner and signs the whole
-    ///         configuration — pool, descriptor, policy, scale, slippage and the immutable
-    ///         fee route — by sending this transaction (REQUIREMENTS §5.2).
     function createVault(
         address pool,
         bytes32 dirDescriptorHash,
@@ -76,42 +72,26 @@ contract B4Factory {
         uint16 slippageBps,
         B4VaultStorage.FeeRoute calldata route
     ) external returns (address vault) {
-        if (!isPool[pool]) revert NotAPool();
-        uint256 indexPlusOne = B4Pool(pool).descriptorIndexPlusOne(dirDescriptorHash);
-        if (indexPlusOne == 0) revert UnknownDescriptor();
-        CoreTypes.AssetDescriptor memory dir = B4Pool(pool).asset(indexPlusOne - 1);
-
-        vault = _clone(vaultImplementation);
-        isVault[vault] = true;
-        B4Vault(vault)
-            .initialize(
-                msg.sender,
-                pool,
+        bytes memory data = abi.encodeCall(
+            B4FactoryVaultCreator.createVault,
+            (
                 oracle,
-                dir,
-                _settlement,
-                indexPlusOne - 1,
+                vaultImplementation,
+                pool,
+                dirDescriptorHash,
                 strategy,
                 scaleWad,
                 slippageBps,
                 route
-            );
-        B4Pool(pool).registerVault(vault);
-        emit VaultCreated(vault, msg.sender, pool, dirDescriptorHash);
-    }
-
-    /// @dev Minimal EIP-1167 clone.
-    function _clone(address impl) internal returns (address instance) {
-        assembly {
-            let ptr := mload(0x40)
-            mstore(ptr, 0x3d602d80600a3d3981f3363d3d373d3d3d363d73000000000000000000000000)
-            mstore(add(ptr, 0x14), shl(0x60, impl))
-            mstore(
-                add(ptr, 0x28),
-                0x5af43d82803e903d91602b57fd5bf30000000000000000000000000000000000
             )
-            instance := create(0, ptr, 0x37)
+        );
+        (bool ok, bytes memory ret) = vaultCreator.delegatecall(data);
+        if (!ok) {
+            assembly {
+                revert(add(ret, 32), mload(ret))
+            }
         }
-        if (instance == address(0)) revert CloneFailed();
+        vault = abi.decode(ret, (address));
+        emit VaultCreated(vault, msg.sender, pool, dirDescriptorHash);
     }
 }

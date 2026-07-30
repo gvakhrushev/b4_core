@@ -11,6 +11,7 @@ How to create a B4 pool and vault, drive the owner and permissionless lifecycles
 | Contract | Role |
 | --- | --- |
 | `B4Factory` | Permissionless `createPool` / `createVault`; holds no funds, has no owner |
+| `B4ProductFactory` | Permissionless strict deployment of isolated Mini/B4/Pro/Pro Max pools or aggregate pool `15` |
 | `B4Pool` | Shared reward basket: intervals, checkpoint prices, weights, claims |
 | `B4Vault` | The user-facing custody container — an EIP-1167 clone, one fixed owner |
 | `B4VaultEngine` / `B4VaultOps` | Async intent engine and the delegatecall'd ops module (EIP-170 split) |
@@ -59,11 +60,31 @@ function createPool(CoreTypes.AssetDescriptor[] calldata directional)
     returns (address poolAddr);
 ```
 
+- Reverts `OracleNotBootstrapped()` while `oracle.halvingHeight() == 0`; the authenticated
+  bootstrap header must arrive before any pool can exist.
 - The settlement descriptor is inserted at index `0`; your directional descriptors follow at `1..N`.
 - `B4Pool.MAX_DIRECTIONAL == 8`; the constructor reverts `TooManyAssets` outside `1..8` directional entries, and `DuplicateAsset` if a descriptor hash, `evmToken` or `coreToken` repeats.
 - Emits `PoolCreated(address indexed pool, uint256 directionalAssets)` and sets `B4Factory.isPool[pool] = true`.
 
 `B4Pool.descriptorIndexPlusOne(bytes32) → uint256` returns *index + 1* into the full asset array (settlement at `0`, directional at `1..N`); `0` means unknown. Read the descriptor back with `B4Pool.asset(indexPlusOne - 1)` — this is exactly what `B4Factory.createVault` does.
+
+### Strict product-pool choice
+
+```solidity
+function createProductPool(
+    CoreTypes.AssetDescriptor[] calldata directional,
+    address[4] calldata strategies,
+    uint8 policyMask
+) external returns (address poolAddr);
+```
+
+`B4ProductFactory` accepts only masks `1` (Mini), `2` (B4), `4` (Pro), `8` (Pro Max), or `15`
+(aggregate). It validates the same descriptors as `B4Factory`, fixes the four canonical
+strategy addresses, and creates the matching pool-owned sleeves atomically. The user vault uses
+the same `createVault` signature, but a strict pool admits only its fixed canonical strategy at
+scale `1`. Aggregate `15` permits only an upward product move; isolated pools require exit and
+new vault for any cross-product move. Like `createPool`, `createProductPool` reverts
+`OracleNotBootstrapped()` until the first proof-backed halving fact is accepted.
 
 ---
 
@@ -127,13 +148,13 @@ function selectPolicy(address strategy, uint256 scaleWad) external;
 function initiateExit(uint256 shareWad) external;
 ```
 
-**`deposit`** — pull directional capital and/or USDC margin. Requires prior ERC-20 approval to the vault. Reverts: `ExitPending()` if an exit is in progress, `ZeroDeposit()` if both amounts are zero, `DepositWindowClosed()` when `Calendar.depositOpen(oracle.timeSinceHalving())` is false (deposits are closed in the two `0 → target` opening sub-windows: `OpeningFall` and `OpeningGrowth`). Accounting uses the **actual received delta**, not the requested amount, so fee-on-transfer tokens cannot inflate the ledger. Emits `Deposited(dirAmount, usdcAmount, valueWad, entryWad)`.
+**`deposit`** — pull directional capital and/or USDC margin. Requires prior ERC-20 approval to the vault. Reverts: `ExitPending()` if an exit is in progress and `ZeroDeposit()` if both amounts are zero. Deposits are accepted throughout the cycle; a day-15 entrant starts at the current 50% transition target and reaches the full target at day 20. Accounting uses the **actual received delta**, not the requested amount, so fee-on-transfer tokens cannot inflate the ledger. Emits `Deposited(dirAmount, usdcAmount, valueWad, entryWad)`.
 
-**`selectPolicy`** — re-read a strategy and store new resolved targets. Blocked while `exitShareWad != 0`. A product/scale change rebalances the same vault in place through ordinary sync steps; it is never exit or penalty logic. Emits `PolicySelected`.
+**`selectPolicy`** — re-read a strategy and store new resolved targets. Blocked while `exitShareWad != 0`. In a legacy pool a product/scale change rebalances in place. In a strict product pool only the fixed canonical product is valid; aggregate `15` permits an upward move, while an isolated cross-product move or any downgrade requires exit and re-entry. Emits `PolicySelected`.
 
 **`initiateExit`** — begin exiting share `x ∈ (0, WAD]`. Reverts `ExitPending()` if one is already open, `BadShare()` outside the range. This only *arms* the exit: it is then driven by the live position through permissionless cranks. Emits `ExitInitiated(shareWad)`, and eventually `ExitFinalized(shareWad, grossWad, ownerWad, penaltyWad, free)`.
 
-Whether an exit is free is decided at finalization by `Calendar.freeExit(timeSinceHalving())` — true inside the four transition zones and for `POST_FACT_FREE_EXIT` (= `W` = 20 days) after each accepted halving fact. Outside a free window one in-kind penalty (`Phi.EXIT_Q` of gross) is withheld; the operator payment is *carved from* that penalty, never added, and the remainder is pushed to the pool as inventory.
+Whether an exit is free is decided at finalization by `Calendar.freeExit(timeSinceHalving())` — true inside the four transition zones and for `POST_FACT_FREE_EXIT` (= `W` = 20 days) after each accepted halving fact. Outside a free window one in-kind penalty (`Phi.EXIT_Q` of gross) is withheld; the operator payment is *carved from* that penalty, never added. A legacy pool records it as inventory; a strict product pool measures it into the matching product sleeve, which becomes claim inventory only after its free-window exit.
 
 ---
 
@@ -149,7 +170,7 @@ function claimDeferred(address recipient, address token) external; // nonReentra
 
 `crank()` performs exactly one step, in priority order: verify/advance the pending intent if `intent.kind != IntentKind.None`; else one exit step if `exitShareWad != 0`; else one sync step toward the time-derived target. Loop until it returns `false`.
 
-`settle(intervalId)` values NAV at the interval's **locked checkpoint price**, fees profit over the entry ledger, pays the operator cut **in kind from the EVM basket**, re-anchors the entry ledger, adds the client share to `rewardBaseWad`, and reports that as pool weight. It requires an **idle engine** and reverts otherwise: `IntentPending()`, `ExitPending()`, `AlreadySettled()`, `NotSettleable()` (prices not locked or report deadline passed), `WrongSignPerp()` (a perp position whose sign disagrees with the decomposed target for the interval), or `FeeNotRepatriated()` (the accounted EVM basket cannot cover the operator cut — repatriate first by cranking). Emits `Settled(intervalId, navWad, profitWad, feePaidWad)` and `FeePaid(operator, operatorValueWad, referrer)`.
+`settle(intervalId)` values NAV at the **live price of the settlement instant** (one basis with the entry ledger — AUDIT-2026-07-25 C-1; a zero read reverts `ZeroPrice`), fees profit over the entry ledger, pays the operator cut **in kind from the EVM basket**, re-anchors the entry ledger, adds the client share to `rewardBaseWad`, and reports that as pool weight. It requires an **idle engine** and reverts otherwise: `IntentPending()`, `ExitPending()`, `AlreadySettled()`, `NotSettleable()` (prices not locked or report deadline passed), `WrongSignPerp()` (a perp position whose sign disagrees with the decomposed target for the interval), or `FeeNotRepatriated()` (the accounted EVM basket cannot cover the operator cut — repatriate first by cranking). Emits `Settled(intervalId, navWad, profitWad, feePaidWad)` and `FeePaid(operator, operatorValueWad, referrer)`.
 
 `claimDeferred(recipient, token)` retries a payout that was deferred because its ERC-20 transfer failed (e.g. a blacklisted recipient). It is permissionless but pays **only the recorded recipient**; reverts `NothingToRecover()` when nothing is owed, and reverts (retryably) if the transfer still fails. Emits `DeferredPayoutClaimed(to, token, amount)`. Read the ledger with `deferredPayout(address recipient, address token)` and `deferredPayoutTotal(address token)`.
 
@@ -161,6 +182,9 @@ function lockPrices(uint256 id) external;                 // within Calendar.SNA
 function claimFor(uint256 id, address vault) external;    // pays the vault's fixed owner, in kind
 function sweep(uint256 id) external;                      // roll an expired interval's inventory forward
 function capture() external;                              // account any balance above liability
+function foldPenalty(uint8 policy, uint256 assetIndex) external returns (bool);
+function initiateSleeveExit(uint8 policy, uint256 assetIndex) external returns (bool);
+function crankSleeve(uint8 policy, uint256 assetIndex) external returns (bool);
 ```
 
 `lockPrices` is **all-or-nothing**: it commits only if every directional asset prices non-zero, otherwise reverts (`ZeroPrice()`) so a later call inside the window retries. Weights are reported by vaults themselves via `reportWeight(uint256 id, uint256 weight)` — external callers cannot report. Claims open only after `reportDeadline(id)` (= `pointTime + SNAPSHOT_WINDOW + REPORT_WINDOW`, i.e. 24 hours + 2 days) and pay pro rata in kind, with no internal swap — and they close when the interval is swept: `sweep(id)` is permissionless and callable as soon as a later interval exists, after which `claimFor` reverts `NothingToClaim()` and the unclaimed inventory has rolled forward into the next basket. Claim promptly after `reportDeadline(id)`.
@@ -174,7 +198,7 @@ function settleVault(B4Vault v, uint256 reportId) external returns (bool);
 function retryDeferred(B4Vault v) external returns (uint256);
 ```
 
-`Keeper.crank` drives the whole pipeline — `advance` loop, `lockPrices`, a bounded `sweep` catch-up window (`SWEEP_LOOKBACK = 16`), `capture`, then per vault: `crankVault`, `settleVault` when the pool reports an open interval, `claimFor`, `retryDeferred`. Every step is wrapped in `try/catch` so one unavailable step never strands the rest. The three wrappers are self-guarded (`require(msg.sender == address(this), "self")`) — call them through `crank`. Emits `Cranked(pool, vaults, stepsAdvanced)`.
+`Keeper.crank` drives the whole pipeline — for strict pools, bounded product-sleeve `foldPenalty` / free-window `initiateSleeveExit` / `crankSleeve` first; then `advance` loop, `lockPrices`, a bounded `sweep` catch-up window (`SWEEP_LOOKBACK = 16`), `capture`, and per vault: `crankVault`, `settleVault` when the pool reports an open interval, `claimFor`, `retryDeferred`. Every step is wrapped in `try/catch` so one unavailable step never strands the rest. The three wrappers are self-guarded (`require(msg.sender == address(this), "self")`) — call them through `crank`. Emits `Cranked(pool, vaults, stepsAdvanced)`.
 
 ---
 
@@ -236,7 +260,7 @@ function deferredPayout(address, address) external view returns (uint256);
 function deferredPayoutTotal(address) external view returns (uint256);
 ```
 
-`currentTarget()` returns the signed WAD exposure `n` for *now*; decompose it exactly as the protocol does: `spot = clamp(n, 0, 1)`, `perp = n − spot` (`Calendar.decompose`).
+`currentTarget()` returns the signed WAD exposure `n` for *now*; decompose it exactly as the protocol does (`Calendar.decompose`): an unlevered long (`0 ≤ n ≤ 1`) is `spot = n, perp = 0`; any leverage or short (`|n| > 1` or `n < 0`) is a pure perp `spot = 0, perp = n`.
 
 Pool (`B4Pool`):
 
@@ -247,6 +271,9 @@ function intervalInfo(uint256 id)
 function reportDeadline(uint256 id) external view returns (uint256);
 function currentReportable() external view returns (bool exists, uint256 id);
 function lockedPxWad(uint256 id, uint256 assetIndex) external view returns (uint256);
+// NOTE: `B4Pool.factory()` is caller-supplied (the shared `B4PoolDeployer` passes its own
+// caller) and is NOT a provenance check. The only authenticity test is `isPool(pool)` on a
+// factory you already trust.
 function bucketOf(uint256 id, uint256 assetIndex) external view returns (uint256);
 function remainingOf(uint256 id, uint256 assetIndex) external view returns (uint256);
 function weightOf(uint256 id, address vault) external view returns (uint256);
@@ -259,7 +286,7 @@ function isVault(address) external view returns (bool);
 function assetCount() external view returns (uint256);
 ```
 
-Oracle — `IHalvingOracle` carries the four functions the vault itself uses: `halvingHeight()`, `halvingTs()`, `epoch()`, `timeSinceHalving()`. The concrete `HalvingOracle` additionally exposes `latest() → (height, ts, epoch)`, `factHash(uint256 height) → bytes32` (0 for the deploy-time genesis anchor, which carries no header), the immutable path getters `endpoint()` / `srcEid()` / `srcSender()`, and the administrative-boundary getters `delegate()` / `delegateRenounced()` — check that `delegate() == address(0)` before treating a deployment as fully immutable.
+Oracle — `IHalvingOracle` carries the four functions the vault itself uses: `halvingHeight()`, `halvingTs()`, `epoch()`, `timeSinceHalving()`. The concrete `HalvingOracle` additionally exposes `latest() → (height, ts, epoch)`, `factHash(height)`, immutable `bootstrapHeight`, the immutable path getters `endpoint()` / `srcEid()` / `srcSender()`, and `delegate()` / `delegateRenounced()`. It starts without a calendar fact; publish the proven bootstrap header through LayerZero before creating pools or vaults.
 
 Factory: `oracle()`, `vaultImplementation()`, `settlementDescriptor()`, `isPool(address)`, `isVault(address)`.
 
@@ -314,7 +341,7 @@ B4VaultStorage.FeeRoute memory route = B4VaultStorage.FeeRoute({
 });
 address vault = factory.createVault(pool, dirHash, address(strategyB4), 1e18, 100, route);
 
-// 3. Fund it (deposit windows are closed in the two opening sub-windows).
+// 3. Fund it. Late entry joins the current partial transition target.
 IERC20(dirToken).approve(vault, dirAmount);
 IERC20(usdc).approve(vault, usdcAmount);
 B4Vault(vault).deposit(dirAmount, usdcAmount);
@@ -345,7 +372,8 @@ In practice steps 4–6 are what `Keeper.crank(pool, vaults, maxVaultSteps)` doe
 ## 11. Integrator checklist
 
 - [ ] Approve the vault before `deposit`; expect the **received delta** to be what is accounted.
-- [ ] Handle `DepositWindowClosed()` — check `Calendar.depositOpen(oracle.timeSinceHalving())` first.
+- [ ] Publish and verify the proof-backed bootstrap fact. Both pool-creation entrypoints enforce
+      `halvingHeight() != 0` with `OracleNotBootstrapped()`.
 - [ ] Never assume an emitted action executed; poll a vault's `intent()` and `crank()` until idle.
 - [ ] Reach an idle engine before calling `settle` — otherwise `IntentPending()`.
 - [ ] Budget for `FeeNotRepatriated()`: the operator cut is paid in kind from the **EVM** basket.
@@ -357,4 +385,4 @@ In practice steps 4–6 are what `Keeper.crank(pool, vaults, maxVaultSteps)` doe
 ## Further reading
 
 - Normative package: [`spec/WHITEPAPER.md`](../spec/WHITEPAPER.md), [`spec/SPECIFICATION.md`](../spec/SPECIFICATION.md), [`spec/HAZARDS.md`](../spec/HAZARDS.md), [`spec/SECURITY_MODEL.md`](../spec/SECURITY_MODEL.md), [`spec/REQUIREMENTS.md`](../spec/REQUIREMENTS.md), [`spec/TEST_PLAN.md`](../spec/TEST_PLAN.md)
-- Repository root: [`ARCHITECTURE.md`](../ARCHITECTURE.md), [`INVARIANTS.md`](../INVARIANTS.md), [`REPORT.md`](../REPORT.md), [`SLITHER.md`](../SLITHER.md)
+- Repository root: [`ARCHITECTURE.md`](../ARCHITECTURE.md), [`INVARIANTS.md`](../INVARIANTS.md), [`REPORT.md`](audits/REPORT.md), [`SLITHER.md`](audits/SLITHER.md)
