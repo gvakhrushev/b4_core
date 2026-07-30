@@ -11,7 +11,7 @@ venue (HyperEVM + HyperCore), one accounting model, no admin.
 > [!WARNING]
 > **Pre-mainnet. Not externally audited. Do not use with real funds.**
 > The mandatory funded network gates ([`spec/SECURITY_MODEL.md`](spec/SECURITY_MODEL.md) §5)
-> are unmet, and venue semantics cannot be proven off-chain. See [`REPORT.md`](docs/audits/REGISTRY.md) for
+> are unmet, and venue semantics cannot be proven off-chain. See [`docs/audits/REGISTRY.md`](docs/audits/REGISTRY.md) for
 > exactly what is and is not proven.
 
 ## What the protocol protects — by construction
@@ -19,7 +19,7 @@ venue (HyperEVM + HyperCore), one accounting model, no admin.
 The protocol does not guess tops or bottoms. It removes the ways a cycle position dies. Each
 protection is **structural** — enforced by code and calendar geometry, not by promises — and
 the table marks what is live in the shipped contracts versus specified-and-tested but pending
-the leverage-sizing redo (full status: [REPORT.md](docs/audits/REGISTRY.md)):
+the leverage-sizing redo (full status: [`docs/audits/REGISTRY.md`](docs/audits/REGISTRY.md)):
 
 | Threat | Structural protection | Status |
 |---|---|---|
@@ -53,7 +53,7 @@ implementation is judged against lives in [`spec/`](spec/) — citations of the 
 `HAZARDS A2` or `SPECIFICATION §4` refer to it.
 
 Implementation records: [`ARCHITECTURE.md`](ARCHITECTURE.md) (design decisions) ·
-[`REPORT.md`](docs/audits/REGISTRY.md) (security dossier + audit history) ·
+[`docs/audits/REGISTRY.md`](docs/audits/REGISTRY.md) (security dossier + audit history) ·
 [`SLITHER.md`](docs/audits/SLITHER.md) (static-analysis triage).
 
 ## How it works

@@ -7,7 +7,7 @@ external anchors it is forced into, and how little authority anyone holds over y
 > Several venue semantics (CoreWriter action atomicity, fresh-account activation, precompile
 > behavior and gas) are not provable off-chain and are mandatory funded release gates —
 > see [`../spec/SECURITY_MODEL.md`](../spec/SECURITY_MODEL.md) §5 and
-> [`../REPORT.md`](docs/audits/REGISTRY.md).
+> [`docs/audits/REGISTRY.md`](docs/audits/REGISTRY.md).
 
 ## What B4 is
 
@@ -163,6 +163,6 @@ permanently removed before production (`renounceDelegate()`).
   [`../spec/TEST_PLAN.md`](../spec/TEST_PLAN.md) — requirements and the mandatory regression plan.
 - [`../ARCHITECTURE.md`](../ARCHITECTURE.md) — contract map, async discipline, design decisions.
 - [`../INVARIANTS.md`](../INVARIANTS.md) — invariant → test traceability, with honest gaps.
-- [`../REPORT.md`](docs/audits/REGISTRY.md) — the security dossier: what is proven locally vs. what remains
+- [`docs/audits/REGISTRY.md`](docs/audits/REGISTRY.md) — the security dossier: what is proven locally vs. what remains
   a funded gate, plus the internal audit history.
 - [`../SLITHER.md`](audits/SLITHER.md) — static-analysis triage.

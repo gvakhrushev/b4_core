@@ -242,4 +242,4 @@ B4 targets **one** venue: HyperEVM + HyperCore. There is no multi-network abstra
 - [04 Integration](04-integration.md) — signatures, lifecycle, events
 - [07 Fees & pool](07-fee-routing.md) — the fee route, penalty and claims in detail
 - Normative package: [`spec/SPECIFICATION.md`](../spec/SPECIFICATION.md), [`spec/HAZARDS.md`](../spec/HAZARDS.md), [`spec/SECURITY_MODEL.md`](../spec/SECURITY_MODEL.md), [`spec/REQUIREMENTS.md`](../spec/REQUIREMENTS.md), [`spec/TEST_PLAN.md`](../spec/TEST_PLAN.md), [`spec/WHITEPAPER.md`](../spec/WHITEPAPER.md)
-- Root: [`ARCHITECTURE.md`](../ARCHITECTURE.md), [`INVARIANTS.md`](../INVARIANTS.md), [`REPORT.md`](docs/audits/REGISTRY.md), [`SLITHER.md`](audits/SLITHER.md)
+- Root: [`ARCHITECTURE.md`](../ARCHITECTURE.md), [`INVARIANTS.md`](../INVARIANTS.md), [`docs/audits/REGISTRY.md`](docs/audits/REGISTRY.md), [`SLITHER.md`](audits/SLITHER.md)

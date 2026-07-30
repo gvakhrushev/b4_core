@@ -54,6 +54,20 @@ for f in $cited_src; do
 done
 echo "ok    all $m cited source paths resolve"
 
+# --------------------------------------- 2b. cited markdown documents exist, LABEL included
+#
+# Deleting the report archive fixed every link TARGET and left every link LABEL naming a document
+# that no longer exists — a reader sees `[REPORT.md](.../REGISTRY.md)` and believes there is still
+# a REPORT.md. A stale label is the same defect as a stale target, just harder to see, so both the
+# text inside the brackets and the path are checked.
+echo "== cited markdown documents"
+md=0
+for f in $(scan "[A-Z][A-Za-z0-9_-]*\.md" | sort -u); do
+  find . -name "$f" -not -path "./lib/*" -not -path "./.git/*" -print -quit | grep -q . \
+    || { echo "FAIL  live text names a document that does not exist: $f"; md=1; }
+done
+[ "$md" -eq 0 ] && echo "ok    every cited markdown document resolves" || status=1
+
 # ------------------------------- 3. INVARIANTS Tests column names tests that actually exist
 #
 # Scoped to that column on purpose: only there is a name a CLAIM OF COVERAGE. Prose legitimately

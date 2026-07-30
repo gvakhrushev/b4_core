@@ -31,7 +31,7 @@ FOUNDRY_PROFILE=deep forge test --match-path 'test/invariant/*'   # deep invaria
 
 The `deep` profile in `foundry.toml` raises fuzz runs to 4096 and invariant runs/depth to 512/256.
 Static-analysis configuration lives in `slither.config.json`; results and their disposition are
-recorded in [`SLITHER.md`](audits/SLITHER.md) and [`REPORT.md`](docs/audits/REGISTRY.md).
+recorded in [`SLITHER.md`](audits/SLITHER.md) and [`docs/audits/REGISTRY.md`](docs/audits/REGISTRY.md).
 
 Record the exact compiler version, optimizer settings, library commits and source hashes — they are
 the input to the reproducible-build manifest required by gate §5.14.
@@ -363,7 +363,7 @@ created on a non-Cancun chain is immutable and cannot be repaired.
 **Mainnet MUST NOT proceed until these are recorded and independently reviewed.** Given the earlier
 engagement (a permanent-freeze High that survived three audit rounds), `SECURITY_MODEL.md` §5 further
 recommends that the async completion/retry, harvest-quota and recovery paths receive a **dedicated
-independent audit round of their own**. Audit history and disposition are in [`REPORT.md`](docs/audits/REGISTRY.md).
+independent audit round of their own**. Audit history and disposition are in [`docs/audits/REGISTRY.md`](docs/audits/REGISTRY.md).
 
 Additionally, unresolved by any gate and accepted as residuals: market association (no canonical
 token↔perp statement exists — the immutable descriptor supplies it and **the user must verify it**),
@@ -390,4 +390,4 @@ Publish, for the deployment to be reviewable:
 - [`spec/SECURITY_MODEL.md`](../spec/SECURITY_MODEL.md) — trust model, invariants, residuals, gates
 - [`spec/HAZARDS.md`](../spec/HAZARDS.md) — hazard register (A7/A9/A10/A11, E1–E4, F1/F3)
 - [`spec/SPECIFICATION.md`](../spec/SPECIFICATION.md) · [`spec/REQUIREMENTS.md`](../spec/REQUIREMENTS.md) · [`spec/TEST_PLAN.md`](../spec/TEST_PLAN.md)
-- [`ARCHITECTURE.md`](../ARCHITECTURE.md) · [`INVARIANTS.md`](../INVARIANTS.md) · [`REPORT.md`](docs/audits/REGISTRY.md) · [`SLITHER.md`](audits/SLITHER.md)
+- [`ARCHITECTURE.md`](../ARCHITECTURE.md) · [`INVARIANTS.md`](../INVARIANTS.md) · [`docs/audits/REGISTRY.md`](docs/audits/REGISTRY.md) · [`SLITHER.md`](audits/SLITHER.md)

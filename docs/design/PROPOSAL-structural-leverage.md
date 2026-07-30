@@ -10,7 +10,7 @@ engine wiring, which is why the mechanism was rebuilt — kept for the design hi
 
 A first engine wiring was written, passed a shallow test set, was reported
 done — then a dedicated post-implementation adversarial audit (see
-[`AUDIT-2026-07-structural-leverage.md`](docs/audits/REGISTRY.md)) found it unsafe
+[`docs/audits/REGISTRY.md`](docs/audits/REGISTRY.md)) found it unsafe
 and it was reverted. Two independent Critical/High clusters:
 
 1. **The safety half was never implemented (audit C6).** The engine kept the pre-mechanism
@@ -250,7 +250,7 @@ real contracts end-to-end (`test/backtest/BacktestReal.t.sol`, `docs/11-backtest
 since the engine does not yet consume `StructuralLeverage`.
 
 Remaining — the §7b engine redo, requirements bound by
-[`AUDIT-2026-07-structural-leverage.md`](docs/audits/REGISTRY.md):
+[`docs/audits/REGISTRY.md`](docs/audits/REGISTRY.md):
 
 1. `margin = notional/L`; assert the venue liquidation equals `stopWad`/`shortStopWad`
    (regression on the *liquidation price*, not order size).

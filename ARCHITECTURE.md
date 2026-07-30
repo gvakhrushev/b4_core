@@ -143,9 +143,9 @@ structural bottom. Regression asserts the realized LIQUIDATION PRICE, not the or
 
 **M-3 / F2 — the PEAK anchor is the max over daily CLOSES, corroborated; the LOW is deliberately
 not mirrored.** The density gate counted days but the peak's value ratchet ran on every call, so a
-caller could wait for a wick and move a confirmed peak for free. The harm lands a full cycle
-later: `peakC` is promoted to `prevPeak`, the short's delta anchor, and an inflated `Pp` shrinks
-`(C − Pp)`, pulling the stop toward `C` and RAISING leverage.
+caller could wait for a wick and move a confirmed peak for free. The harm lands a full cycle later,
+by the promotion mechanism `spec/HAZARDS.md` C5 states — kept in one place on purpose, because an
+earlier restatement of it here is what went stale and let both anchor findings through.
 
 The first remedy tied the peak's VALUE to the density counter's daily slot — and that created the
 opposite finding. The slot is claimed by whoever calls first after `last + 1 day`, so a squatter

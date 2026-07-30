@@ -83,3 +83,5 @@ change. Where a later round completed an earlier fix, the earlier row names the 
 | **A12** | 2026-07-30 | — | Exit-waterfall safety rested on hand proofs, unenforced | Enforced | `_payBucket` | Exit.t.sol |
 | **A13** | 2026-07-30 | — | F1's partial-scaling case had no deterministic test | Enforced | `B4Pool.scaleWeight` | StrictPool.invariant.t.sol |
 | **A14** | 2026-07-30 | — | Keeper gas budgets cited a test that never existed; three figures stale, one false | Fixed | `Keeper` budgets | GasBounds.t.sol |
+| **A15** | 2026-07-31 | Low | Deleting the report archive fixed every link TARGET and left every link LABEL naming a document that no longer exists | Fixed | live docs + `check-citations.sh` | — |
+| **A16** | 2026-07-31 | — | Unordered LayerZero delivery is the only thing stopping a permissionless liveness attack on the sole external fact, justified by one comment word | Enforced | `HalvingOracle.nextNonce` | HalvingOracle.t.sol |
