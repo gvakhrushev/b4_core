@@ -636,13 +636,25 @@ contract B4Pool is IB4PoolPolicy {
     ///         (≥ MIN_ANCHOR_SAMPLES daily observations spanning ≥ W/2). The getters withhold an
     ///         unconfirmed cap/peakC; `floor`/`prevPeak` are only ever promoted from
     ///         confirmed windows.
+    /// @dev The peak leg reports "confirmed AND serving a value", which since the close-window /
+    ///      corroboration split are two different things. Density counts observations; the value
+    ///      binds only at a daily close and only once two distinct closes reach it. A keeper that
+    ///      samples daily but always MID-DAY therefore confirms the density while never
+    ///      corroborating a close: the window ends with `peakC == 0`.
+    ///
+    ///      That state is fail-safe for the engine — a zero peak is read as "absent" and a
+    ///      leveraged short falls back to the flat base, exactly as an under-sampled window does —
+    ///      but reporting it as `peakConfirmed = true` would be a false green light for whoever is
+    ///      operating the sampler: the dashboard would show a confirmed anchor while the product
+    ///      is quietly running unanchored for the rest of the cycle. Ties the flag to what is
+    ///      actually served, so "confirmed" means the same thing on both legs.
     function anchorConfirmed(uint256 i)
         external
         view
         returns (bool lowConfirmed, bool peakConfirmed)
     {
         Anchor storage a = _anchor[i];
-        return (_confirmed(a.lowDensity), _confirmed(a.peakDensity));
+        return (_confirmed(a.lowDensity), _confirmed(a.peakDensity) && a.peakC != 0);
     }
 
     /// @dev The density gate (V8-M-1/V8-M-2): a window's anchor confirms only at ≥

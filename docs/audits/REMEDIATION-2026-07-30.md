@@ -1,4 +1,4 @@
-# Remediation — 2026-07-30 (pre-mainnet closure pass: F3 + A1–A7)
+# Remediation — 2026-07-30 (pre-mainnet closure pass: F3 + A1–A8)
 
 Closes the one **unapplied** finding from AUDIT-2026-07-29 (F3 — a verified patch that had been
 written but never landed), plus the residuals still marked open/partial after that round and one
@@ -17,7 +17,8 @@ asserting a property nothing tested, is where the next finding tends to live.
 
 **Verification of this pass**
 
-- `forge test`: **483 passed, 0 failed** across 81 suites. `slither --fail-high` clean (168 informational, no high).
+- `forge test`: **484 passed, 0 failed** across 82 suites. `slither --fail-high` clean (168 informational, no high).
+- **Deep invariant campaign run** (`FOUNDRY_PROFILE=deep`, 512×256): 32 tests, 0 failed, 283 s. This is the project's strongest gate and it had not been run against any of this pass's changes until now.
 - Each was confirmed to **fail on the pre-fix tree** with the exact predicted failure mode, then
   pass after the fix (see the per-item "fail-before" note).
 - `forge build --sizes` on pinned solc 0.8.28: all contracts inside EIP-170. Tightest after this
@@ -129,6 +130,34 @@ under the project's own 128 B floor — to close one mover instead of the class.
 
 **Fail-before:** `test_F4_settle_never_values_above_the_books_after_a_realized_loss` asserts the
 settled entry ledger is at or below the post-loss NAV; pre-cap it read the frozen 120k.
+
+## A8 — `anchorConfirmed` no longer reports a confirmed peak that serves nothing
+
+**Severity: Low (operational / false assurance). A state this pass itself created.**
+
+Splitting density counting from value binding (F2) made "confirmed" and "has a value" two different
+things, and nothing said so. Density counts observations; the peak VALUE binds only at a daily
+close and only once two distinct closes reach it. A keeper sampling daily but always **mid-day**
+therefore satisfies the density gate and never binds a close — the window ends `_confirmed` with
+`peakC == 0`.
+
+For the engine that is fail-safe: a zero peak reads as "absent", so a leveraged short falls back to
+the flat base exactly as an under-sampled window does, and the promotion into `prevPeak` carries
+the zero rather than a stale higher value — a LOWER `Pp` widens `(C − Pp)`, pushes the stop further
+out, and lowers leverage. Nothing is mis-sized.
+
+What was wrong is what an **operator** was told. `anchorConfirmed` returned `peakConfirmed = true`
+on the count alone, so a sampler dashboard would show a healthy anchor while the product ran
+unanchored for the rest of the cycle — and the cycle is where the whole mechanism lives, so the
+mistake is discovered a year late or not at all.
+
+**Fix** (`B4Pool.anchorConfirmed`): the peak leg reports `_confirmed(density) && peakC != 0`, so
+"confirmed" means the same thing on both legs — that a value is actually being served. Engine
+behaviour is unchanged; the getter has no on-chain consumer.
+
+**Fail-before:** `AuditF2_ConfirmedWithoutValue.t.sol` builds the mid-day-sampled window, asserts
+nothing is served and that the flag says so, then samples the same window at its closes and asserts
+both flip together.
 
 ## A6 — the permanent Core→EVM wedge now has a bounded escape (HAZARDS A7 residual)
 
