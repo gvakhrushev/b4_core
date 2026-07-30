@@ -65,7 +65,8 @@ contract BacktestRealTest is VenueTestBase {
             address(endpoint), SRC_EID, SRC_SENDER, HALVING_HEIGHT[0], address(this)
         );
         _acceptHalving(HALVING_HEIGHT[0], HALVING_TS[0]);
-        address impl = address(new B4Vault(address(new B4VaultOps()), address(new B4VaultRecovery())));
+        address impl =
+            address(new B4Vault(address(new B4VaultOps()), address(new B4VaultRecovery())));
         factory = new B4Factory(address(oracle), usdcDescriptor(), impl, address(poolDeployer));
         CoreTypes.AssetDescriptor[] memory dirs = new CoreTypes.AssetDescriptor[](1);
         dirs[0] = ubtcDescriptor();

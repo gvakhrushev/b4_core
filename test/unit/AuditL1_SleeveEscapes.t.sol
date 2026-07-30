@@ -24,10 +24,7 @@ contract AuditL1SleeveEscapesTest is VaultTestBase {
     function setUp() public {
         setUpProtocol();
         productFactory = new B4ProductFactory(
-            address(oracle),
-            usdcDescriptor(),
-            factory.vaultImplementation(),
-            address(poolDeployer)
+            address(oracle), usdcDescriptor(), factory.vaultImplementation(), address(poolDeployer)
         );
         strategies = [address(mini), address(b4), address(pro), address(proMax)];
     }
@@ -171,9 +168,7 @@ contract AuditL1SleeveEscapesTest is VaultTestBase {
     /// Exact complement of `_finalizeExit`'s deferral test: a zero price alone is not
     /// enough — a sleeve holding no directional value finalizes at px 0, so cancelling is
     /// refused there too.
-    function test_L1_dead_feed_cancel_refused_when_the_sleeve_holds_no_directional()
-        public
-    {
+    function test_L1_dead_feed_cancel_refused_when_the_sleeve_holds_no_directional() public {
         B4Pool p = _productPool(15);
         B4Vault sleeve = B4Vault(p.sleeveOf(2, DIR)); // never funded
 

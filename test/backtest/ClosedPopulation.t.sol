@@ -203,8 +203,10 @@ contract ClosedPopulationTest is SimTest {
             address(endpoint), SRC_EID, SRC_SENDER, HALVING_HEIGHT[0], address(this)
         );
         _acceptHalving(HALVING_HEIGHT[0], HALVING_TS[0]);
-        address impl = address(new B4Vault(address(new B4VaultOps()), address(new B4VaultRecovery())));
-        productFactory = new B4ProductFactory(address(oracle), usdcDescriptor(), impl, address(poolDeployer));
+        address impl =
+            address(new B4Vault(address(new B4VaultOps()), address(new B4VaultRecovery())));
+        productFactory =
+            new B4ProductFactory(address(oracle), usdcDescriptor(), impl, address(poolDeployer));
         productStrategies[0] = address(new StrategyMini());
         productStrategies[1] = address(new StrategyB4());
         productStrategies[2] = address(new StrategyPro());

@@ -49,7 +49,8 @@ abstract contract VaultTestBase is VenueTestBase {
             address(endpoint), SRC_EID, SRC_SENDER, GENESIS_HEIGHT, address(this)
         );
         acceptHalving(GENESIS_HEIGHT, uint32(GENESIS_TS));
-        address impl = address(new B4Vault(address(new B4VaultOps()), address(new B4VaultRecovery())));
+        address impl =
+            address(new B4Vault(address(new B4VaultOps()), address(new B4VaultRecovery())));
         factory = new B4Factory(address(oracle), usdcDescriptor(), impl, address(poolDeployer));
 
         CoreTypes.AssetDescriptor[] memory dirs = new CoreTypes.AssetDescriptor[](1);
@@ -110,8 +111,7 @@ abstract contract VaultTestBase is VenueTestBase {
     function createStrictPool(uint8 mask) internal returns (B4Pool p) {
         CoreTypes.AssetDescriptor[] memory dirs = new CoreTypes.AssetDescriptor[](1);
         dirs[0] = ubtcDescriptor();
-        address[4] memory strategies =
-            [address(mini), address(b4), address(pro), address(proMax)];
+        address[4] memory strategies = [address(mini), address(b4), address(pro), address(proMax)];
         p = B4Pool(strictFactory().createProductPool(dirs, strategies, mask));
     }
 
@@ -123,24 +123,22 @@ abstract contract VaultTestBase is VenueTestBase {
     ) internal returns (B4Vault v) {
         vm.prank(owner_);
         v = B4Vault(
-            strictFactory().createVault(
-                address(p),
-                CoreTypes.descriptorHash(ubtcDescriptor()),
-                strategy,
-                1e18,
-                100,
-                route_
-            )
+            strictFactory()
+                .createVault(
+                    address(p),
+                    CoreTypes.descriptorHash(ubtcDescriptor()),
+                    strategy,
+                    1e18,
+                    100,
+                    route_
+                )
         );
     }
 
     /// `fundAndDeposit` for a vault whose owner is not the shared `user`.
-    function fundAndDepositFor(
-        B4Vault v,
-        address owner_,
-        uint256 dirAmount,
-        uint256 usdcAmount
-    ) internal {
+    function fundAndDepositFor(B4Vault v, address owner_, uint256 dirAmount, uint256 usdcAmount)
+        internal
+    {
         if (dirAmount > 0) ubtc.mint(owner_, dirAmount);
         if (usdcAmount > 0) usdc.mint(owner_, usdcAmount);
         vm.startPrank(owner_);

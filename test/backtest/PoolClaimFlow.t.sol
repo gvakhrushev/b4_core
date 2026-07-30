@@ -58,8 +58,10 @@ contract PoolClaimFlowTest is Test, VenueTestBase {
             address(0),
             ""
         );
-        address impl = address(new B4Vault(address(new B4VaultOps()), address(new B4VaultRecovery())));
-        factory = new B4ProductFactory(address(oracle), usdcDescriptor(), impl, address(poolDeployer));
+        address impl =
+            address(new B4Vault(address(new B4VaultOps()), address(new B4VaultRecovery())));
+        factory =
+            new B4ProductFactory(address(oracle), usdcDescriptor(), impl, address(poolDeployer));
         CoreTypes.AssetDescriptor[] memory dirs = new CoreTypes.AssetDescriptor[](1);
         dirs[0] = ubtcDescriptor();
         strategies[0] = address(new StrategyMini());

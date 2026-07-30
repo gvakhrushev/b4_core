@@ -35,9 +35,8 @@ contract AuditH4M3_AnchorsTest is VaultTestBase {
         if (p.szi <= 0) return 0;
         uint256 margin6 = v.perpMargin6();
         if (uint256(p.entryNtl) <= margin6) return 0;
-        return Phi.mulDiv(
-            (uint256(p.entryNtl) - margin6) * 1e4, Phi.WAD, uint256(uint64(p.szi)) * 1e6
-        );
+        return
+            Phi.mulDiv((uint256(p.entryNtl) - margin6) * 1e4, Phi.WAD, uint256(uint64(p.szi)) * 1e6);
     }
 
     function _sampleDaily(uint256 t0abs, uint256 n, uint256 px) internal {

@@ -254,7 +254,6 @@ contract B4VaultOps is B4VaultEngine {
         }
     }
 
-
     // ================================================================= planners
 
     /// @notice One planning step under the crank: exit machine if an exit is pending,
@@ -434,5 +433,4 @@ contract B4VaultOps is B4VaultEngine {
         _payOut(token, pool, toPool);
         return bucket - toOwner - toOperator - toPool;
     }
-
 }

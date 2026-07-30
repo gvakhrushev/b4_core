@@ -27,10 +27,9 @@ contract ProductPoolsTest is VaultTestBase {
 
     function setUp() public {
         setUpProtocol();
-        productFactory =
-            new B4ProductFactory(
-                address(oracle), usdcDescriptor(), factory.vaultImplementation(), address(poolDeployer)
-            );
+        productFactory = new B4ProductFactory(
+            address(oracle), usdcDescriptor(), factory.vaultImplementation(), address(poolDeployer)
+        );
         strategies = [address(mini), address(b4), address(pro), address(proMax)];
     }
 
@@ -203,8 +202,10 @@ contract ProductPoolsTest is VaultTestBase {
             address(endpoint), SRC_EID, SRC_SENDER, GENESIS_HEIGHT, address(this)
         );
         address impl = factory.vaultImplementation();
-        B4Factory legacy = new B4Factory(address(fresh), usdcDescriptor(), impl, address(poolDeployer));
-        B4ProductFactory strict = new B4ProductFactory(address(fresh), usdcDescriptor(), impl, address(poolDeployer));
+        B4Factory legacy =
+            new B4Factory(address(fresh), usdcDescriptor(), impl, address(poolDeployer));
+        B4ProductFactory strict =
+            new B4ProductFactory(address(fresh), usdcDescriptor(), impl, address(poolDeployer));
 
         CoreTypes.AssetDescriptor[] memory dirs = new CoreTypes.AssetDescriptor[](1);
         dirs[0] = ubtcDescriptor();

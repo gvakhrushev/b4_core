@@ -30,7 +30,6 @@ contract B4VaultRecovery is B4VaultEngine {
         _;
     }
 
-
     /// @notice Retry a deferred payout — permissionless; pays only the recorded
     ///         recipient (F2). Reverts if the transfer still fails (retryable).
     function opsClaimDeferred(address recipient, address token) external onlyInitialized {
@@ -41,6 +40,7 @@ contract B4VaultRecovery is B4VaultEngine {
         token.safeTransfer(recipient, amount); // revert rolls the clearing back
         emit DeferredPayoutClaimed(recipient, token, amount);
     }
+
     // ================================================================= recovery (B6)
 
     /// @notice Recover unaccounted EVM assets to the owner. For the two accounted tokens

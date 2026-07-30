@@ -18,7 +18,30 @@ import {CoreTypes} from "../src/venue/CoreTypes.sol";
 ///         After configuration, `renounceDelegate()` MUST be executed one-shot on both
 ///         LayerZero sides and verified on-chain (E3).
 contract Deploy is Script {
+    error TransientStorageUnavailable();
+
+    /// @dev EIP-1153 is a real deployment dependency, so it is asserted here rather than
+    ///      documented. `B4Pool`'s penalty snapshot keeps the before/after measurement in
+    ///      namespaced transient storage; on a chain without `TSTORE`/`TLOAD` those opcodes
+    ///      revert inside the exit path's `try/catch`, so the exit does NOT fail — it silently
+    ///      skips creating the penalty escrow, and the capital later leaves through the generic
+    ///      `capture()` route instead of reaching the product sleeve it was owed to. A misrouting
+    ///      that never reverts is exactly the failure a deployment check has to catch, because
+    ///      nothing downstream will.
+    function _assertTransientStorage() internal {
+        uint256 back;
+        assembly ("memory-safe") {
+            tstore(0x1153, 0xB4)
+            back := tload(0x1153)
+            tstore(0x1153, 0)
+        }
+        if (back != 0xB4) revert TransientStorageUnavailable();
+    }
+
     function run() external {
+        // Fail before anything is broadcast, not after the graph is half-deployed.
+        _assertTransientStorage();
+
         // ---- environment (placeholders: funded-gate values) ----
         address lzEndpoint = vm.envAddress("LZ_ENDPOINT");
         uint32 srcEid = uint32(vm.envUint("CITREA_EID"));

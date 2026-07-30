@@ -275,8 +275,8 @@ contract StrictPoolHandler is VaultTestBase {
     function _snapPayees(B4Vault v) internal view returns (Payees memory s) {
         address o = v.owner();
         s.own = usdc.balanceOf(o) + ubtc.balanceOf(o);
-        s.fees = usdc.balanceOf(operator) + ubtc.balanceOf(operator)
-            + usdc.balanceOf(referrer) + ubtc.balanceOf(referrer);
+        s.fees = usdc.balanceOf(operator) + ubtc.balanceOf(operator) + usdc.balanceOf(referrer)
+            + ubtc.balanceOf(referrer);
         // A sleeve's owner IS the pool; counting it twice would charge an owner payout to
         // the fee bucket and misreport it.
         if (o != address(spool)) {
@@ -477,9 +477,8 @@ contract StrictPoolHandler is VaultTestBase {
         if (count == 0) return;
         // Claiming for a SLEEVE is deliberately reachable: sleeves are registered with
         // `registerSleeve`, never `registerVault`, so they must never hold weight.
-        address target = which % 3 == 2
-            ? address(sleeveOf[uint8(1 + (which % 4))])
-            : address(_pick(which));
+        address target =
+            which % 3 == 2 ? address(sleeveOf[uint8(1 + (which % 4))]) : address(_pick(which));
         _claimFor(count - 1, target);
     }
 
@@ -842,7 +841,9 @@ contract StrictPoolInvariantTest is VaultTestBase {
                 assertEq(p.weightOf(id, address(v[s])), 0, "a sleeve reported weight");
             }
             for (uint256 i = 0; i < 2; i++) {
-                assertLe(p.remainingOf(id, i), p.bucketOf(id, i), "sum of claims exceeds the bucket");
+                assertLe(
+                    p.remainingOf(id, i), p.bucketOf(id, i), "sum of claims exceeds the bucket"
+                );
             }
         }
     }

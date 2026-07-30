@@ -257,11 +257,7 @@ contract B4Pool is IB4PoolPolicy {
     ///        `msg.sender` was under the previous inline `new B4Pool(...)`, and the trust
     ///        model is unchanged: a self-declared factory grants nothing, because authority
     ///        flows from a factory's own `isPool` registry, never from this field.
-    constructor(
-        address oracle_,
-        CoreTypes.AssetDescriptor[] memory descriptors,
-        address factory_
-    ) {
+    constructor(address oracle_, CoreTypes.AssetDescriptor[] memory descriptors, address factory_) {
         factory = factory_;
         oracle = IHalvingOracle(oracle_);
         uint256 n = descriptors.length;
@@ -1157,10 +1153,7 @@ contract B4Pool is IB4PoolPolicy {
     /// @notice Recover a sleeve's perp withdrawable above margin principal + the pending
     ///         harvest claim — the untaxed funding surplus of decision C1, which for a
     ///         pool-owned sleeve belongs to pool claimants. Async, as above.
-    function recoverSleevePerpSurplus(uint8 policy, uint256 dirAssetIndex)
-        external
-        nonReentrant
-    {
+    function recoverSleevePerpSurplus(uint8 policy, uint256 dirAssetIndex) external nonReentrant {
         IB4PoolSleeve(_sleeve(policy, dirAssetIndex)).recoverPerpSurplus();
     }
 
