@@ -299,5 +299,18 @@ contract AuditL1SleeveEscapesTest is VaultTestBase {
         p.recoverSleeveEvm(1, DIR, 0);
         vm.expectRevert(B4VaultStorage.NotRecoveryIntent.selector);
         p.clearSleeveRecovery(1, DIR);
+
+        // The A6 escape relay, on the same terms. A sleeve's owner IS the pool, so an escape
+        // that lives only on the vault's `onlyOwner` surface does not exist for a sleeve until
+        // the pool relays it — the L-1 gap, repeated by A6 until this forwarder was added.
+        // It grants the pool nothing the vault does not already gate: the sleeve refuses every
+        // kind but ReturnDir/ReturnUsdc, and reaching THAT revert is what proves the call lands
+        // in the sleeve's own logic rather than being unreachable.
+        vm.expectRevert(B4Pool.NotASleeve.selector);
+        p.abandonSleeveStuckReturn(4, DIR); // mask 1: no Pro sleeve exists
+        vm.expectRevert(B4Pool.NotASleeve.selector);
+        p.abandonSleeveStuckReturn(1, 7); // no such directional index
+        vm.expectRevert(B4VaultStorage.NotRecoveryIntent.selector);
+        p.abandonSleeveStuckReturn(1, DIR); // exists, reached, and correctly refuses
     }
 }

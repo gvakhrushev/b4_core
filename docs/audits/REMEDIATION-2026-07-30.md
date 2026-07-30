@@ -1,4 +1,4 @@
-# Remediation — 2026-07-30 (pre-mainnet closure pass: F3 + A1–A8)
+# Remediation — 2026-07-30 (pre-mainnet closure pass: F3 + A1–A9)
 
 Closes the one **unapplied** finding from AUDIT-2026-07-29 (F3 — a verified patch that had been
 written but never landed), plus the residuals still marked open/partial after that round and one
@@ -130,6 +130,43 @@ under the project's own 128 B floor — to close one mover instead of the class.
 
 **Fail-before:** `test_F4_settle_never_values_above_the_books_after_a_realized_loss` asserts the
 settled entry ledger is at or below the post-loss NAV; pre-cap it read the frozen 120k.
+
+## A9 — the A6 escape reaches pool-owned sleeves too (the L-1 gap, repeated)
+
+**Severity: High (architectural, liveness-of-custody) for sleeves. Created by A6 being incomplete,
+found by sweeping A6 against the class this repository has already been bitten by once.**
+
+A6 gave the vault an owner-only escape from an unrecoverable Core→EVM return. A sleeve's owner **is
+the pool**, so an escape that lives only on the vault's `onlyOwner` surface does not exist for a
+sleeve at all unless the pool relays it. That is exactly audit **L-1**, whose own note reads: *"without
+these entries in the interface the escapes that INVARIANTS row 20 and HAZARDS B6 promise simply do
+not exist for a sleeve."* A6 reproduced it.
+
+`B4Pool.clearSleeveRecovery` already relays the A6 *surplus* escape, and its docstring states why
+such a relay is mandatory rather than optional: a pending intent blocks the whole crank, so a leg
+the venue never completes *"would freeze the sleeve's exit machine and permanently strand its
+principal — turning an accounting leak into the permanent freeze that the worst-case rule forbids."*
+By that same reasoning the missing relay left every sleeve permanently wedgeable — and this is the
+worse half of the finding, because a sleeve holds **pooled** penalty capital: a frozen one strands
+it for every participant, not for one owner.
+
+**Fix** (`B4Pool.abandonSleeveStuckReturn`, plus the `IB4PoolSleeve` entry): relay it on the same
+terms as the other four forwarders — fixed arguments, no caller discretion. It grants the pool
+nothing the vault does not already gate: the sleeve still refuses every kind but
+`ReturnDir`/`ReturnUsdc`, still enforces the 30-day timeout, and still refuses unless the Core
+source has actually decreased.
+
+**Fail-before is compile-level and worth stating plainly:** without the forwarder the call does not
+exist, so the regression is that `abandonSleeveStuckReturn(1, DIR)` on a live sleeve reaches the
+sleeve's own `NotRecoveryIntent` — reaching *that* revert is what proves the relay is wired into
+vault logic rather than unreachable — alongside `NotASleeve` for a policy with no sleeve and for a
+bad directional index (`AuditL1_SleeveEscapes.t.sol::test_L1_sleeve_escape_forwarders_admit_no_caller_discretion`).
+
+> A note on how this was found, because it generalises: A6 was verified on the vault and shipped.
+> The sleeve is the *same code* reached through a different owner, and this repository had already
+> filed L-1 for precisely that blind spot. Any escape added to `B4Vault`'s `onlyOwner` surface needs
+> a matching `B4Pool` forwarder in the same change, or it silently does not exist for half the
+> deployment.
 
 ## A8 — `anchorConfirmed` no longer reports a confirmed peak that serves nothing
 

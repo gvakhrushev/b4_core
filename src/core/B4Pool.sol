@@ -31,6 +31,7 @@ interface IB4PoolSleeve {
     function recoverCoreSpot(bool dirToken) external;
     function recoverPerpSurplus() external;
     function emergencyClearRecovery() external;
+    function abandonStuckReturn() external;
     // Read-side of the exit-deferral predicate mirrored by `cancelSleeveExit`.
     function dirEvm() external view returns (uint256);
     function coreDirWei() external view returns (uint64);
@@ -1179,6 +1180,25 @@ contract B4Pool is IB4PoolPolicy {
     ///      stay on Core and re-recoverable, so relaying it grants nothing.
     function clearSleeveRecovery(uint8 policy, uint256 dirAssetIndex) external nonReentrant {
         IB4PoolSleeve(_sleeve(policy, dirAssetIndex)).emergencyClearRecovery();
+    }
+
+    /// @notice Abandon a sleeve's unrecoverable Core→EVM return after `RETURN_ABANDON_TIMEOUT`.
+    /// @dev Mandatory for the same reason as `clearSleeveRecovery` above, and for a sharper one:
+    ///      a sleeve's owner IS this pool, so an escape that exists only on the vault's
+    ///      `onlyOwner` surface does not exist for a sleeve at all unless the pool relays it —
+    ///      the exact gap audit L-1 was filed for. Without this, the wedge `abandonStuckReturn`
+    ///      closes for a user vault stayed permanently open for every sleeve, which is the worse
+    ///      half: a sleeve holds POOLED penalty capital, and a frozen one strands it for every
+    ///      participant rather than for one owner.
+    ///
+    ///      Relaying grants this contract nothing. The vault side fixes the recipient (the write
+    ///      -down moves no tokens at all), refuses every kind but `ReturnDir`/`ReturnUsdc`,
+    ///      enforces the 30-day timeout, and refuses unless the Core source has actually
+    ///      decreased — so this cannot be used to discard a leg whose funds still exist. A credit
+    ///      arriving afterwards lands as unaccounted balance and is swept back into claim
+    ///      inventory through the ordinary `recoverSleeveEvm` path.
+    function abandonSleeveStuckReturn(uint8 policy, uint256 dirAssetIndex) external nonReentrant {
+        IB4PoolSleeve(_sleeve(policy, dirAssetIndex)).abandonStuckReturn();
     }
 
     /// Gas cap on untrusted token reads: a hostile token that burns the forwarded gas
