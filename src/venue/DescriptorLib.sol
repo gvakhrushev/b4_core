@@ -41,7 +41,7 @@ library DescriptorLib {
             // legacy position precompile takes a uint16 id, so a wider id would silently
             // alias an UNRELATED market in every flatness/verification read — orders to
             // one market, custody proofs from another. Support requires the wide
-            // position read confirmed on the funded venue first (docs/audits/archive/REPORT.md).
+            // position read confirmed on the funded venue first (`docs/audits/REGISTRY.md`).
             if (d.perpMarket > type(uint16).max) revert PerpIdUnsupported();
             // Perp px normalization uses `10^(6 − perpSzDecimals)`; > 6 would underflow.
             if (d.perpSzDecimals > 6) revert PerpMismatch();

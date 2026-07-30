@@ -160,7 +160,7 @@ its effect must be proven by a later on-chain state read.
   A deposit-side rule cannot repair this: the crank reaches the same window, is permissionless,
   and never touches the entry ledger, so the rotation path bypasses any deposit guard.
   *(Real Critical with a committed exploit — $676 of cost took $833,333 of the basket — found
-  in the ninth review round after surviving eight. See `docs/audits/archive/AUDIT-2026-07-25-full-security.md` C-1.)*
+  in the ninth review round after surviving eight. See `docs/audits/REGISTRY.md` C-1.)*
 - **B5 · Floor toward the protocol.** All fixed-point division floors; fees, penalties, cuts,
   and pool claims never round up; residual dust stays with the protocol/pool.
 - **B6 · Bounded, callback-free surplus recovery for spot AND perp.** Surplus above recorded

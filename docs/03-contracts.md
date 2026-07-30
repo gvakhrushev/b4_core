@@ -4,7 +4,7 @@ A contract-by-contract reference of everything that ships under `src/` — what 
 
 > **Status.** B4 is **pre-mainnet and not externally audited**. Venue semantics (CoreWriter action execution and atomicity, Core account activation, precompile ABI/gas) are **not locally provable** and are mandatory funded release gates — see [`spec/SECURITY_MODEL.md`](../spec/SECURITY_MODEL.md) §5. Nothing here should be read as a production-readiness claim.
 >
-> For the design rationale behind these boundaries, read [`ARCHITECTURE.md`](../ARCHITECTURE.md). Normative behavior lives in [`spec/SPECIFICATION.md`](../spec/SPECIFICATION.md); the hazard catalogue in [`spec/HAZARDS.md`](../spec/HAZARDS.md); invariants in [`INVARIANTS.md`](../INVARIANTS.md); the security dossier and internal adversarial-review history in [`REPORT.md`](audits/archive/REPORT.md) (an independent external audit is still outstanding).
+> For the design rationale behind these boundaries, read [`ARCHITECTURE.md`](../ARCHITECTURE.md). Normative behavior lives in [`spec/SPECIFICATION.md`](../spec/SPECIFICATION.md); the hazard catalogue in [`spec/HAZARDS.md`](../spec/HAZARDS.md); invariants in [`INVARIANTS.md`](../INVARIANTS.md); the security dossier and internal adversarial-review history in [`REPORT.md`](docs/audits/REGISTRY.md) (an independent external audit is still outstanding).
 
 ---
 
@@ -502,5 +502,5 @@ Deliberate exclusions matter as much as inclusions: carry-style operation is an 
 
 - [`ARCHITECTURE.md`](../ARCHITECTURE.md) — deep design rationale for every boundary above
 - [`INVARIANTS.md`](../INVARIANTS.md) — the invariant list these contracts are built to preserve
-- [`REPORT.md`](audits/archive/REPORT.md) — status dossier and internal adversarial-review rounds; an independent external audit is a mandatory unmet release gate · [`SLITHER.md`](audits/SLITHER.md) — static-analysis triage
+- [`REPORT.md`](docs/audits/REGISTRY.md) — status dossier and internal adversarial-review rounds; an independent external audit is a mandatory unmet release gate · [`SLITHER.md`](audits/SLITHER.md) — static-analysis triage
 - [`spec/SPECIFICATION.md`](../spec/SPECIFICATION.md) · [`spec/WHITEPAPER.md`](../spec/WHITEPAPER.md) · [`spec/HAZARDS.md`](../spec/HAZARDS.md) · [`spec/SECURITY_MODEL.md`](../spec/SECURITY_MODEL.md) · [`spec/REQUIREMENTS.md`](../spec/REQUIREMENTS.md) · [`spec/TEST_PLAN.md`](../spec/TEST_PLAN.md)

@@ -11,7 +11,7 @@ venue (HyperEVM + HyperCore), one accounting model, no admin.
 > [!WARNING]
 > **Pre-mainnet. Not externally audited. Do not use with real funds.**
 > The mandatory funded network gates ([`spec/SECURITY_MODEL.md`](spec/SECURITY_MODEL.md) §5)
-> are unmet, and venue semantics cannot be proven off-chain. See [`REPORT.md`](docs/audits/archive/REPORT.md) for
+> are unmet, and venue semantics cannot be proven off-chain. See [`REPORT.md`](docs/audits/REGISTRY.md) for
 > exactly what is and is not proven.
 
 ## What the protocol protects — by construction
@@ -19,7 +19,7 @@ venue (HyperEVM + HyperCore), one accounting model, no admin.
 The protocol does not guess tops or bottoms. It removes the ways a cycle position dies. Each
 protection is **structural** — enforced by code and calendar geometry, not by promises — and
 the table marks what is live in the shipped contracts versus specified-and-tested but pending
-the leverage-sizing redo (full status: [REPORT.md](docs/audits/archive/REPORT.md)):
+the leverage-sizing redo (full status: [REPORT.md](docs/audits/REGISTRY.md)):
 
 | Threat | Structural protection | Status |
 |---|---|---|
@@ -53,7 +53,7 @@ implementation is judged against lives in [`spec/`](spec/) — citations of the 
 `HAZARDS A2` or `SPECIFICATION §4` refer to it.
 
 Implementation records: [`ARCHITECTURE.md`](ARCHITECTURE.md) (design decisions) ·
-[`REPORT.md`](docs/audits/archive/REPORT.md) (security dossier + audit history) ·
+[`REPORT.md`](docs/audits/REGISTRY.md) (security dossier + audit history) ·
 [`SLITHER.md`](docs/audits/SLITHER.md) (static-analysis triage).
 
 ## How it works
@@ -220,8 +220,8 @@ larger remainder buys.
 > shows the mechanism faithfully; it cannot promise a live keeper reproduces the multiple to the
 > digit.
 >
-> **The [V6-M-2](docs/audits/archive/AUDIT-V6.md) engine fix that lets the short self-fund passed its
-> adversarial fan-out audit ([AUDIT-V7](docs/audits/archive/AUDIT-V7.md)) with no Critical/High — every
+> **The [V6-M-2](docs/audits/REGISTRY.md) engine fix that lets the short self-fund passed its
+> adversarial fan-out audit ([AUDIT-V7](docs/audits/REGISTRY.md)) with no Critical/High — every
 > finding is low and NAV-preserving** (no fund loss, no freeze). Known bounded edges: the
 > self-funded position sizes on strategy value net of the carved margin, so it lands a few percent
 > under `|perpF|·NAV` at the BTC perp's `maxLev = 40` (more at low `maxLev`); a mixed BTC+USDC

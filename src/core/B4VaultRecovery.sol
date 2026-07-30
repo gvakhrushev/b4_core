@@ -12,7 +12,7 @@ import {IERC20} from "../interfaces/IERC20.sol";
 /// @notice Second delegatecall module, split out of `B4VaultOps` because that contract had
 ///         fallen to ~90 spare bytes and both it and `B4Vault` inherit `B4VaultEngine`, so
 ///         every engine byte is paid twice and accepted audit fixes could no longer land
-///         (`docs/audits/archive/REMEDIATION-2026-07-25.md`). Recovery and deferred payouts are the
+///         (`docs/audits/REGISTRY.md`). Recovery and deferred payouts are the
 ///         cold path — owner-initiated, never on the crank — so they are what moves.
 ///
 ///         Same rules as `B4VaultOps`: reached ONLY by delegatecall from B4Vault, same

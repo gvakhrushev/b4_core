@@ -7,7 +7,12 @@ is fixed, where the fix lives, and which test keeps it fixed.
 |---|---|
 | [`REGISTRY.md`](REGISTRY.md) | Every finding from every round. Start and finish here. |
 | [`SLITHER.md`](SLITHER.md) | Static-analysis triage — live; the CI gate is calibrated to it. |
-| [`archive/`](archive/) | The pre-registry narrative reports. Non-normative, unmaintained, kept for provenance. |
+
+The twelve pre-registry narrative reports were **deleted**, not shelved. Keeping them would have
+made the registry a thirteenth document rather than a replacement for twelve, and an unmaintained
+report is exactly the thing that misleads: it reads as current because nothing marks it stale. The
+reasoning worth keeping was already migrated into the code comments, `spec/` and `INVARIANTS.md`;
+the rest is recoverable from git history if provenance is ever needed.
 
 ## Adding to it
 

@@ -10,14 +10,12 @@
 # no citation: it reads as evidence, so it actively suppresses the checking it appears to have had.
 #
 # Live vs historical, which is the distinction that decides whether this stays switched on:
-#   * LIVE — `src/`, `INVARIANTS.md`, `ARCHITECTURE.md`, `spec/`, the `docs/` guides. These
-#     describe the code as it stands, so a dead reference is rot and fails the build.
-#   * HISTORICAL — `docs/audits/`. An audit record's job is to record what was true on its date.
-#     `AUDIT-V6.md` cites `Backtest.t.sol`, which existed when it was written and was later
-#     replaced by `BacktestReal.t.sol`; "fixing" that would destroy the record's value. Reported
-#     as advisory so nothing is hidden, never enforced.
+# Every document in the tree is LIVE. The narrative audit reports that used to need a historical
+# exemption were deleted when `docs/audits/REGISTRY.md` replaced them: an unmaintained document
+# reads as current because nothing marks it stale, which is the failure this whole check exists to
+# prevent. There is therefore no advisory tier and no exemption to argue about.
 #
-# Three checks, deliberately different in strictness — a checker that cries wolf gets muted, and
+# Five checks, deliberately different in strictness — a checker that cries wolf gets muted, and
 # this repository has already been bitten by a fuzz lane whose property "was never once evaluated".
 set -uo pipefail
 
@@ -119,14 +117,6 @@ while read -r t; do
   find test -name "$t" -print -quit | grep -q . || { echo "FAIL  registry names a test that does not exist: $t"; reg=1; }
 done </tmp/_b4_regtests
 [ "$reg" -eq 0 ] && echo "ok    all $(wc -l </tmp/_b4_regtests | tr -d ' ') tests named in the registry exist" || status=1
-
-# ------------------------------------------------------------ advisory: historical records
-echo "== docs/audits (historical — advisory only, never enforced)"
-adv=0
-for f in $(grep -rhoE "[A-Za-z0-9_.]+\.t\.sol" docs/audits/ 2>/dev/null | sort -u); do
-  find test -name "$f" -print -quit | grep -q . || { echo "note  historical record cites $f (gone; correct on its date)"; adv=$((adv + 1)); }
-done
-[ "$adv" -eq 0 ] && echo "ok    historical citations all still resolve"
 
 rm -f /tmp/_b4_real /tmp/_b4_cited /tmp/_b4_syms /tmp/_b4_defs /tmp/_b4_regtests
 
