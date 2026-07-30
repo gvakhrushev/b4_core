@@ -1,20 +1,25 @@
-# Remediation — 2026-07-30 (pre-mainnet closure pass: F3 + A1–A4)
+# Remediation — 2026-07-30 (pre-mainnet closure pass: F3 + A1–A5)
 
 Closes the one **unapplied** finding from AUDIT-2026-07-29 (F3 — a verified patch that had been
 written but never landed), plus the residuals still marked open/partial after that round and one
 newly-found weight-integrity vector. Every fix ships with a fail-before/pass-after regression (H1):
 F3 in [`test/unit/DeferredClaimReturnRace.t.sol`](../../test/unit/DeferredClaimReturnRace.t.sol),
-A1–A4 in [`test/unit/AuditA_ClosureFixes.t.sol`](../../test/unit/AuditA_ClosureFixes.t.sol).
+A1–A4 in [`test/unit/AuditA_ClosureFixes.t.sol`](../../test/unit/AuditA_ClosureFixes.t.sol), and A5
+in [`test/unit/AuditF4_SettleValuationInstant.t.sol`](../../test/unit/AuditF4_SettleValuationInstant.t.sol),
+beside the F4 change whose residual it is.
 
 **Verification of this pass**
 
-- `forge test` (excl. the historical backtest): **462 passed, 0 failed** — the prior 456 plus the
-  6 regressions below (F3 adds 2).
+- `forge test`: **476 passed, 0 failed** across 80 suites.
 - Each was confirmed to **fail on the pre-fix tree** with the exact predicted failure mode, then
   pass after the fix (see the per-item "fail-before" note).
 - `forge build --sizes` on pinned solc 0.8.28: all contracts inside EIP-170. Tightest after this
-  pass: `B4Vault` 24,435 B (**141 B** headroom), `B4VaultOps` 24,200 B (376 B). `forge fmt --check`
+  pass: `B4Vault` 24,435 B (**141 B** headroom), `B4VaultOps` 24,228 B (348 B). `forge fmt --check`
   clean; storage-layout guard passes (33 slots).
+
+> **Headroom is the binding constraint now.** `B4Vault` sits 141 B under EIP-170 against the
+> project's own 128 B floor (`V3Venue_SizeGate`) — 13 bytes of slack. A5 went into `B4VaultOps` for
+> that reason, and the next change touching `B4Vault` will need to free space before it adds any.
 
 ## F3 (High) — permissionless `claimDeferred` wedged an in-flight Core→EVM return
 
@@ -57,6 +62,32 @@ interval: `_captureNav` always recomputes NAV from the live composition, so no d
 
 **Fail-before:** `test_A1_...` asserts `entryLedgerWad == 200k` after `deposit→snapshot→deposit→settle`;
 the pre-fix tree left it at `100k` and minted weight on the dropped `100k` at the next checkpoint.
+
+## A5 — exit inside the settlement window no longer mints on withdrawn capital
+
+**Severity: Medium. Found while verifying A1. INVARIANTS #19. The EXIT-side counterpart of A1 —
+same root, opposite sign, and it was left open when A1 closed the deposit side.**
+
+A frozen snapshot values the whole position, and `_finalizeExit` scales `entryLedgerWad` and
+`rewardBaseWad` by `keep` **without touching `settleNavWad`**. So `snapshotNav → initiateExit(x) →
+crank → settle` had settle measure a NAV that still included the withdrawn share against an entry
+that no longer did: the exited notional read as profit. Both halves of the window are reachable —
+`opsSettle` only refuses an exit still *pending* (`exitShareWad != 0`), not one already finalized —
+and the settlement point sits inside a `freeExit` transition zone, so the exit is penalty-free
+as well.
+
+Measured on the pre-fix tree, a 50% exit at a 130k NAV over a 100k entry: settle took **80k** of
+profit where **15k** was real — 5.3× — minting pool weight against a shared basket on capital the
+vault no longer held. Where A1 *dropped* principal (understating the basis), this *retained* it
+(overstating the profit); A1's severity reasoning applies unchanged.
+
+**Fix** (`B4VaultOps._finalizeExit`): under the same `settleNavIdPlusOne > lastSettledPlusOne`
+condition A1 uses, scale the frozen NAV by the same `keep` both ledgers already use. In
+`B4VaultOps`, not `B4Vault`, for the same headroom reason as A2.
+
+**Fail-before:** `test_F4_exit_between_snapshot_and_settle_does_not_mint_on_withdrawn_capital`
+pins `settleNavWad == wmul(pinned, keep)` and the settled profit at half the pre-exit profit; the
+pre-fix tree measured 80k against the honest 15k.
 
 ## A2 — spot principal written down to the real Core balance (audit M-1, second clause)
 

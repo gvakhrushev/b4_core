@@ -401,6 +401,19 @@ contract B4VaultOps is B4VaultEngine {
         uint256 keep = Phi.WAD - x;
         entryLedgerWad = Phi.wmul(e, keep);
         rewardBaseWad = Phi.wmul(rewardBaseWad + Phi.wmul(clientShare, x), keep);
+        // Keep a frozen settlement snapshot consistent with the capital that just left — the
+        // EXIT-side counterpart of the deposit-side raise in `B4Vault.deposit` (audit A1).
+        // `settle` re-anchors `entryLedgerWad` from the frozen `settleNavWad`, and the settlement
+        // point sits inside a `freeExit` transition zone, so an exit between `snapshotNav` and
+        // `settle` is both reachable and penalty-free. Left stale, the snapshot still values the
+        // withdrawn share: `entryLedgerWad` scales by `keep` while the NAV does not, so the
+        // exited notional reads as profit. Measured on a 50% exit at a 130k NAV over a 100k
+        // entry: settle took 80k of profit where 15k was real — 5.3x — minting pool weight
+        // against a shared basket on capital the vault no longer held (INVARIANTS #19, the
+        // exit-in-window residual of F4). Scaling by the same `keep` both sides use restores it.
+        if (settleNavIdPlusOne > lastSettledPlusOne) {
+            settleNavWad = Phi.wmul(settleNavWad, keep);
+        }
         // A full exit (`keep == 0`) therefore zeroes the standing base, as SPEC §9 requires.
         // The call-ORDER asymmetry this used to leave — `settle` then `exit` kept the weight
         // already reported to the pool, `exit` then `settle` never reported it — is closed on
