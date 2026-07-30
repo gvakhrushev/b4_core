@@ -57,14 +57,10 @@ library Calendar {
     /// window does NOT decide any more. Since AUDIT-2026-07-25 C-1 the locked price feeds no
     /// valuation at all: settlement values the vault at the instant IT runs, so `lockPrices`
     /// only marks the interval reportable and records the prices as an informational
-    /// record. The discretion this docstring used to reason about — "a late caller could
-    /// favour a higher price, but the harmed party can call `lockPrices` at `pointTime` and
-    /// remove all discretion" — therefore no longer lives here. It moved to `settle`, and for a
-    /// while nothing there answered it, which is AUDIT-2026-07-29 F4. It is answered again by
-    /// `B4Vault.snapshotNav`, a one-shot valuation capture confined to THIS window, where the
-    /// pre-emption argument applies verbatim: the owner takes it at `pointTime` and no caller has
-    /// a price left to choose. So this window's width now bounds the valuation discretion of
-    /// settlement as well, which is a second reason to keep it no wider than the settlement day.
+    /// record. Valuation discretion lives on `snapshotNav`, a one-shot capture confined to THIS
+    /// window, where the pre-emption argument applies verbatim: the owner takes it at `pointTime`
+    /// and no caller has a price left to choose. So this window's width bounds the valuation
+    /// discretion of settlement as well — a second reason to keep it no wider than the settlement day.
     /// What still argues for width here is liveness alone: every
     /// participant in the pool benefits from the same single lock, so the number of
     /// independent parties able to close the window grows with participation. And a one-hour

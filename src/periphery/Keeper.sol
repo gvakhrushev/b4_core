@@ -41,12 +41,9 @@ contract Keeper {
     /// expensive `sampleAnchor` write is the **peak-window reseed on a cold `Anchor`**, at
     /// **0.106M**, two orders of magnitude under a fold, so this is ~3.8x the worst observation.
     ///
-    /// The path named here changed. It used to be the post-halving reseed at 0.09M (still true
-    /// of that path: measured 0.080M), until AUDIT-2026-07-29 F2 added `peakTop`/`peakTopDay` to
-    /// `Anchor` and made the peak side dearer. A stale measurement matters more here than it
-    /// looks: this call is gas-capped AND its result is swallowed, so an over-budget sample fails
+    /// This call is gas-capped AND its result is swallowed, so an over-budget sample fails
     /// SILENTLY, and what stops working is the ratchet's only honest competitor (L-2) — visible
-    /// only as anchors that never confirm, a cycle later.
+    /// only as anchors that never confirm, a cycle later. Re-measure when `Anchor` gains a slot.
     /// Pinned by `test/unit/GasBounds.t.sol`, which fails at HALF this budget so the next slot
     /// added to `Anchor` is caught there rather than in production.
     ///

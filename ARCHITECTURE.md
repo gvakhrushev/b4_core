@@ -75,7 +75,7 @@ the code now state the same behavior (HAZARDS G3).
    endpoint use the piecewise split at zero exactly at the settlement points.
    (`Calendar.targetAt`; `testFuzz_sameSign_direct_interpolation`.)
 
-2. **Exit reward-base C (SPEC §9).** *(Formula corrected 2026-07-25 — see below.)*
+2. **Exit reward-base C (SPEC §9).**
    `nextRewardBase = (R+C)·(1−x)` with C read as the
    *full-vault* client share lets repeated dust exits mint unbounded weight
    (x→0 ⇒ R += C each time), contradicting §9's own "repeated partial exits MUST NOT
@@ -85,8 +85,7 @@ the code now state the same behavior (HAZARDS G3).
    share's profit earns client-share exactly once.
    (`B4VaultOps._finalizeExit`; `test_repeated_partial_exits_no_weight_duplication`.)
 
-   **Correction (AUDIT-2026-07-25 "half B") — and the correction to that correction.** The
-   defect was real: `settle`-then-`exit` kept the pool-side claim (the pool is never notified of
+   **The order-dependence, and the trigger that replaced it.** The defect was real: `settle`-then-`exit` kept the pool-side claim (the pool is never notified of
    an exit) while `exit`-then-`settle` never reported one — the same economic event with
    opposite outcomes by call order, and the loser was whoever did not know the order. The first
    attempted fix lifted the realised share out from under `keep`
@@ -104,8 +103,8 @@ the code now state the same behavior (HAZARDS G3).
    (D2/D3); and every non-applicable case is a silent `return`, never a revert, because it sits
    on the permissionless crank path and there is no admin to unstick a freeze (H3, F1).
 
-   **And the correction to that (AUDIT-2026-07-29 F1).** The pool side originally fired only when
-   `keep == 0`. That is an exact-equality test on a number the vault owner supplies, so
+   **The trigger must not be a boundary (AUDIT-2026-07-29 F1).** An exact-equality test on
+   `keep == 0` reads a number the vault owner supplies, so
    `initiateExit(WAD − 1)` paid out every unit of the position but flooring dust and kept **100%**
    of the reported claim — a departed vault collecting a full pro-rata share of a basket funded by
    other participants' penalties, with every stayer diluted by exactly that amount. It now scales

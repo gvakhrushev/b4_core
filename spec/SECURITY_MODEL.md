@@ -104,16 +104,12 @@ MUST be permanently removed before production.
   alternative — freezing a reference price for a composition read up to three days later — is
   precisely what produced the C-1 Critical, so it is not available.
   **The residual is now bounded by pre-emption, not by an operational expectation**
-  (AUDIT-2026-07-29 F4, closed 2026-07-30). This text used to lean on a second factor: "the keeper
-  settles every vault of a pool in a single pass, i.e. at one block and one price", which is what
-  made the shift uniform and therefore harmless. That was an operational expectation, not a code
-  guarantee: `settle` is permissionless and one-shot per interval, so a third party could PRE-EMPT
-  that pass for a vault it did not own and pin that vault's increment at an instant of its
-  choosing — the shift is then differential by construction, and the factor that cancelled it did
-  not hold. Worse, the mitigation the `Calendar` docstring records for `lockPrices` — "the harmed
-  party can simply call it at `pointTime` and remove all discretion" — did not transfer, because
-  since C-1 the locked price feeds no valuation, so the discretion had moved to `settle`, where
-  the harmed party had no equivalent move.
+  (AUDIT-2026-07-29 F4). **Do not bound this by asserting that "the keeper settles every vault of a
+  pool in a single pass, at one block and one price".** That is an operational expectation, not a
+  code guarantee: `settle` is permissionless and one-shot per interval, so a third party can
+  PRE-EMPT that pass for a vault it does not own and pin that vault's increment at an instant of
+  its choosing — the shift is then differential by construction, and the factor that cancelled it
+  does not hold.
   **The fix separates the valuation instant from the report.** `B4Vault.snapshotNav(id)` captures
   the interval's NAV and the price it was measured at, together, at one instant; it is
   permissionless, one-shot per interval, and confined to `Calendar.SNAPSHOT_WINDOW` (the
@@ -178,7 +174,7 @@ MUST be permanently removed before production.
   base: it is re-reported at every interval and decays only with capital, never with time or
   market loss. With C-1 closed, reaching a claim is not cheap — it needs real capital, real
   exposure and real profit across a real interval.
-  The ORDER DEPENDENCE this used to carry is closed (AUDIT-2026-07-25 "half B"), and closed on
+  The ORDER DEPENDENCE is closed (AUDIT-2026-07-25 "half B"), and closed on
   the POOL side: an exit scales the standing base on the vault side
   (`nextRewardBase = (R + C·x)·(1−x)`, so `x = 1 ⇒ 0`) **and** scales the weight already
   reported for the open interval by the same `keep` via `B4Pool.scaleWeight`, lowering both
@@ -188,9 +184,9 @@ MUST be permanently removed before production.
   (The earlier "add the realised share instead of scaling it away" fix converged the two orders
   on KEEPING the weight; it was reverted because that inverts the redistribution model and
   re-opens the clone-recycling shape of C-1.)
-  The pool side scales on EVERY exit. It used to fire only at `keep == 0`, and because `x` is
-  owner-chosen that exact-equality test was defeated by `x = WAD − 1`: essentially the whole
-  position paid out, the whole reported claim retained (AUDIT-2026-07-29 F1). Proportional
+  The pool side scales on EVERY exit. **The trigger MUST NOT be an equality on `keep == 0`:** `x`
+  is owner-chosen, so that test is defeated by `x = WAD − 1` — essentially the whole position paid
+  out, the whole reported claim retained (AUDIT-2026-07-29 F1). Proportional
   scaling removes the boundary rather than relocating it — no threshold survives a caller who
   can sit one wei above it, and no measure derived from the post-exit base survives the `C·x`
   re-inflation the owner controls the timing of. `scaleWeight` is confined to

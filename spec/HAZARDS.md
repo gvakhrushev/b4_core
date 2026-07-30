@@ -57,20 +57,17 @@ its effect must be proven by a later on-chain state read.
     re-recoverable, so it may be emergency-cleared.
   - Discarding an **asset-transfer** intent is forbidden while the funds still exist: they could
     land afterward and be lost from accounting.
-  - **Corrected 2026-07-30.** This rule used to end "with A2/A3 in place, transfer intents always
-    progress after the timeout and never need discarding". That is false for exactly one shape,
-    and the false assurance is what left it unhandled: a Core→EVM return whose source has already
-    decreased can never resend (A7), so if the credit is permanently lost the leg can never
-    complete either — a permanent freeze of the whole vault, with no admin to unstick it.
-    The correct rule is not "never discard" but **never discard funds that still exist**. Where a
-    transfer intent is provably unrecoverable — the source decreased, and a long timeout has
-    passed — the escape MUST write the books down to the real balance and clear the intent
-    (`abandonStuckReturn`). It realizes a loss that already happened; refusing to record it is
-    what adds the rest of the vault to the casualty list. It MUST require the source to have
-    decreased, so a merely slow leg (whose funds are still on Core, and whose resend branch is
-    still live) can never be abandoned — that case remains forbidden, exactly as above. Funds
-    arriving after the write-down are not lost from accounting: they land as unaccounted balance
-    on the owner-recoverable path.
+  - Where a transfer intent is **provably unrecoverable** — the source has decreased and a long
+    timeout has passed — the escape MUST write the books down to the real balance and clear the
+    intent (`abandonStuckReturn`). It records a loss that already happened; refusing to record it
+    adds the rest of the vault to the casualty list. **Do not state that A2/A3 make transfer
+    intents always progress.** They do not for one shape: a Core→EVM return whose source has
+    decreased can never resend (A7), so a permanently lost credit leaves a leg that can never
+    complete either — a permanent freeze of the whole vault, with no admin to unstick it. That
+    false assurance is what left the case unhandled.
+  - The escape MUST require the source to have decreased, so a merely slow leg — funds still on
+    Core, resend branch still live — can never be abandoned. Funds arriving after the write-down
+    are not lost from accounting: they land as unaccounted balance on the owner-recoverable path.
 
 - **A7 · Atomicity differs by action type — handle them differently.** Intra-Core transfers
   (spot↔perp) are assumed atomic (source-decrease ⇔ destination-increase, all-or-nothing);
@@ -231,9 +228,9 @@ its effect must be proven by a later on-chain state read.
     price never returned to `C`, and the +99–103% bear-market rallies of cycles 1–2 — which
     liquidate a flat-`φ` short — clear the structural stop. An unconfirmed peak falls back to the
     flat base, as on the long side.
-  - **The max ratchet does NOT have the same directional safety as the min** (corrected
-    2026-07-30; the earlier claim that it did was false and is what let both anchor findings
-    through). Within a cycle a higher recorded high pushes the stop further out and lowers
+  - **The max ratchet does NOT have the same directional safety as the min.** Asserting that it
+    does is what let both anchor findings through, so state the asymmetry, never the symmetry.
+    Within a cycle a higher recorded high pushes the stop further out and lowers
     leverage — safe. But `peakC` is promoted into `prevPeak`, the next cycle's delta anchor, and
     an inflated `Pp` shrinks `(C − Pp)`, pulling the stop toward `C` and **raising** leverage a
     cycle later. So the peak side is exposed in BOTH directions: an overstated high harms the
