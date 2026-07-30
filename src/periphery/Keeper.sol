@@ -34,8 +34,17 @@ contract Keeper {
     uint256 internal constant STEP_GAS = 2_000_000;
 
     /// Ceiling on ONE anchor sample — deliberately NOT `STEP_GAS`. MEASURED: the most
-    /// expensive `sampleAnchor` write (post-halving window, cold `Anchor` slot) is 0.09M,
-    /// two orders of magnitude under a fold, so this is ~4x the worst observation.
+    /// expensive `sampleAnchor` write is the **peak-window reseed on a cold `Anchor`**, at
+    /// **0.106M**, two orders of magnitude under a fold, so this is ~3.8x the worst observation.
+    ///
+    /// The path named here changed. It used to be the post-halving reseed at 0.09M (still true
+    /// of that path: measured 0.080M), until AUDIT-2026-07-29 F2 added `peakTop`/`peakTopDay` to
+    /// `Anchor` and made the peak side dearer. A stale measurement matters more here than it
+    /// looks: this call is gas-capped AND its result is swallowed, so an over-budget sample fails
+    /// SILENTLY, and what stops working is the ratchet's only honest competitor (L-2) — visible
+    /// only as anchors that never confirm, a cycle later.
+    /// Pinned by `AuditA14_AnchorGasBudget.t.sol`, which fails at HALF this budget so the next
+    /// slot added to `Anchor` is caught here rather than in production.
     ///
     /// Gating the anchor loop on the SLEEVE budget would defeat the reordering directly
     /// above it: a caller below `TAIL_RESERVE + STEP_GAS` = 3.5M would sample ZERO anchors

@@ -1,4 +1,4 @@
-# Remediation — 2026-07-30 (pre-mainnet closure pass: F3 + A1–A13)
+# Remediation — 2026-07-30 (pre-mainnet closure pass: F3 + A1–A14)
 
 Closes the one **unapplied** finding from AUDIT-2026-07-29 (F3 — a verified patch that had been
 written but never landed), plus the residuals still marked open/partial after that round and one
@@ -17,7 +17,7 @@ asserting a property nothing tested, is where the next finding tends to live.
 
 **Verification of this pass**
 
-- `forge test`: **486 passed, 0 failed** across 82 suites. `slither --fail-high` clean (168 informational, no high).
+- `forge test`: **487 passed, 0 failed** across 83 suites. `slither --fail-high` clean (168 informational, no high).
 - **Deep invariant campaign run** (`FOUNDRY_PROFILE=deep`, 512×256): 32 tests, 0 failed, 283 s. This is the project's strongest gate and it had not been run against any of this pass's changes until now.
 - Each was confirmed to **fail on the pre-fix tree** with the exact predicted failure mode, then
   pass after the fix (see the per-item "fail-before" note).
@@ -286,6 +286,37 @@ what the exiting vault gave up.
 handler turns any `xBps % 4 == 0` into a **full** exit — so a round number silently retargeted the
 test at the case it was written to complement. It failed loudly (`kept == 0`) rather than passing
 as a duplicate, which is the only reason it was caught; the comment now names the trap in place.
+
+## A14 — the keeper's anchor gas budget is re-measured and pinned
+
+**No exploit. A stale MEASUREMENT behind a load-bearing constant, invalidated by this pass's own
+F2 change. Found by sweeping `Keeper` — the one contract never touched or reviewed here.**
+
+`Keeper.crank` forwards each `sampleAnchor` with an explicit `ANCHOR_GAS` cap **and swallows the
+result**. That shape is right: sampling must never stop calendar or vault liveness. What it means
+is that an over-budget sample fails **silently**, and the thing that stops working is the anchor
+ratchet's only honest competitor (audit L-2). The density gate counts DAYS, so the damage would
+surface as anchors that never confirm — a cycle later, with nothing on chain saying why.
+
+The constant's justification is therefore load-bearing, and it is a measurement: *"the most
+expensive `sampleAnchor` write (post-halving window, cold `Anchor` slot) is 0.09M … ~4x the worst
+observation."* F2 added `peakTop` and `peakTopDay` to `Anchor`, and both the **number and the named
+path** went stale.
+
+Re-measured: peak-window reseed on a cold anchor **105,590**; a close raising the candidate 52,618;
+a corroborating close 12,368; post-halving reseed 79,951 (the doc's path, still ≈0.08M). So the
+worst case is now the **peak** reseed at 0.106M, and the budget holds at ~3.8×.
+
+**No change to the constant** — 400,000 is still right. Corrected the docstring to name the real
+worst path and number, and added `AuditA14_AnchorGasBudget.t.sol`, which fails at **half** the
+budget rather than at the budget: a sample that merely *fits* leaves no room for the next slot, and
+the failure mode is silent. It also pins that the peak path is the dearest, so the doc cannot drift
+back.
+
+Also swept this round with no finding: the crank's per-vault self-call wrappers (a codeless entry
+reverts in the caller's frame via the extcodesize pre-check, which only the external self-call
+catches), the `advance` / `lockPrices` / `sweep` / `capture` isolation, `SWEEP_LOOKBACK`'s bound,
+and the `_canStep` reserve arithmetic. All correct as written.
 
 ## A8 — `anchorConfirmed` no longer reports a confirmed peak that serves nothing
 
