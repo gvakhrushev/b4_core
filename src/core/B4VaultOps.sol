@@ -182,7 +182,28 @@ contract B4VaultOps is B4VaultEngine {
         // it must use what was captured, or defer the interval.
         uint256 pxWad = _snapshotNav(intervalId);
         // Idle ⇒ every in-flight leg has credited its bucket; NAV is exact.
-        uint256 nav = settleNavWad;
+        //
+        // Capped by what the books say the vault holds NOW, valued at the SAME frozen price.
+        // Freezing a NAV promises the interval is valued at one instant, which makes it wrong the
+        // moment the vault's value moves for a reason that is not the price — and the window is
+        // three days long, so several such movers are reachable: a deposit raises the books
+        // (A1 keeps the snapshot in step), an exit scales them down (A5 does), and a realized
+        // loss lowers them with nothing tracking it at all. The target ramps away from zero right
+        // after the settlement point, so the crank re-opens a position and funds margin inside
+        // the window; an adverse close there is written down by `_reconcile` while the snapshot
+        // still values the vault as it stood before. Measured on the pre-cap tree: live NAV
+        // 117,000 against a frozen 120,000, so settle charged a fee and minted pool weight on
+        // 3,000 of capital the venue had already taken.
+        //
+        // The cap is what makes that a closed class rather than a list of patched movers: no
+        // future mover can raise the settled NAV above the recorded books, whether or not anyone
+        // remembers to hook it. Re-valuing at the LIVE price instead would reopen F4 — the settle
+        // caller would choose the price again — so the books are valued at `pxWad`, the instant
+        // the snapshot pinned. Only the downward direction is covered here by construction; the
+        // upward one still needs its mover to raise the snapshot (A1), because a cap cannot
+        // invent value the snapshot never recorded.
+        uint256 nav = _navWad(pxWad);
+        if (settleNavWad < nav) nav = settleNavWad;
         uint256 e = entryLedgerWad;
         uint256 profit = nav > e ? nav - e : 0;
         uint256 virtualFee = Phi.wmul(profit, Phi.FEE_F);

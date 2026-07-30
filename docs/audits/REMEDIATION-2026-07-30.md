@@ -1,4 +1,4 @@
-# Remediation — 2026-07-30 (pre-mainnet closure pass: F3 + A1–A6)
+# Remediation — 2026-07-30 (pre-mainnet closure pass: F3 + A1–A7)
 
 Closes the one **unapplied** finding from AUDIT-2026-07-29 (F3 — a verified patch that had been
 written but never landed), plus the residuals still marked open/partial after that round and one
@@ -17,7 +17,7 @@ asserting a property nothing tested, is where the next finding tends to live.
 
 **Verification of this pass**
 
-- `forge test`: **482 passed, 0 failed** across 81 suites. `slither --fail-high` clean (168 informational, no high).
+- `forge test`: **483 passed, 0 failed** across 81 suites. `slither --fail-high` clean (168 informational, no high).
 - Each was confirmed to **fail on the pre-fix tree** with the exact predicted failure mode, then
   pass after the fix (see the per-item "fail-before" note).
 - `forge build --sizes` on pinned solc 0.8.28: all contracts inside EIP-170. Tightest after this
@@ -97,6 +97,38 @@ condition A1 uses, scale the frozen NAV by the same `keep` both ledgers already 
 **Fail-before:** `test_F4_exit_between_snapshot_and_settle_does_not_mint_on_withdrawn_capital`
 pins `settleNavWad == wmul(pinned, keep)` and the settled profit at half the pre-exit profit; the
 pre-fix tree measured 80k against the honest 15k.
+
+## A7 — settle can never value the vault above its own books (frozen-NAV class, closed)
+
+**Severity: Medium. Found by re-checking A5's reach rather than trusting it. INVARIANTS #19.**
+
+A1 and A5 each patched one mover of the frozen snapshot — deposit raises it, exit scales it. A
+**realized loss** lowers the books with nothing tracking it at all, and it is reachable inside the
+report window: the target ramps away from zero immediately after the settlement point, so the
+crank re-opens a position and funds perp margin, and an adverse close there is written down by
+`_reconcile` while the snapshot still values the vault as it stood before. Measured on the pre-cap
+tree: live NAV **117,000** against a frozen **120,000**, so settle re-anchored the entry ledger to
+120k and would charge a fee and mint pool weight on 3k the venue had already taken.
+
+**Fix** (`B4VaultOps.opsSettle`): value the interval at `min(settleNavWad, _navWad(pxWad))` — the
+books as they stand now, at the **frozen** price. Two properties make this the right shape rather
+than a third hook:
+
+- it closes the *class*, not the instance. No future mover can raise the settled NAV above the
+  recorded books, whether or not anyone remembers to hook it — which matters because A5 and this
+  were both found by checking the previous fix, not by the scan;
+- it does not reopen F4. Re-valuing at the LIVE price would hand the settle caller the price
+  again; valuing the books at `pxWad` keeps the instant the snapshot pinned.
+
+Only the downward direction is covered by construction — a cap cannot invent value the snapshot
+never recorded — so A1's upward hook is still required and remains.
+
+Rejected: hooking `_reconcile`/`_reconcileSpot` individually. It cost `B4Vault` 73 bytes (the
+helper lives in the shared engine and is paid by all three contracts), taking it to **108 B** —
+under the project's own 128 B floor — to close one mover instead of the class.
+
+**Fail-before:** `test_F4_settle_never_values_above_the_books_after_a_realized_loss` asserts the
+settled entry ledger is at or below the post-loss NAV; pre-cap it read the frozen 120k.
 
 ## A6 — the permanent Core→EVM wedge now has a bounded escape (HAZARDS A7 residual)
 
