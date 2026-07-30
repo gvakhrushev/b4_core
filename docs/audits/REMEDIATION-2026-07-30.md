@@ -1,4 +1,4 @@
-# Remediation — 2026-07-30 (pre-mainnet closure pass: F3 + A1–A9)
+# Remediation — 2026-07-30 (pre-mainnet closure pass: F3 + A1–A10)
 
 Closes the one **unapplied** finding from AUDIT-2026-07-29 (F3 — a verified patch that had been
 written but never landed), plus the residuals still marked open/partial after that round and one
@@ -167,6 +167,32 @@ bad directional index (`AuditL1_SleeveEscapes.t.sol::test_L1_sleeve_escape_forwa
 > filed L-1 for precisely that blind spot. Any escape added to `B4Vault`'s `onlyOwner` surface needs
 > a matching `B4Pool` forwarder in the same change, or it silently does not exist for half the
 > deployment.
+
+## A10 — the policy-id / mask-bit divergence is documented (silent-wrong-answer trap)
+
+**Severity: Low (API ergonomics / false assurance). No code defect — every internal site is
+correct. Found by making the mistake: a diagnostic of mine read a Pro escrow as zero and I chased
+a phantom accounting bug before noticing the numbering.**
+
+`policyMask` documents `1=Mini, 2=B4, 4=Pro, 8=Pro Max` — those are **mask bits**. Every public
+entrypoint and mapping keyed by `policy` (`sleeveOf`, `penaltyEscrow`, `strategyOf`, `foldPenalty`,
+`crankSleeve`, and all five sleeve escapes) takes the **policy id**, where a policy id `p` occupies
+bit `1 << (p − 1)`. They agree for Mini and B4 and **diverge for Pro (id 3, bit 4) and Pro Max
+(id 4, bit 8)**, and nothing said so.
+
+Why it matters more than a naming nit: `penaltyEscrow(4, dir, 0)` for Pro does not revert — it
+reads Pro Max's escrow and returns a **silent zero**, so a monitor concludes there is nothing to
+fold. In an aggregate pool (mask 15) the sleeve forwarders would act on the wrong product's sleeve
+rather than failing. In an isolated pool they revert `NotASleeve`, which is exactly why the mistake
+survives testing and surfaces in production.
+
+**Fix:** documented at both surfaces an integrator actually reads — the `policyMask` docstring in
+`B4Pool` (the only place the numbers appeared) and the sleeve section of `docs/03-contracts.md`,
+each with the id↔bit table and the silent-zero consequence spelled out. The numbering itself is
+left alone: renumbering buys no safety and breaks every caller.
+
+**Verified, not assumed:** the accounting is correct. A Pro exit's penalty escrows
+234,887,637 USDC + 23,371,910 directional to the Pro sleeve under policy id 3 — D6/D7 hold.
 
 ## A8 — `anchorConfirmed` no longer reports a confirmed peak that serves nothing
 

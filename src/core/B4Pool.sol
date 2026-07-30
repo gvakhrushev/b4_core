@@ -65,6 +65,26 @@ contract B4Pool is IB4PoolPolicy {
     ///         legacy shared-basket mode; a non-zero mask is a strict configured pool.
     ///         1=Mini, 2=B4, 4=Pro, 8=Pro Max. The four single bits are isolated
     ///         pools and 15 is the explicit aggregate-pool choice.
+    ///
+    ///         **These are MASK BITS, not policy ids, and for the same product they are
+    ///         different numbers.** A policy id `p` occupies mask bit `1 << (p − 1)`:
+    ///
+    ///           product | policy id | mask bit
+    ///           Mini    |     1     |     1
+    ///           B4      |     2     |     2
+    ///           Pro     |   **3**   |   **4**
+    ///           Pro Max |   **4**   |   **8**
+    ///
+    ///         Every public entrypoint and mapping keyed by `policy` — `sleeveOf`,
+    ///         `penaltyEscrow`, `strategyOf`, `foldPenalty`, `crankSleeve` and all five sleeve
+    ///         escapes — takes the **policy id**. Only this mask uses the bits. The two agree
+    ///         for Mini and B4 and diverge for Pro and Pro Max, which is what makes the mistake
+    ///         easy to make and hard to see: passing a mask bit where an id belongs reads
+    ///         `penaltyEscrow(4, …)` as Pro Max's escrow and returns a **silent zero** rather
+    ///         than reverting, so a monitor concludes there is nothing to fold. In an aggregate
+    ///         pool the sleeve forwarders would likewise act on the wrong product's sleeve
+    ///         instead of failing. (Isolated pools do revert `NotASleeve`, which is why the
+    ///         mistake tends to survive testing and surface in production.)
     uint8 public policyMask;
     bool private _policiesConfigured;
     mapping(address => uint8) public policyIdForStrategy;

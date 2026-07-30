@@ -335,6 +335,24 @@ Behavior worth knowing:
 - **`sweep`** rolls an expired interval's unclaimed inventory back into `accruing` exactly once, leaving liability unchanged.
 - **`capture`** turns an uncommitted balance above recorded liability into inventory — measured receipt only. A donation becomes pool inventory, never vault profit. **`capturePenalty`** preserves that direct path for legacy pools; in a strict Product Pool only settlement plus the exiting vault's directional token enter `(policy, directional asset)` escrow. Another whitelisted token remains ordinary donation inventory.
 - **Strict sleeves** are created only by `B4ProductFactory` for the immutable canonical policy and directional asset. `foldPenalty` zero-resets allowance, transfers only the recorded escrow into that sleeve, and starts the ordinary engine. `crankSleeve` is permissionless. `initiateSleeveExit` works only in `Calendar.freeExit`; only then can returned sleeve capital be captured into `accruing` and later claimed. `escrowHeld` is excluded from ordinary claim shortfall accounting while the sleeve is live.
+> **`policy` is the policy ID, never the mask bit — and for Pro and Pro Max they are different
+> numbers.** A policy id `p` occupies mask bit `1 << (p − 1)`:
+>
+> | product | policy id | mask bit |
+> |---|---|---|
+> | Mini | 1 | 1 |
+> | B4 | 2 | 2 |
+> | Pro | **3** | **4** |
+> | Pro Max | **4** | **8** |
+>
+> Every entrypoint and mapping keyed by `policy` above takes the **id**; only `policyMask` uses
+> the bits. They agree for Mini and B4 and diverge for Pro and Pro Max, which is what makes the
+> confusion easy to make and hard to see. `penaltyEscrow(4, dir, 0)` for Pro returns a **silent
+> zero** — it reads Pro Max's escrow — rather than reverting, so a monitor concludes there is
+> nothing to fold. In an aggregate pool (mask 15) the sleeve forwarders would act on the wrong
+> product's sleeve instead of failing; in an isolated pool they revert `NotASleeve`, which is why
+> the mistake tends to survive testing and surface in production.
+
 - **Sleeve owner-escapes.** A sleeve is created with `owner == pool`, so the pool is the only address that can satisfy the vault's `onlyOwner`. `cancelSleeveExit` relays `B4Vault.cancelExit` and is the pool-side half of the dead-feed escape (INVARIANTS row 20); it is refused unless the sleeve's exit is provably unable to finalize — the directional spot price reads zero **and** the sleeve still holds directional value, the exact complement of `_finalizeExit`'s deferral test — so it can never be used to grief a healthy sleeve exit. Honest bound on what it buys: while the feed is still dead, cancelling does **not** on its own restore a *directional* `foldPenalty` — `B4Vault.deposit` reverts `ZeroPrice` in its own directional branch (H-3) — it restores the settlement-only fold, returns the sleeve to the sync planner instead of pinning it on the exit machine, and makes it usable the instant the feed returns. `recoverSleeveEvm` / `recoverSleeveCoreSpot` / `recoverSleevePerpSurplus` relay the vault's own bounded `balance − recorded` recovery (HAZARDS B6); the recipient is the vault's immutable `owner`, i.e. this pool, and the arrival is admitted by measured delta into `accruing` + `liability`, so recovered surplus is distributed by reported weight like any other inventory. `recoverSleeveEvm` names a token by **whitelist index**, never by address, so everything it can move has a drain path; a non-whitelisted airdrop stays in the sleeve. `clearSleeveRecovery` relays `emergencyClearRecovery` and is mandatory alongside them: a recovery intent the venue never completes would otherwise block the sleeve's crank and strand its principal. `abandonSleeveStuckReturn` relays `abandonStuckReturn` for the same reason and is mandatory on the same grounds — it is the only escape from a Core→EVM leg whose credit was permanently lost, and without the forwarder that escape did not exist for a sleeve at all, leaving **pooled** capital permanently strandable where a user vault's was not (the L-1 gap, repeated by A6 and closed by A9). None of these lets a caller choose an address, an amount or a recipient.
 - Untrusted token reads go through `_safeBalanceOf`: a `staticcall` with gas capped at `TOKEN_READ_GAS = 100_000` and the return copy bounded to 32 bytes, so a hostile token can neither revert, OOG, nor return-bomb the loop.
 
