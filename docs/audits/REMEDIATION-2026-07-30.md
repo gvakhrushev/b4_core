@@ -1,4 +1,4 @@
-# Remediation — 2026-07-30 (pre-mainnet closure pass: F3 + A1–A12)
+# Remediation — 2026-07-30 (pre-mainnet closure pass: F3 + A1–A13)
 
 Closes the one **unapplied** finding from AUDIT-2026-07-29 (F3 — a verified patch that had been
 written but never landed), plus the residuals still marked open/partial after that round and one
@@ -17,7 +17,7 @@ asserting a property nothing tested, is where the next finding tends to live.
 
 **Verification of this pass**
 
-- `forge test`: **485 passed, 0 failed** across 82 suites. `slither --fail-high` clean (168 informational, no high).
+- `forge test`: **486 passed, 0 failed** across 82 suites. `slither --fail-high` clean (168 informational, no high).
 - **Deep invariant campaign run** (`FOUNDRY_PROFILE=deep`, 512×256): 32 tests, 0 failed, 283 s. This is the project's strongest gate and it had not been run against any of this pass's changes until now.
 - Each was confirmed to **fail on the pre-fix tree** with the exact predicted failure mode, then
   pass after the fix (see the per-item "fail-before" note).
@@ -260,6 +260,32 @@ repetition), and a free window pays the pool nothing.
 **Mutation-verified, not assumed non-vacuous:** dropping the penalty carve
 (`s.ownerWad = s.grossWad`) is caught in 4 runs, and it surfaces exactly as predicted — an
 arithmetic underflow in the bucket write-back, i.e. a reverting crank.
+
+## A13 — the partial-scaling case of F1 is pinned deterministically
+
+**No defect found. Recorded because the property F1 introduced had no deterministic test, and this
+file has already been bitten once by exactly that.**
+
+F1 changed the pool side from firing only at `keep == 0` to scaling on **every** exit. That makes
+the interesting property no longer "a full exit forfeits everything" but "`totalWeight` stays
+closed under a *fractional* scaling" — arithmetic the full-exit case never exercises, because it
+multiplies by zero.
+
+The stateful campaign does draw partial shares (three times in four), and `invariant_...` asserts
+`totalWeight` is the sum of reporters. But reaching `scaleWeight` at all needs a reported weight
+**and** a finalize inside the report window, and this very file records a lane whose property *"was
+never once evaluated"* across every run (`fullExitsObserved == 0`). A property that depends on a
+fuzz lane reaching a narrow state is a property that can stop running silently.
+
+**Added** `test_settle_then_a_partial_exit_scales_the_reported_weight`: deterministic, asserts the
+kept weight is strictly between zero and the reported weight (so it is neither the full-exit path
+nor a no-op), that `totalWeight` is still exactly the sum of survivors, and that it fell by exactly
+what the exiting vault gave up.
+
+**Worth recording about the writing of it:** the first draft passed `xBps = 5_000`, and the
+handler turns any `xBps % 4 == 0` into a **full** exit — so a round number silently retargeted the
+test at the case it was written to complement. It failed loudly (`kept == 0`) rather than passing
+as a duplicate, which is the only reason it was caught; the comment now names the trap in place.
 
 ## A8 — `anchorConfirmed` no longer reports a confirmed peak that serves nothing
 

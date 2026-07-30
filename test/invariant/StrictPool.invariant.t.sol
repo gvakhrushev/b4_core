@@ -737,6 +737,50 @@ contract StrictPoolInvariantTest is VaultTestBase {
         assertFalse(handler.weightSurvivedFullExit(), "no in-window claim survived");
     }
 
+    /// The PARTIAL sibling, and the reason it exists separately. Since AUDIT-2026-07-29 F1 the
+    /// pool side scales on EVERY exit, not only at `keep == 0` — so the interesting property is
+    /// no longer "a full exit forfeits everything" but "`totalWeight` stays closed under a
+    /// fractional scaling", which is arithmetic the full-exit case never exercises (it multiplies
+    /// by zero).
+    ///
+    /// Deterministic on purpose. The fuzz lane above draws partial shares three times in four,
+    /// but reaching `scaleWeight` at all needs a reported weight AND a finalize inside the report
+    /// window, and this file has already been bitten once by a lane whose property "was never
+    /// once evaluated" — so the property is pinned here where it cannot silently stop running.
+    function test_settle_then_a_partial_exit_scales_the_reported_weight() public {
+        B4Vault vp = handler.vPro();
+        handler.advVenueMode(7);
+        handler.crankPro(6);
+        handler.movePrice(150);
+        handler.crankPro(6);
+        handler.warpToSettlementPoint(3);
+        handler.crankPro(6);
+
+        handler.settleVault(0);
+        uint256 w = p.weightOf(0, address(vp));
+        assertGt(w, 0, "a profitable settle actually reported weight");
+        uint256 other = p.weightOf(0, address(handler.vMax()));
+        (,,, uint256 total) = p.intervalInfo(0);
+        assertEq(total, w + other, "totalWeight is closed before the exit");
+
+        // 5_001, not 5_000: the handler turns any `xBps % 4 == 0` into a FULL exit, so a
+        // round number here would silently retarget this at the case above.
+        handler.initiateExitVault(0, 5_001); // ~50%: keep != 0, a real fractional scaling
+        for (uint256 i = 0; i < 40; i++) {
+            handler.crankPro(6);
+            if (vp.exitShareWad() == 0) break;
+        }
+        assertEq(vp.exitShareWad(), 0, "the partial exit finalized");
+        assertLe(block.timestamp, p.reportDeadline(0), "still inside the mutable-weight window");
+
+        uint256 kept = p.weightOf(0, address(vp));
+        assertGt(kept, 0, "a partial exit keeps a claim - this is not the full-exit path");
+        assertLt(kept, w, "and strictly less than before, so the scaling really ran");
+        (,,, uint256 totalAfter) = p.intervalInfo(0);
+        assertEq(totalAfter, kept + other, "totalWeight is still exactly the sum of survivors");
+        assertEq(totalAfter, total - (w - kept), "and fell by exactly what this vault gave up");
+    }
+
     /// The claim half of the weight layer: two reporters share a real bucket and the sum of
     /// what they take never exceeds it (D2/D3).
     function test_claims_never_exceed_the_bucket() public {
