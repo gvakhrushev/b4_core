@@ -1,4 +1,4 @@
-# Remediation — 2026-07-30 (pre-mainnet closure pass: F3 + A1–A11)
+# Remediation — 2026-07-30 (pre-mainnet closure pass: F3 + A1–A12)
 
 Closes the one **unapplied** finding from AUDIT-2026-07-29 (F3 — a verified patch that had been
 written but never landed), plus the residuals still marked open/partial after that round and one
@@ -17,7 +17,7 @@ asserting a property nothing tested, is where the next finding tends to live.
 
 **Verification of this pass**
 
-- `forge test`: **484 passed, 0 failed** across 82 suites. `slither --fail-high` clean (168 informational, no high).
+- `forge test`: **485 passed, 0 failed** across 82 suites. `slither --fail-high` clean (168 informational, no high).
 - **Deep invariant campaign run** (`FOUNDRY_PROFILE=deep`, 512×256): 32 tests, 0 failed, 283 s. This is the project's strongest gate and it had not been run against any of this pass's changes until now.
 - Each was confirmed to **fail on the pre-fix tree** with the exact predicted failure mode, then
   pass after the fix (see the per-item "fail-before" note).
@@ -228,6 +228,38 @@ downgrade is detectable: HAZARDS **G1** binds this codebase to emit an event on 
 invisible value movement *"so keepers/users detect them without diffing storage"*, and this path
 was violating it. It is also the only signal distinguishing "no penalty was owed" from "a penalty
 was owed and silently went to the wrong claim class".
+
+## A12 — the exit waterfall's safety arguments are now enforced, not hand-proved
+
+**No defect found. Recorded because the absence of a defect here was resting on unenforced
+reasoning, and that is itself a weakness.**
+
+`_payBucket` splits real money between four recipients using `mulDiv(out, share, grossWad)` per
+bucket. Everything that keeps it safe was a hand proof, nowhere asserted:
+
+- `ocx ≤ grossWad`, because `operatorCut ≤ virtualFee = profit·FEE_F ≤ nav·0.045` and `wmul` is
+  monotone — so the free branch's `grossWad − ocx` cannot underflow;
+- `penalty < grossWad`, because `EXIT_Q ≈ 0.118 < 1` — so the penalised branch's
+  `grossWad − penalty` cannot underflow;
+- the three floored shares sum to at most `out ≤ bucket`, because `ownerWad + operatorWad +
+  poolWad == grossWad` exactly in both branches — so the bucket write-back cannot underflow;
+- `grossWad == 0` never reaches the division: `mulDiv` reverts `DivByZero`, and a revert here is on
+  the permissionless crank path, i.e. a permanent exit freeze. Checked: the `if (s.grossWad > 0)`
+  guard covers it.
+
+Each of those holds. None of them was tested, and all four are one formula edit away from being
+false — with the failure landing as a **revert on the crank**, the freeze class this codebase
+treats as critical.
+
+**Added** `testFuzz_exit_waterfall_conserves_and_never_underflows` (512 runs over the whole share
+space × both calendar zones): the exit finalizes for every share, `entryLedgerWad` equals
+`wmul(e, keep)` exactly, recipients never receive more than the bucket released, the flooring dust
+is bounded and always favours the **vault** (B5 — the only direction that cannot be farmed by
+repetition), and a free window pays the pool nothing.
+
+**Mutation-verified, not assumed non-vacuous:** dropping the penalty carve
+(`s.ownerWad = s.grossWad`) is caught in 4 runs, and it surfaces exactly as predicted — an
+arithmetic underflow in the bucket write-back, i.e. a reverting crank.
 
 ## A8 — `anchorConfirmed` no longer reports a confirmed peak that serves nothing
 
