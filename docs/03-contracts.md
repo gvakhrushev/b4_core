@@ -221,6 +221,7 @@ function recoverEvm(address token) external;                          // onlyOwn
 function recoverCoreSpot(bool dirToken) external;                     // onlyOwner
 function recoverPerpSurplus() external;                               // onlyOwner
 function emergencyClearRecovery() external;                           // onlyOwner
+function abandonStuckReturn() external;                              // onlyOwner
 
 function crank() external returns (bool progressed);                  // permissionless
 function snapshotNav(uint256 intervalId) external;                    // permissionless
@@ -242,7 +243,8 @@ function strategyValueWad() external view returns (uint256);
 | `snapshotNav` | anyone | Delegates to `opsSnapshotNav`: captures this interval's NAV **and the price it was measured at**, together, at one instant. One-shot per interval, only inside `Calendar.SNAPSHOT_WINDOW` (the settlement day), requires an idle engine. The vault **owner** calls it at `pointTime` to remove every caller's discretion over the price their interval weight is minted at (F4); anyone may call it for liveness. Optional in the common path — `settle` captures it itself when it runs inside the same window. |
 | `settle` | anyone | Delegates to `opsSettle`. Values the interval off the captured snapshot, never off the price of the instant *it* runs; past the snapshot window with nothing captured it reverts `NavNotSnapshotted` and the interval defers to the next checkpoint. |
 | `recoverEvm` / `recoverCoreSpot` / `recoverPerpSurplus` | owner | Recovery of **unaccounted** surplus only (see §4.6). |
-| `emergencyClearRecovery` | owner | Only for a stuck *surplus-recovery* intent (`RecoverSpotDir`, `RecoverSpotUsdc`, `RecoverPerpPhase1/2`) and only after `EMERGENCY_TIMEOUT` (3 days) — else `NotRecoveryIntent` / `TooEarly`. Asset-transfer intents can never be discarded. |
+| `emergencyClearRecovery` | owner | Only for a stuck *surplus-recovery* intent (`RecoverSpotDir`, `RecoverSpotUsdc`, `RecoverPerpPhase1/2`) and only after `EMERGENCY_TIMEOUT` (3 days) — else `NotRecoveryIntent` / `TooEarly`. Safe because those funds stay on Core and remain re-recoverable. |
+| `abandonStuckReturn` | owner | The one asset-transfer escape, for a `ReturnDir`/`ReturnUsdc` whose EVM credit was permanently lost. Three gates: owner-only, `RETURN_ABANDON_TIMEOUT` (30 days, ~720× any honest delay), and the Core source must actually have **decreased** — while it still holds the amount the leg is merely slow and `_verifyReturn`'s resend branch is live, so abandoning is refused (`ReturnNotStuck`). Writes the Core books down to the real balance (`LossReconciled`) and clears the intent. It records a loss that already happened: without it the leg can neither complete nor resend (A7) and the whole vault is frozen for good. A credit arriving later lands as unaccounted balance and is recovered through `recoverEvm`. |
 | `claimDeferred` | anyone | Retries a failed payout; pays **only the recorded recipient**. |
 
 Fee-route validation (`_validateRoute`): `operatorBps ≤ Phi.MAX_OPERATOR_BPS` (3819); a non-zero rate requires a non-zero operator address; a referrer requires a non-zero operator rate and `referrerBps ∈ [3819, 10000]`; a zero referrer must carry a zero `referrerBps`.

@@ -55,9 +55,22 @@ its effect must be proven by a later on-chain state read.
   timed owner escape for every intent that could hang. Distinguish two cases:
   - Abandoning a **surplus-recovery** intent is safe: the funds stay on Core and are
     re-recoverable, so it may be emergency-cleared.
-  - Discarding an **asset-transfer** intent is forbidden: funds could still land afterward and
-    be lost from accounting. With A2/A3 in place, transfer intents always progress after the
-    timeout and never need discarding.
+  - Discarding an **asset-transfer** intent is forbidden while the funds still exist: they could
+    land afterward and be lost from accounting.
+  - **Corrected 2026-07-30.** This rule used to end "with A2/A3 in place, transfer intents always
+    progress after the timeout and never need discarding". That is false for exactly one shape,
+    and the false assurance is what left it unhandled: a Core→EVM return whose source has already
+    decreased can never resend (A7), so if the credit is permanently lost the leg can never
+    complete either — a permanent freeze of the whole vault, with no admin to unstick it.
+    The correct rule is not "never discard" but **never discard funds that still exist**. Where a
+    transfer intent is provably unrecoverable — the source decreased, and a long timeout has
+    passed — the escape MUST write the books down to the real balance and clear the intent
+    (`abandonStuckReturn`). It realizes a loss that already happened; refusing to record it is
+    what adds the rest of the vault to the casualty list. It MUST require the source to have
+    decreased, so a merely slow leg (whose funds are still on Core, and whose resend branch is
+    still live) can never be abandoned — that case remains forbidden, exactly as above. Funds
+    arriving after the write-down are not lost from accounting: they land as unaccounted balance
+    on the owner-recoverable path.
 
 - **A7 · Atomicity differs by action type — handle them differently.** Intra-Core transfers
   (spot↔perp) are assumed atomic (source-decrease ⇔ destination-increase, all-or-nothing);

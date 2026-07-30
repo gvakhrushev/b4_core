@@ -282,15 +282,19 @@ contract B4Vault is B4VaultEngine {
     /// @notice Owner escape for a stuck SURPLUS-RECOVERY intent only (A6): the funds stay
     ///         on Core and remain re-recoverable. Asset-transfer intents can never be
     ///         discarded — with A2/A3 they always progress after the timeout.
+    /// @notice Owner escape for a Core→EVM return whose credit never arrived — realizes the loss
+    ///         and frees the vault (A7's permanent-wedge residual). Gated on 30 days AND on the
+    ///         source having actually decreased; see `B4VaultRecovery.opsAbandonStuckReturn`.
+    function abandonStuckReturn() external onlyOwner {
+        _delegateTo(recovery, abi.encodeCall(B4VaultRecovery.opsAbandonStuckReturn, ()));
+    }
+
+    /// @dev Body moved to `B4VaultRecovery` so this contract keeps only the dispatcher: both
+    ///      escapes are cold-path owner calls, and `B4Vault` had run out of EIP-170 headroom
+    ///      while the recovery module has ~17 KB. The external selector is unchanged, which
+    ///      matters — `B4Pool.clearSleeveRecovery` relays it for pool-owned sleeves.
     function emergencyClearRecovery() external onlyOwner {
-        IntentKind k = intent.kind;
-        if (
-            k != IntentKind.RecoverSpotDir && k != IntentKind.RecoverSpotUsdc
-                && k != IntentKind.RecoverPerpPhase1 && k != IntentKind.RecoverPerpPhase2
-        ) revert NotRecoveryIntent();
-        if (block.timestamp < intent.createdAt + EMERGENCY_TIMEOUT) revert TooEarly();
-        emit EmergencyCleared(k);
-        _clearIntent();
+        _delegateTo(recovery, abi.encodeCall(B4VaultRecovery.opsEmergencyClearRecovery, ()));
     }
 
     // ================================================================= views

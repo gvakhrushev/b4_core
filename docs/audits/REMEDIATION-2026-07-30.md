@@ -1,25 +1,34 @@
-# Remediation — 2026-07-30 (pre-mainnet closure pass: F3 + A1–A5)
+# Remediation — 2026-07-30 (pre-mainnet closure pass: F3 + A1–A6)
 
 Closes the one **unapplied** finding from AUDIT-2026-07-29 (F3 — a verified patch that had been
 written but never landed), plus the residuals still marked open/partial after that round and one
-newly-found weight-integrity vector. Every fix ships with a fail-before/pass-after regression (H1):
+newly-found weight-integrity vector, its mirror image, and the last unhandled freeze in the system.
+Every fix ships with a fail-before/pass-after regression (H1):
 F3 in [`test/unit/DeferredClaimReturnRace.t.sol`](../../test/unit/DeferredClaimReturnRace.t.sol),
-A1–A4 in [`test/unit/AuditA_ClosureFixes.t.sol`](../../test/unit/AuditA_ClosureFixes.t.sol), and A5
-in [`test/unit/AuditF4_SettleValuationInstant.t.sol`](../../test/unit/AuditF4_SettleValuationInstant.t.sol),
-beside the F4 change whose residual it is.
+A1–A4 in [`test/unit/AuditA_ClosureFixes.t.sol`](../../test/unit/AuditA_ClosureFixes.t.sol), A5
+in [`test/unit/AuditF4_SettleValuationInstant.t.sol`](../../test/unit/AuditF4_SettleValuationInstant.t.sol)
+beside the F4 change whose residual it is, and A6 in
+[`test/unit/AuditA6_StuckReturnEscape.t.sol`](../../test/unit/AuditA6_StuckReturnEscape.t.sol).
+
+Two of these were found by *verifying the previous fix rather than trusting it* — A5 while checking
+A1's reach, A6 while checking what the README's liveness claim actually rested on. Both were created
+or masked by a correct-looking change: a fix that alters WHEN a quantity is measured, or a doc line
+asserting a property nothing tested, is where the next finding tends to live.
 
 **Verification of this pass**
 
-- `forge test`: **476 passed, 0 failed** across 80 suites.
+- `forge test`: **482 passed, 0 failed** across 81 suites. `slither --fail-high` clean (168 informational, no high).
 - Each was confirmed to **fail on the pre-fix tree** with the exact predicted failure mode, then
   pass after the fix (see the per-item "fail-before" note).
 - `forge build --sizes` on pinned solc 0.8.28: all contracts inside EIP-170. Tightest after this
-  pass: `B4Vault` 24,435 B (**141 B** headroom), `B4VaultOps` 24,228 B (348 B). `forge fmt --check`
+  pass: `B4Vault` 24,395 B (**181 B** headroom — improved from 141 B by moving `emergencyClearRecovery` into the recovery module), `B4VaultOps` 24,228 B (348 B). `forge fmt --check`
   clean; storage-layout guard passes (33 slots).
 
-> **Headroom is the binding constraint now.** `B4Vault` sits 141 B under EIP-170 against the
-> project's own 128 B floor (`V3Venue_SizeGate`) — 13 bytes of slack. A5 went into `B4VaultOps` for
-> that reason, and the next change touching `B4Vault` will need to free space before it adds any.
+> **Headroom is the binding constraint on this codebase.** It reached 141 B mid-pass — 13 bytes
+> over the project's own 128 B floor (`V3Venue_SizeGate`) — which is why A5 went into `B4VaultOps`
+> and A6 into `B4VaultRecovery`. A6 then bought some back by moving `emergencyClearRecovery`'s body
+> out of `B4Vault`, ending at **181 B**. The pattern to keep: cold-path owner functions belong in a
+> module, and `B4Vault` should hold dispatchers, not bodies.
 
 ## F3 (High) — permissionless `claimDeferred` wedged an in-flight Core→EVM return
 
@@ -88,6 +97,46 @@ condition A1 uses, scale the frozen NAV by the same `keep` both ledgers already 
 **Fail-before:** `test_F4_exit_between_snapshot_and_settle_does_not_mint_on_withdrawn_capital`
 pins `settleNavWad == wmul(pinned, keep)` and the settled profit at half the pre-exit profit; the
 pre-fix tree measured 80k against the honest 15k.
+
+## A6 — the permanent Core→EVM wedge now has a bounded escape (HAZARDS A7 residual)
+
+**Severity: High (architectural, liveness-of-custody). Named by both the internal scan and the
+external review; the last unhandled freeze in the system.**
+
+A `ReturnDir`/`ReturnUsdc` whose Core source has decreased can never resend — A7 forbids it,
+because the first send may still be in flight and a resend would send twice. If the EVM credit is
+then permanently lost, `received < evmNeeded` holds forever, so the leg can never complete either.
+`emergencyClearRecovery` refused the kind (A6 admitted `Recover*` only), and every idle-gated
+entrypoint — settle, exit finalize, all three recovery paths — died on `_requireIdle()`. **The
+whole vault was frozen for good**, with no admin anywhere able to unstick it, and the surviving
+capital went down with the lost portion.
+
+The false assurance that hid this is in `HAZARDS` A6 itself: *"with A2/A3 in place, transfer
+intents always progress after the timeout and never need discarding."* It is not true for this
+shape. The rule is corrected there: not "never discard", but **never discard funds that still
+exist**.
+
+**Fix** (`B4VaultRecovery.opsAbandonStuckReturn`, owner entry `B4Vault.abandonStuckReturn`):
+after `RETURN_ABANDON_TIMEOUT` (30 days) and **only when the source has actually decreased**,
+write the Core books down to the real balance (`LossReconciled`) and clear the intent. It changes
+only the *second* loss — the first has already happened and no contract can undo it. A credit
+arriving later lands as unaccounted EVM balance and reaches the owner through `recoverEvm`, the
+same path any unattributed arrival takes, so nothing is destroyed that was not already gone.
+
+Three gates, each load-bearing: **owner-only** (it realizes a loss on their own vault);
+**30 days** (~720× any honest delay, so an impatient caller cannot abandon a merely slow leg); and
+**source must have decreased** (while Core still holds the amount the resend branch is live, and
+abandoning would discard a claim on funds that exist — still forbidden, and asserted).
+
+> Headroom note: `emergencyClearRecovery`'s body moved to `B4VaultRecovery` in the same change,
+> leaving only its dispatcher in `B4Vault`. The external selector is unchanged
+> (`B4Pool.clearSleeveRecovery` relays it), and `B4Vault` came out **better** than before —
+> 181 B of EIP-170 headroom against 141 B — while gaining the new escape.
+
+**Fail-before:** `AuditA6_StuckReturnEscape.t.sol` ×6. `test_a_lost_credit_wedges_the_vault_permanently`
+pins the wedge itself (50 cranks past `RESEND_TIMEOUT` do not clear it, and `recoverEvm` reverts
+`IntentPending` behind it); the rest pin the escape and each of its three gates, plus the late
+delivery still reaching the owner.
 
 ## A2 — spot principal written down to the real Core balance (audit M-1, second clause)
 
