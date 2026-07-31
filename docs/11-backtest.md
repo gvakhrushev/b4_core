@@ -63,8 +63,16 @@ peak-to-trough of `navWad()`.
 > getters therefore withhold anchors and correctly degrade to flat `φ`. It is not a benchmark of
 > a confirmed-anchor deployment. Pro Max is 1× in the growth phase under BTC-only funding — a
 > leveraged long needs margin on top of full spot, which selling spot cannot provide; its `φ` edge
-> is the fall short and recovery long. Its downside remains understated: the test venue models no
-> liquidation, and `navWad` excludes unrealized perp PnL (B3).
+> is the fall short and recovery long. Its downside remains understated even now that drawdown is
+> measured mark-to-market: the test venue models **no liquidation**.
+>
+> That is not a small caveat for the levered products, because this document's own survival record
+> (below) says a flat-`φ` position is liquidated by the 2015 and 2018 bear rallies and the 2020
+> COVID crash — and all three sit **inside this benchmark's window** (2012-01-01 → 2026-07-20),
+> which the benchmark runs at flat `φ`. Pro Max's 31.7M× is therefore the return of a position in
+> the one venue that could not liquidate it. Treat every levered multiple here as an upper bound
+> on a configuration that does not survive the period on a live venue; what could make such a
+> multiple reachable is the structural sizing this run deliberately does not exercise.
 
 ## Per cycle
 

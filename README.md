@@ -249,6 +249,17 @@ larger remainder buys.
 > engine uses structural margin control when anchors are confirmed;
 > this deliberately unsampled backtest falls back to flat `φ`, so it does not measure that
 > confirmed-anchor path.
+>
+> **Read the leveraged multiples against the survival record above, which contradicts them.** That
+> table says a flat-`φ` position is liquidated by the 2015 (+103 %) and 2018 (+99 %) bear rallies
+> and the 2020 COVID crash (−64 %). All three fall inside this benchmark's window
+> (2012-01-01 → 2026-07-20), the benchmark runs flat `φ`, and the test venue models no liquidation.
+> So Pro Max's 31.7M× is the return of a flat-`φ` position in the one place it could not be
+> liquidated — on a live venue that configuration does not reach the end of the run. What could
+> make a leveraged multiple reachable is the structural sizing the engine ships and this run does
+> not exercise. Taken honestly, the benchmark measures the calendar and the rotation; it does not
+> measure whether leverage survives, and for the levered products it is an upper bound, not a
+> projection.
 
 ### The survival record — the safety mechanism, measured
 
