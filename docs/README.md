@@ -7,7 +7,7 @@ when you need the authoritative `MUST`/`MUST NOT` statements.
 
 > **Pre-mainnet.** Not externally audited; the funded release gates
 > ([`../spec/SECURITY_MODEL.md`](../spec/SECURITY_MODEL.md) §5) are unmet. See
-> [`docs/audits/REGISTRY.md`](docs/audits/REGISTRY.md) for exactly what is and is not proven.
+> [`docs/audits/REGISTRY.md`](audits/REGISTRY.md) for exactly what is and is not proven.
 
 ## Reading order
 
@@ -51,7 +51,7 @@ a permissionless **keeper** merely advances the machine.
 - [`../ARCHITECTURE.md`](../ARCHITECTURE.md) — design decisions and async discipline (normative
   for the implementation per `HAZARDS` G3)
 - [`../INVARIANTS.md`](../INVARIANTS.md) — invariant → test traceability with honest gaps
-- [`docs/audits/REGISTRY.md`](docs/audits/REGISTRY.md) — the security dossier and full internal audit history
+- [`docs/audits/REGISTRY.md`](audits/REGISTRY.md) — the security dossier and full internal audit history
 - [`../SLITHER.md`](audits/SLITHER.md) — static-analysis triage
 - [`../SECURITY.md`](../SECURITY.md) — how to report a vulnerability
 - [`design/`](design/) — accepted design proposals, the structural state machine, and

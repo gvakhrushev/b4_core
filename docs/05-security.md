@@ -2,7 +2,7 @@
 
 This page states, in reader-facing terms, what B4 trusts, what it refuses to trust, which safety properties it claims, and exactly which proofs are still missing — it is a summary of the normative [`spec/SECURITY_MODEL.md`](../spec/SECURITY_MODEL.md), not a replacement for it.
 
-> **Status: pre-mainnet, externally unaudited.** Nothing here should be read as production-readiness. The mandatory independent audit and the funded on-chain release gates are both **outstanding** ([`spec/SECURITY_MODEL.md`](../spec/SECURITY_MODEL.md) §5, [`docs/audits/REGISTRY.md`](docs/audits/REGISTRY.md)).
+> **Status: pre-mainnet, externally unaudited.** Nothing here should be read as production-readiness. The mandatory independent audit and the funded on-chain release gates are both **outstanding** ([`spec/SECURITY_MODEL.md`](../spec/SECURITY_MODEL.md) §5, [`docs/audits/REGISTRY.md`](audits/REGISTRY.md)).
 
 ## 1. What "security" means here
 
@@ -68,7 +68,7 @@ These are **security boundaries, not dormant extension points** ([`spec/SECURITY
 
 ## 5. Accepted residuals
 
-Documented, decided, and not treated as bugs ([`spec/SECURITY_MODEL.md`](../spec/SECURITY_MODEL.md) §3, [`spec/HAZARDS.md`](../spec/HAZARDS.md) §C, [`docs/audits/REGISTRY.md`](docs/audits/REGISTRY.md)):
+Documented, decided, and not treated as bugs ([`spec/SECURITY_MODEL.md`](../spec/SECURITY_MODEL.md) §3, [`spec/HAZARDS.md`](../spec/HAZARDS.md) §C, [`docs/audits/REGISTRY.md`](audits/REGISTRY.md)):
 
 | Residual | Character |
 |---|---|
@@ -86,7 +86,7 @@ Documented, decided, and not treated as bugs ([`spec/SECURITY_MODEL.md`](../spec
 
 ## 6. Audit posture
 
-**What has happened** (full history in [`docs/audits/REGISTRY.md`](docs/audits/REGISTRY.md)):
+**What has happened** (full history in [`docs/audits/REGISTRY.md`](audits/REGISTRY.md)):
 
 - Multiple internal adversarial rounds through **V9** — including V3/V4 remediation re-audits, V6/V8 structural-leverage review, and the V9 density/engine closure. Historical round-by-round evidence remains under `docs/audits/`; current code carries focused regressions for every accepted fix.
 - A full **12-dimension adversarial audit (2026-07-25)** with per-finding refutation and three-lens verification, and its fix round. It found a **Critical** the eight previous rounds missed: settlement valued the vault's composition *as read at settlement time* against a price fixed up to three days earlier, so any composition change inside that window — including the rotation the calendar itself mandates there — read as profit no capital earned and minted a claim on the shared basket (committed exploit: $676 of cost took $833,333). Fixed by putting the entry ledger and NAV on a single price basis. The round's own first remediation plan was refuted by measurement before it landed. See `docs/audits/REGISTRY.md`; four further fixes are blocked on an EIP-170 size restructure, not on design.
@@ -108,5 +108,5 @@ Mainnet must not proceed until both are recorded and independently reviewed.
 | [`spec/SECURITY_MODEL.md`](../spec/SECURITY_MODEL.md) | Normative trust model, the 19 safety invariants, accepted residuals, release gates |
 | [`spec/HAZARDS.md`](../spec/HAZARDS.md) | The hazard map: every failure class (A async, B accounting, C economic decisions, D pool, E calendar/cross-chain, F authority, G operations, H process) as a design requirement with rationale |
 | [`INVARIANTS.md`](../INVARIANTS.md) | Invariant → test traceability with explicit GAP markers |
-| [`docs/audits/REGISTRY.md`](docs/audits/REGISTRY.md) | Security dossier and audit history: rounds, findings, refutations, remediation, what remains unproven |
+| [`docs/audits/REGISTRY.md`](audits/REGISTRY.md) | Security dossier and audit history: rounds, findings, refutations, remediation, what remains unproven |
 | [`SLITHER.md`](audits/SLITHER.md) | Per-detector static-analysis triage and the CI gate |

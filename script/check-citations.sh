@@ -15,7 +15,7 @@
 # reads as current because nothing marks it stale, which is the failure this whole check exists to
 # prevent. There is therefore no advisory tier and no exemption to argue about.
 #
-# Five checks, deliberately different in strictness — a checker that cries wolf gets muted, and
+# Six checks, deliberately different in strictness — a checker that cries wolf gets muted, and
 # this repository has already been bitten by a fuzz lane whose property "was never once evaluated".
 set -uo pipefail
 
@@ -131,6 +131,33 @@ while read -r t; do
   find test -name "$t" -print -quit | grep -q . || { echo "FAIL  registry names a test that does not exist: $t"; reg=1; }
 done </tmp/_b4_regtests
 [ "$reg" -eq 0 ] && echo "ok    all $(wc -l </tmp/_b4_regtests | tr -d ' ') tests named in the registry exist" || status=1
+
+# ------------------------------ 6. markdown links resolve FROM THE FILE THAT WRITES THEM
+#
+# Check 2b asks whether a document with that basename exists ANYWHERE in the tree, which is the
+# right question for a bare mention in prose but the wrong one for a link. Building the registry
+# put `](docs/audits/REGISTRY.md)` — a path from the repository root — into 22 links across
+# `docs/`, where it resolves to `docs/docs/audits/REGISTRY.md`. Every one was broken; every one
+# passed, because `REGISTRY.md` does exist somewhere and that is all 2b was looking for. So the
+# migration that removed the stale reports shipped a doc tree whose registry link was dead in
+# every file that pointed at it, and the checker said ok.
+#
+# A link is a promise about a PATH, so it is resolved the way a reader resolves it: relative to
+# the file it is written in. Fenced code blocks are skipped — `new Descriptor[](1)` is an array
+# length, not a link, and a checker that flags Solidity as a broken link gets muted.
+echo "== markdown link targets"
+lnk=0; nlink=0
+while read -r f; do
+  d=$(dirname "$f")
+  targets=$(awk '/^[[:space:]]*```/ { fence = !fence; next } !fence' "$f" \
+    | grep -oE "\]\([^)]+\)" | sed -E 's/^\]\(//; s/\)$//; s/#.*$//' \
+    | grep -vE "^$|^https?:|^mailto:")
+  for t in $targets; do
+    nlink=$((nlink + 1))
+    (cd "$d" && [ -e "$t" ]) || { echo "FAIL  $f links to a path that does not resolve: $t"; lnk=1; }
+  done
+done < <(git ls-files '*.md')
+[ "$lnk" -eq 0 ] && echo "ok    all $nlink markdown link targets resolve from their own directory" || status=1
 
 rm -f /tmp/_b4_real /tmp/_b4_cited /tmp/_b4_syms /tmp/_b4_defs /tmp/_b4_regtests
 

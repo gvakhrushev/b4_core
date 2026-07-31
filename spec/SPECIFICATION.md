@@ -101,9 +101,16 @@ subject to `HAZARDS.md`. Economic rationale is non-normative (`WHITEPAPER.md`).
   directional leg MUST reject it; settlement MUST reject it; exit finalization MUST defer on
   it rather than revert, and MUST remain cancellable so a permanently dead feed cannot strand
   a vault (the settlement leg is price-independent when no directional asset is held).
-- State categories: directional capital; rotated capital (settlement from Close sales); owner
-  margin reserve; verified Core principal. Unrealized PnL / unverified surplus MUST NOT enter
-  the realized ledger; owner margin MUST NOT increase strategy notional.
+- State categories: directional capital; rotated capital (settlement from Close sales **and
+  direct settlement-token deposits**); owner margin reserve; verified Core principal. Unrealized
+  PnL / unverified surplus MUST NOT enter the realized ledger; owner margin MUST NOT increase
+  strategy notional.
+  A deposited settlement token is strategy capital, not margin. It has to be: a pure-perp
+  product returns settlement at exit, so if a re-deposit landed in the margin reserve it would
+  be inert — the reserve is excluded from `_strategyValueWad`, so notional would size off zero
+  directional capital and the position would never reopen. The margin rule above is unaffected
+  and still holds literally: the reserve itself never enters notional; what changed is only
+  which bucket a deposit lands in.
 - When flat, if withdrawable Core settlement is below recorded principal, principal MUST be
   written down **before any NAV valuation** — settle, exit, AND sync (see `HAZARDS.md` B2).
   Every valuation path MUST run only at an idle execution engine (no action in flight), so

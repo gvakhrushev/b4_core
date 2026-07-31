@@ -1,9 +1,12 @@
 # Proposal: the pool rides the fall — a standing pool short (SPS-1)
 
-**Status (2026-07-21): designed, direction decided (SPS-1), gated behind the §7b redo.**
-Pre-implementation design record. Sequencing: the structural-leverage §7b redo lands first
-(margin `= notional/L`), then this. Until then the pool holds its fall-zone penalty share as
-**passive USDC** — the honest interim. Nothing here is in shipped code.
+**Status (2026-07-31): designed, direction decided (SPS-1), UNBLOCKED — not built.**
+Pre-implementation design record. The gate this proposal named has cleared: the structural-leverage
+§7b redo it was sequenced behind shipped on 2026-07-23 (margin `= notional/L`, both sides, via
+margin control — see [`PROPOSAL-structural-leverage.md`](PROPOSAL-structural-leverage.md) and the
+normative [`STRUCTURAL-STATE-MACHINE.md`](STRUCTURAL-STATE-MACHINE.md)). Nothing here is in shipped
+code, and until it is the pool holds its fall-zone penalty share as **passive USDC** — the honest
+interim. This is now the next buildable item, not a blocked one.
 
 **Design evolved (2026-07-21).** An earlier draft used *per-exit isolated tranches* with the
 exiter's *inherited stop*. Working through the small-penalty problem (below) with a multi-agent

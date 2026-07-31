@@ -24,7 +24,7 @@ the protocol's buy-and-hold) as the baseline:
   calls the permissionless keeper makes. Equity is `navWad()`, nothing else.
 - **BTC only, short self-funds.** Every vault starts from the same BTC deposit and posts **no
   separate margin**. A short product (Pro / Pro Max) funds its fall short by selling that BTC into
-  USDC and reclassifying it as perp collateral — the routing that [V6-M-2](docs/audits/REGISTRY.md) fixed.
+  USDC and reclassifying it as perp collateral — the routing that [V6-M-2](audits/REGISTRY.md) fixed.
 - **Income realized per cycle (the "3rd zone").** At each halving the vault fully exits inside the
   20-day penalty-free window — paying the performance fee and **realizing the perp-leg PnL that
   `navWad` excludes by design (invariant B3)** — then re-deposits. So the return is the real,
@@ -54,7 +54,7 @@ peak-to-trough of `navWad()`.
 | **Pro Max** | **31,753,217.433x** | **6,035.480×** | **1.96 %** |
 
 > **Audit status.** The V6-M-2 fix passed its adversarial fan-out audit
-> ([AUDIT-V7](docs/audits/REGISTRY.md)) — no Critical/High, every finding low and NAV-preserving. The
+> ([AUDIT-V7](audits/REGISTRY.md)) — no Critical/High, every finding low and NAV-preserving. The
 > self-funded position sizes on strategy value net of the carved margin, landing a few percent
 > under `|perpF|·NAV` at the BTC perp's `maxLev = 40`.
 >
