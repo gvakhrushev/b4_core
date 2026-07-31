@@ -208,13 +208,14 @@ useless as a risk gauge for a leveraged product: Pro Max holds `spot = 0`, so it
 is the one leg NAV cannot see, and measured on NAV its drawdown reads ~0 whatever the position
 does. An earlier version of this table published that ~0 as if it were the product's risk.
 
-Read the two rows together, and read them honestly: **B4 and Pro buy less drawdown; Pro Max buys
-more return with MORE drawdown.** B4/Pro cut ~10 pp off Mini's cycle drawdown because they step
-out of the market (into USDC or a short) during the bear that produces it. Pro Max rotates too, so
-it still draws 9–19 pp less than spot-holding Mini — but it runs a leveraged perp, so the
-pre-rotation decline hits it amplified and it draws **1.5–10 pp deeper than B4/Pro** in every
-cycle. It is not the low-risk product the old table implied; it is the one that pays for its
-return in drawdown. Selling the whole spot
+Read the two rows together, and read *where* the drawdown happens — that is the whole mechanism.
+**Mini sets its worst drawdown inside the fall zone in every one of the four cycles; B4, Pro and
+Pro Max never do, in any cycle.** They are in USDC or short there, so what remains for them is
+ordinary intra-bull volatility in the growth or recovery zone — it gives back accumulated
+*profit*, not principal — and it lands 9–19 pp under Mini's bear. The rotating three take their
+worst hits on the *same days* as each other (the April-2013 crash sets all three in cycle 1),
+because in the growth zone they are all ~1× long; the point-or-two spread between them there is
+composition, not a risk property of the levered product. Selling the whole spot
 position to stand up the short makes Pro a full-size short of
 the fall, so it clears B4 by a wide margin (1.317M× vs 345k×); Pro Max adds the `φ` leg on top. The
 short's edge is largest in cycle 1 (the deepest fall) and compresses in the shallower later

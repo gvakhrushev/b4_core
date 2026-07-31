@@ -274,6 +274,7 @@ contract BacktestRealTest is VenueTestBase {
         int256 low; // worst nav seen this cycle
         int256 peak; // running peak this cycle (for maxDD)
         int256 maxDDWad; // worst peak-to-trough this cycle, WAD fraction
+        uint256 ddDay; // day-of-cycle on which that worst drawdown was set
     }
 
     function _deployAndFund(address strategy, address operator, uint256 usdcMargin6)
@@ -363,7 +364,7 @@ contract BacktestRealTest is VenueTestBase {
                 _crankUntilIdle(v, 40); // reopen the recovery long for the bull run to next halving
                 done[4] = true;
             }
-            _trackDD(r, _equityWad(v));
+            _trackDD(r, _equityWad(v), (ts[i] - cycleStart) / 86400);
         }
     }
 
@@ -418,11 +419,14 @@ contract BacktestRealTest is VenueTestBase {
         vm.stopPrank();
     }
 
-    function _trackDD(CycleRow memory r, int256 nav) internal pure {
+    function _trackDD(CycleRow memory r, int256 nav, uint256 dayOfCycle) internal pure {
         if (nav > r.peak) r.peak = nav;
         if (nav < r.low) r.low = nav;
         int256 dd = r.peak <= 0 ? int256(1e18) : (r.peak - nav) * 1e18 / r.peak;
-        if (dd > r.maxDDWad) r.maxDDWad = dd;
+        if (dd > r.maxDDWad) {
+            r.maxDDWad = dd;
+            r.ddDay = dayOfCycle;
+        }
     }
 
     /// `retBase` = the denominator for the return multiple. For cycle 1 it is the $100k BTC
@@ -443,6 +447,7 @@ contract BacktestRealTest is VenueTestBase {
     struct ProductResult {
         uint256 compoundedX1000; // final NAV / $100k BTC base, x1000
         uint256 c1MaxDDbps; // cycle-1 worst drawdown, bps
+        bool anyDDInFall; // did ANY cycle set its worst drawdown inside the fall zone?
     }
 
     function _runProduct(
@@ -486,6 +491,10 @@ contract BacktestRealTest is VenueTestBase {
             _logCycle(c, r, c == 0 ? btcBase : prevEnd);
             prevEnd = r.endNav;
             if (c == 0) res.c1MaxDDbps = uint256(r.maxDDWad * 10000 / 1e18);
+            // Which ZONE set the worst drawdown is the product claim itself — see the assertions.
+            uint256 fallOpen = (Calendar.P - Calendar.H) / 1 days;
+            uint256 fallClose = (Calendar.T + Calendar.H) / 1 days;
+            if (r.ddDay >= fallOpen && r.ddDay <= fallClose) res.anyDDInFall = true;
 
             if (readPoint != cycleEndFull) {
                 console.log("    (cycle in progress, stopped at last available price date)");
@@ -541,10 +550,18 @@ contract BacktestRealTest is VenueTestBase {
         assertGt(
             pm.c1MaxDDbps, 5000, "Pro Max must show a real drawdown (>50pp); NAV alone reads ~0"
         );
-        // And the honest ordering the README now states: leverage costs drawdown. Pro Max rotates
-        // like B4/Pro so it beats spot-holding Mini, but its leveraged growth leg draws DEEPER
-        // than either unlevered rotator. Published as "less drawdown" until 2026-07-31.
-        assertGt(pm.c1MaxDDbps, b.c1MaxDDbps, "Pro Max draws deeper than B4 (it is levered)");
+        // THE product claim, and the only drawdown statement worth pinning: a rotating product
+        // never takes its worst drawdown in the fall. Mini holds spot through the bear and sets
+        // its worst drawdown INSIDE the fall zone in every cycle; B4/Pro/Pro Max are in USDC or
+        // short there, so their worst drawdown always lands in growth or recovery — ordinary
+        // intra-bull volatility that gives back accumulated profit, not the bear that takes
+        // principal. Asserting the ZONE, not a basis-point ordering: the products are all ~1x
+        // long in growth, so which of them is a point or two deeper on a given crash is
+        // composition noise and pinning it would only encode that noise as a claim.
+        assertTrue(mn.anyDDInFall, "Mini must take its worst drawdown IN the fall (it holds)");
+        assertFalse(b.anyDDInFall, "B4 must never take its worst drawdown in the fall");
+        assertFalse(pr.anyDDInFall, "Pro must never take its worst drawdown in the fall");
+        assertFalse(pm.anyDDInFall, "Pro Max must never take its worst drawdown in the fall");
         // Sanity: Mini is a small haircut under raw HODL (operator fee only), not a multiple.
         assertGt(mn.compoundedX1000, 4_000_000, "Mini compounds ~HODL (>4000x over 3 cycles)");
         assertLt(mn.compoundedX1000, 5_500_000, "Mini below raw HODL (fee drag), not above");

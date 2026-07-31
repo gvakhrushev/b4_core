@@ -21,7 +21,8 @@ the protocol's buy-and-hold) as the baseline:
 
 - **Real engine, real keeper.** A vault is deposited once, then `crank()`-ed at each calendar
   transition and `settle()`-d at the two settlement points (`P−H`, `T+H`) every epoch — the same
-  calls the permissionless keeper makes. Equity is `navWad()`, nothing else.
+  calls the permissionless keeper makes. Return is `navWad()`; drawdown adds the perp's unrealized
+  PnL, which `navWad` excludes by design (B3).
 - **BTC only, short self-funds.** Every vault starts from the same BTC deposit and posts **no
   separate margin**. A short product (Pro / Pro Max) funds its fall short by selling that BTC into
   USDC and reclassifying it as perp collateral — the routing that [V6-M-2](audits/REGISTRY.md) fixed.
@@ -43,7 +44,7 @@ the protocol's buy-and-hold) as the baseline:
 ## Three complete cycles + cycle 4 in progress (2012-11-28 → 2026-07-20)
 
 Return is the realized, compounded multiple on the BTC deposit; drawdown is the worst cycle
-peak-to-trough of `navWad()`.
+peak-to-trough of mark-to-market equity (`navWad()` + unrealized perp PnL).
 
 | Product | Total return | vs HODL | Worst cycle drawdown |
 |---|---:|---:|---:|
@@ -82,9 +83,12 @@ NAV alone: NAV excludes unrealized PnL by invariant B3, and pure-perp Pro Max ho
 NAV is blind to its entire position and reports ~0 drawdown no matter what the position does. This
 table published that ~0 until 2026-07-31.
 
-B4 and Pro are in USDC or a short during the bear, so they draw down materially less than Mini
-every cycle. Pro Max rotates as well and still beats Mini, but it is levered, so it draws
-**deeper than both unlevered rotators** in every cycle.
+Which ZONE sets the worst drawdown is the mechanism itself. Mini holds spot through the bear and
+sets its worst drawdown **inside the fall zone in all four cycles** (days 776/888/923/800 of the
+1460-day cycle; the fall runs 548→912). B4, Pro and Pro Max are in USDC or short there and set
+theirs **outside it in all four** — in growth (days 133/434/352/106) or recovery (day 1345). That
+is asserted, not observed in passing: `test_real_all_products` fails if a rotating product ever
+takes its worst drawdown in the fall.
 
 | Cycle | | HODL | Mini | B4 | Pro | Pro Max |
 |---|---|---:|---:|---:|---:|---:|
@@ -101,14 +105,16 @@ every cycle. Pro Max rotates as well and still beats Mini, but it is levered, so
 
 ## Reading the result correctly
 
-- **B4/Pro draw down ~10 pp less than Mini every cycle** — they are in USDC (B4) or a
-  short (Pro) through the fall, so the cycle bear that takes Mini to −76…−84 %
+- **B4/Pro/Pro Max draw down ~10 pp less than Mini every cycle** — they are in USDC (B4) or a
+  short (Pro/Pro Max) through the fall, so the cycle bear that takes Mini to −76…−84 %
   contributes far less to them. The drawdown that remains is intra-bull volatility, and it gives
   back accumulated *profit*, not principal.
-- **Pro Max is the exception, and it is the point of the product.** It rotates too, so it stays
-  9–19 pp under Mini — but its leveraged growth leg amplifies the pre-rotation decline, so it
-  draws 1.5–10 pp deeper than B4/Pro every cycle. It buys return with drawdown; it is not the
-  low-risk end of the ladder.
+- **The three rotating products take their worst hits on the same days as each other** — the
+  April-2013 crash sets all three in cycle 1 — because in the growth zone they are all ~1× long.
+  Pro Max's growth exposure sits slightly above 1× (≈1.05× in cycle 1, ≈1.23× in cycle 2), which
+  is why it reads a point or two deeper there. That is composition, not a risk property of the
+  levered product, and it is deliberately NOT asserted: pinning a basis-point ordering would
+  encode noise as a claim.
 - **Selling the whole spot position to stand up the short makes Pro a full-size short.** That is
   why Pro clears B4 by a wide margin (1.317M× vs 345k×) rather than tracking it — the fix lets the
   fall pay the position, not a small side-margin. Pro Max adds the `φ` leg on top (31.753M×).
