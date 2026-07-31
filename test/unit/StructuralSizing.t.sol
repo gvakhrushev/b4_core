@@ -312,10 +312,23 @@ contract StructuralSizingTest is VaultTestBase {
             StructuralLeverage.shortStructStop(40_000e18, 0, 0),
             "S-win froze at the live price, not the running peak"
         );
-        assertLt(
-            v.perpStopWad(),
-            StructuralLeverage.shortStructStop(40_000e18, 0, 50_000e18),
-            "live-p stop is closer than the (wrong) running-peak stop"
+        // The gate's own effect is assertion 1: the freeze took the live-price derivation. A
+        // second assertion comparing it against the running-peak derivation used to live here and
+        // has been removed rather than repaired — with no previous peak (`Pp = 0`, this fixture)
+        // the two regimes now COINCIDE at `p*phi`, so the comparison asserted nothing. Kept
+        // instead: the failure mode a stale peak really does produce under the corrected math —
+        // it drags `maxStop = C + (C - Pp)/phi` down, and once that lands at or below the live
+        // price the stop would sit BELOW the entry of a short. The library must refuse, not
+        // return it, or the position opens already past its own liquidation.
+        assertEq(
+            StructuralLeverage.shortStructStop(40_000e18, 30_000e18, 35_000e18),
+            0,
+            "a stale peak that drags maxStop under the live price is REFUSED, not emitted"
+        );
+        assertGt(
+            StructuralLeverage.shortStructStop(40_000e18, 30_000e18, 45_000e18),
+            40_000e18,
+            "an honest peak still yields a stop above the entry"
         );
     }
 }

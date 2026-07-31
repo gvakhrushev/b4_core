@@ -80,22 +80,50 @@ contract StructuralABTest is Test {
         );
     }
 
-    function test_PMs2_promax_short_post_deep_sub1x() public {
-        // doc: SAME fixed maxStop, sub-1x deep — L 0.52.
+    function test_PMs2_promax_short_post_deep_pinned_to_C() public {
+        // doc: the deep entry is PINNED TO C — the liquidation may never sit inside the peak the
+        // market already printed. p*phi = 3236 < C = 4000, so the floor binds and the stop is C.
         assertEq(
             StructuralLeverage.shortStructStop(usd(2000), usd(1000), usd(4000)),
-            5854101966249684544000,
-            "PMs2 stop exact"
+            usd(4000),
+            "PMs2 stop = C (pinned)"
         );
+        // L = 2000/(4000-2000) = 1.0x exactly. p = C/2 is the 1x crossover, same as Pro's.
         assertEq(
             StructuralLeverage.shortStructLev(usd(2000), usd(1000), usd(4000)),
-            518927630227215371,
-            "PMs2 L exact"
+            1e18,
+            "PMs2 L = 1x at p = C/2"
         );
-        assertEq(
+        // Below C/2 the pin forces leverage under 1x — the safety a bounce to the printed peak
+        // needs. This is the whole reason the pin exists, so it is asserted, not implied.
+        assertLt(
+            StructuralLeverage.shortStructLev(usd(1500), usd(1000), usd(4000)),
+            1e18,
+            "deeper than C/2 is deliberately sub-1x"
+        );
+        // The stop is NOT fixed across entries: a shallow entry is capped by the Pp-boosted
+        // maxStop, a deep one is pinned to C, and between them the base phi leverage applies.
+        assertGt(
             StructuralLeverage.shortStructStop(usd(5000), usd(1000), usd(4000)),
             StructuralLeverage.shortStructStop(usd(2000), usd(1000), usd(4000)),
-            "post-pivot stop is FIXED, independent of entry"
+            "post-pivot stop MOVES with the entry, between C and maxStop"
+        );
+    }
+
+    /// The band between the two anchors, which the old fixed-stop rule made unreachable: when
+    /// neither bound binds the product runs at its base leverage, exactly phi.
+    function test_PMs3_promax_short_post_midband_is_exactly_phi() public {
+        // C = 4000, Pp = 1000 => maxStop 5854. p = 3000: p*phi = 4854, inside (4000, 5854).
+        assertEq(
+            StructuralLeverage.shortStructStop(usd(3000), usd(1000), usd(4000)),
+            4854101966249684544000,
+            "mid-band stop = p*phi"
+        );
+        assertApproxEqAbs(
+            StructuralLeverage.shortStructLev(usd(3000), usd(1000), usd(4000)),
+            1618033988749894848,
+            2,
+            "mid-band L = phi exactly"
         );
     }
 
@@ -130,22 +158,34 @@ contract StructuralABTest is Test {
         );
     }
 
-    function test_PM4_promax_long_post_high_entry_same_stop() public {
-        // doc: SAME fixed MinStop 387, lower L 1.24.
+    function test_PM4_promax_long_post_high_entry_base_phi() public {
+        // Mirror of PMs2/PMs3. p = 2000 with B = 850: p/phi^2 = 764 sits BELOW the printed bottom
+        // (safe) and ABOVE the Pb-boosted MinStop 386, so neither bound binds and the long runs at
+        // its base leverage, exactly phi.
         assertEq(
             StructuralLeverage.longStop(usd(2000), usd(100), usd(850)),
-            386474508437578864000,
-            "PM4 MinStop exact"
+            763932022500210304000,
+            "PM4 stop = p/phi^2 (neither bound binds)"
         );
-        assertEq(
+        assertApproxEqAbs(
             StructuralLeverage.longLev(usd(2000), usd(100), usd(850)),
-            1239521786583827047,
-            "PM4 L exact"
+            1618033988749894848,
+            2,
+            "PM4 L = phi"
         );
-        assertEq(
+        // PM3's entry (800) is close enough to the bottom that the Pb-boosted MinStop lifts it,
+        // so the two entries do NOT share a stop — the post-pivot stop moves with the entry.
+        assertLt(
             StructuralLeverage.longStop(usd(800), usd(100), usd(850)),
             StructuralLeverage.longStop(usd(2000), usd(100), usd(850)),
-            "post-pivot stop is FIXED, independent of entry"
+            "post-pivot stop MOVES with the entry, between MinStop and B"
+        );
+        // The mirror of the short's C-pin: a very high entry is capped at the printed bottom, so
+        // a retest of that bottom cannot liquidate it.
+        assertEq(
+            StructuralLeverage.longStop(usd(9000), usd(100), usd(850)),
+            usd(850),
+            "high entry is capped at the printed bottom B"
         );
     }
 

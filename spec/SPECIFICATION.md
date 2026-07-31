@@ -172,10 +172,10 @@ rule covers both sides:
 |---|---|---|
 | Anchors | `floor` = previous confirmed bottom; `cap` = most recent confirmed bottom | `prevPeak` = previous confirmed peak; `C` = this cycle's confirmed peak |
 | Confirmation window | 62-window `[T, T+W]` and post-halving `[halving, halving+W]` (min close) | the `W` days ending at the 38.2% pivot (max close, corroborated — see below) |
-| Sizing | `stop = min(p − (p − floor)/g, cap)` | window: `stop = p + (p − prevPeak)·(g−1)` (DCA slices); after the pivot: `MaxStop = C + (C − prevPeak)·(g−1)`, `stop = max(p + (MaxStop − p)·(g−1), C)` |
+| Sizing | window: `stop = p − (p − floor)/g` (DCA slices); after the pivot: `MinStop = B − (B − floor)/g`, `stop = clamp(p·(1 − 1/g), MinStop, B)` | window: `stop = p + (p − prevPeak)/g` (DCA slices); after the pivot: `MaxStop = C + (C − prevPeak)/g`, `stop = clamp(p·(1 + 1/g), C, MaxStop)` |
 | Leverage | `L = p/(p − stop)`, clamped by the venue max | `L = p/(stop − p)`, clamped by the venue max, **no 1× floor** |
-| Depth behaviour | grows toward the confirmed low, decays for a late entry | decreases monotonically with depth; pins to `C` deep; exceeds the base `g` for any entry above `maxStop/2` (which lies **below** `C`, since `g·(g−1) = 1`), reaching ≈ 4.8× at the cycle-4 pivot |
-| Refusal | `p ≤ floor` → un-leveraged spot leg | `p ≥ MaxStop` → flat base |
+| Depth behaviour | three bands: capped at the confirmed bottom `B` for a high entry (`L → 1×`), the base `g` in the middle, lifted by `MinStop` near the bottom | three bands: pinned to `C` for a deep entry — `L` crosses `1×` at `p = C/2` and is deliberately sub-1× below — the base `g` in the middle, and lifted by the `prevPeak`-boosted `MaxStop` near the peak (≈ 4.8× at the cycle-4 pivot) |
+| Refusal | `p ≤ MinStop` → flat base | `p ≥ MaxStop` → flat base |
 | Genesis | `floor = 0` → flat base `g` | no `prevPeak` → flat base `g` |
 
 `W ≈ 20 days` is structural, not tuned: `W = q²·cycle` with `q = φ⁻³/2 = 0.118` — the same
