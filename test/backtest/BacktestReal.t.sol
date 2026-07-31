@@ -249,7 +249,16 @@ contract BacktestRealTest is VenueTestBase {
                 string.concat("  ", names[i], " px=$", vm.toString(uint256(_pxAt(pts[i])) / 1e18))
             );
             console.log("    perp szi:");
-            console.logInt(int256(_readPos(address(v)).szi));
+            int64 szi = _readPos(address(v)).szi;
+            console.logInt(int256(szi));
+            // Not just a printf. `names` is [growth-mid, fall-entry, fall-mid, recovery-mid],
+            // and the sign of the perp at each is the whole claim the product makes: Pro Max is
+            // long through growth and short through the fall. A diagnostic nobody asserts is a
+            // diagnostic that silently stops reporting what it was written to show — this file
+            // already carried one for a question that had been answered, and it survived because
+            // it always passed.
+            if (i == 0) assertGt(szi, 0, "growth-mid: Pro Max must be LONG");
+            if (i == 1 || i == 2) assertLt(szi, 0, "fall: Pro Max must be SHORT");
         }
     }
 
