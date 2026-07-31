@@ -51,7 +51,7 @@ peak-to-trough of `navWad()`.
 | Mini (spot hold — tracks HODL) | 4,813.714x | 0.915× | 84.45 % |
 | **B4** | **345,257.166x** | **65.625×** | **73.85 %** |
 | **Pro** | **1,317,056.456x** | **250.339×** | **73.85 %** |
-| **Pro Max** | **31,753,217.433x** | **6,035.480×** | **1.96 %** |
+| **Pro Max** | **31,753,217.433x** | **6,035.480×** | **75.40 %** |
 
 > **Audit status.** The V6-M-2 fix passed its adversarial fan-out audit
 > ([AUDIT-V7](audits/REGISTRY.md)) — no Critical/High, every finding low and NAV-preserving. The
@@ -68,29 +68,39 @@ peak-to-trough of `navWad()`.
 
 ## Per cycle
 
-Return is the cycle's realized multiple; `max DD` is the worst peak-to-trough of `navWad()`
-inside the cycle. B4/Pro/Pro Max are in USDC or a short during the bear, so they draw down
-materially less than Mini every cycle.
+Return is the cycle's realized multiple; `max DD` is the worst peak-to-trough of **mark-to-market
+equity** inside the cycle — `navWad()` plus the perp's unrealized PnL. It must not be measured on
+NAV alone: NAV excludes unrealized PnL by invariant B3, and pure-perp Pro Max holds `spot = 0`, so
+NAV is blind to its entire position and reports ~0 drawdown no matter what the position does. This
+table published that ~0 until 2026-07-31.
+
+B4 and Pro are in USDC or a short during the bear, so they draw down materially less than Mini
+every cycle. Pro Max rotates as well and still beats Mini, but it is levered, so it draws
+**deeper than both unlevered rotators** in every cycle.
 
 | Cycle | | HODL | Mini | B4 | Pro | Pro Max |
 |---|---|---:|---:|---:|---:|---:|
 | **2012→2016** | return | 52.3x | 50.8x | 137.2x | 230.8x | **660.4x** |
-| | max DD | — | 84.45 % | **73.85 %** | **73.85 %** | **0.00 %** |
+| | max DD | — | 84.45 % | **73.85 %** | **73.85 %** | 75.40 % |
 | **2016→2020** | return | 13.6x | 13.2x | 51.9x | 73.2x | **180.1x** |
-| | max DD | — | 83.44 % | **64.04 %** | **64.04 %** | **1.96 %** |
+| | max DD | — | 83.44 % | **64.04 %** | **64.04 %** | 71.51 % |
 | **2020→2024** | return | 7.3x | 7.1x | 28.6x | 45.8x | **125.1x** |
-| | max DD | — | 76.81 % | **53.02 %** | **53.02 %** | **0.73 %** |
+| | max DD | — | 76.81 % | **53.02 %** | **53.02 %** | 56.02 % |
 | **2024→now**\* | return | 1.01x | 1.00x | 1.70x | 1.70x | **2.13x** |
-| | max DD | — | 53.33 % | **28.15 %** | **28.15 %** | **0.00 %** |
+| | max DD | — | 53.33 % | **28.15 %** | **28.15 %** | 38.17 % |
 
-<sub>\* cycle in progress: not yet exited, so read as an unrealized `navWad` mark.</sub>
+<sub>\* cycle in progress: not yet exited, so read as an unrealized mark.</sub>
 
 ## Reading the result correctly
 
-- **B4/Pro/Pro Max draw down ~10 pp less than Mini every cycle** — they are in USDC (B4) or a
-  short (Pro/Pro Max) through the fall, so the cycle bear that takes Mini to −76…−84 %
+- **B4/Pro draw down ~10 pp less than Mini every cycle** — they are in USDC (B4) or a
+  short (Pro) through the fall, so the cycle bear that takes Mini to −76…−84 %
   contributes far less to them. The drawdown that remains is intra-bull volatility, and it gives
   back accumulated *profit*, not principal.
+- **Pro Max is the exception, and it is the point of the product.** It rotates too, so it stays
+  9–19 pp under Mini — but its leveraged growth leg amplifies the pre-rotation decline, so it
+  draws 1.5–10 pp deeper than B4/Pro every cycle. It buys return with drawdown; it is not the
+  low-risk end of the ladder.
 - **Selling the whole spot position to stand up the short makes Pro a full-size short.** That is
   why Pro clears B4 by a wide margin (1.317M× vs 345k×) rather than tracking it — the fix lets the
   fall pay the position, not a small side-margin. Pro Max adds the `φ` leg on top (31.753M×).

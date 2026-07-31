@@ -185,26 +185,37 @@ return is the real, compounded, post-fee value a holder would have taken.
 | Mini (spot hold — tracks HODL) | 4,813.714x | 0.915× | 84.45 % |
 | **B4** | **345,257.166x** | **65.625×** | **73.85 %** |
 | **Pro** | **1,317,056.456x** | **250.339×** | **73.85 %** |
-| **Pro Max** | **31,753,217.433x** | **6,035.480×** | **1.96 %** |
+| **Pro Max** | **31,753,217.433x** | **6,035.480×** | **75.40 %** |
 
 ### Per cycle — realized return and drawdown side by side
 
 | Cycle | | HODL | Mini | B4 | Pro | Pro Max |
 |---|---|---:|---:|---:|---:|---:|
 | **2012→2016** | return | 52.3x | 50.8x | 137.2x | 230.8x | **660.4x** |
-| | max DD | — | 84.45 % | **73.85 %** | **73.85 %** | **0.00 %** |
+| | max DD | — | 84.45 % | **73.85 %** | **73.85 %** | 75.40 % |
 | **2016→2020** | return | 13.6x | 13.2x | 51.9x | 73.2x | **180.1x** |
-| | max DD | — | 83.44 % | **64.04 %** | **64.04 %** | **1.96 %** |
+| | max DD | — | 83.44 % | **64.04 %** | **64.04 %** | 71.51 % |
 | **2020→2024** | return | 7.3x | 7.1x | 28.6x | 45.8x | **125.1x** |
-| | max DD | — | 76.81 % | **53.02 %** | **53.02 %** | **0.73 %** |
+| | max DD | — | 76.81 % | **53.02 %** | **53.02 %** | 56.02 % |
 | **2024→now**\* | return | 1.01x | 1.00x | 1.70x | 1.70x | **2.13x** |
-| | max DD | — | 53.33 % | **28.15 %** | **28.15 %** | **0.00 %** |
+| | max DD | — | 53.33 % | **28.15 %** | **28.15 %** | 38.17 % |
 
-<sub>\* cycle in progress: not yet exited, so read as an unrealized `navWad` mark.</sub>
+<sub>\* cycle in progress: not yet exited, so read as an unrealized mark.</sub>
 
-Read the two rows together: **more return, less drawdown.** B4/Pro/Pro Max cut ~10 pp off Mini's
-cycle drawdown because they step out of the market (into USDC or a short) during the bear that
-produces it. Selling the whole spot position to stand up the short makes Pro a full-size short of
+Drawdown is measured on **mark-to-market equity** — `navWad()` plus the perp's unrealized PnL —
+not on NAV alone. NAV excludes unrealized PnL by design (B3), which is right for settlement and
+useless as a risk gauge for a leveraged product: Pro Max holds `spot = 0`, so its entire position
+is the one leg NAV cannot see, and measured on NAV its drawdown reads ~0 whatever the position
+does. An earlier version of this table published that ~0 as if it were the product's risk.
+
+Read the two rows together, and read them honestly: **B4 and Pro buy less drawdown; Pro Max buys
+more return with MORE drawdown.** B4/Pro cut ~10 pp off Mini's cycle drawdown because they step
+out of the market (into USDC or a short) during the bear that produces it. Pro Max rotates too, so
+it still draws 9–19 pp less than spot-holding Mini — but it runs a leveraged perp, so the
+pre-rotation decline hits it amplified and it draws **1.5–10 pp deeper than B4/Pro** in every
+cycle. It is not the low-risk product the old table implied; it is the one that pays for its
+return in drawdown. Selling the whole spot
+position to stand up the short makes Pro a full-size short of
 the fall, so it clears B4 by a wide margin (1.317M× vs 345k×); Pro Max adds the `φ` leg on top. The
 short's edge is largest in cycle 1 (the deepest fall) and compresses in the shallower later
 cycles. Mini holds spot in both regimes and pays only the operator's real cut (≈ 1.72 % of
@@ -230,9 +241,12 @@ larger remainder buys.
 > **Pro Max is not `φ`-levered for the whole cycle under BTC-only funding.** A leveraged *long*
 > needs margin *on top* of 100 % spot, which selling spot cannot provide — so Pro Max runs **1× in
 > the growth phase**; its `φ` edge is the fall short (funded by selling spot) and the recovery long
-> (funded by the closed short). Its downside is also understated twice: the test venue models **no
-> liquidation** (a `φ` leg through a deep drawdown would be liquidated live), and `navWad` excludes
-> unrealized perp PnL (B3). The engine uses structural margin control when anchors are confirmed;
+> (funded by the closed short). Its downside **remains understated even after the mark-to-market
+> fix**, and the drawdowns above are why that now matters: the test venue models **no liquidation**,
+> and a `φ` leg is not obviously survivable through a measured 71–75 % equity drawdown. Read those
+> figures as the loss path of an *unliquidatable* position — a live venue could end it before it
+> recovers. Sizing that survives the drawdown is exactly what the structural stop exists for: the
+> engine uses structural margin control when anchors are confirmed;
 > this deliberately unsampled backtest falls back to flat `φ`, so it does not measure that
 > confirmed-anchor path.
 

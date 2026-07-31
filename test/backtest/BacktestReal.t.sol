@@ -21,15 +21,19 @@ import {
     StrategyProMax
 } from "src/periphery/ReferenceStrategies.sol";
 
-/// @title Historical benchmark on the REAL contracts. Every figure is `B4Vault.navWad()` read
+/// @title Historical benchmark on the REAL contracts. Returns are `B4Vault.navWad()` and drawdowns
+///        are mark-to-market equity (NAV + unrealized perp PnL — see `_equityWad`; NAV alone is
+///        blind to a pure-perp product's only leg), read
 ///        off the actual B4Vault/B4VaultOps/B4Pool/HalvingOracle + reference strategies, cranked
 ///        and settled day-by-day across the real halving epochs exactly as the on-chain keeper
 ///        would — NOT a hand-rolled parallel equity model. Every vault starts from the same BTC
 ///        deposit and posts NO separate margin: a short product funds its fall short by selling
 ///        that BTC into USDC (V6-M-2). Income is realized per cycle — a full exit in the 20-day
 ///        post-halving free window pays the fee and realizes the perp PnL that navWad excludes
-///        (B3), then re-deposits. Sizing is the shipped flat-`φ` (StructuralLeverage is designed
-///        but not wired). Run: `forge test --match-path 'test/backtest/BacktestReal.t.sol' -vv`
+///        (B3), then re-deposits. StructuralLeverage IS wired in the engine, but this run
+///        deliberately never samples anchors, so sizing falls back to flat-`φ` — the
+///        confirmed-anchor path is measured by StructuralAB/StructuralSizing, not here.
+///        Run: `forge test --match-path 'test/backtest/BacktestReal.t.sol' -vv`
 contract BacktestRealTest is VenueTestBase {
     uint32 constant SRC_EID = 30_101;
     bytes32 constant SRC_SENDER = bytes32(uint256(1));
@@ -359,8 +363,32 @@ contract BacktestRealTest is VenueTestBase {
                 _crankUntilIdle(v, 40); // reopen the recovery long for the bull run to next halving
                 done[4] = true;
             }
-            _trackDD(r, int256(v.navWad()));
+            _trackDD(r, _equityWad(v));
         }
+    }
+
+    /// Mark-to-market equity = `navWad()` + unrealized perp PnL.
+    ///
+    /// Drawdown MUST NOT be measured on `navWad` alone. NAV is recorded value only — it books the
+    /// perp at `perpMargin6`, its margin principal, and excludes unrealized PnL by invariant B3.
+    /// That is correct for settlement (it is what stops unearned value entering the ledger), and
+    /// it makes NAV useless as a risk gauge for a LEVERAGED product: since the pure-perp change,
+    /// Pro Max holds `spot = 0`, so its entire position is the one leg NAV cannot see. Measured on
+    /// NAV its drawdown is ~0 no matter what the position does — the published table read
+    /// "0.00 %", which is the blindness of the instrument, not the safety of the product.
+    ///
+    /// The mock maintains `entryNtl` as `Σ fillSz·px`, so the position's current notional at the
+    /// mark is `|szi|·markPx` in those same 1e6 units and the difference is the unrealized PnL.
+    function _equityWad(B4Vault v) internal view returns (int256) {
+        CoreTypes.Position memory p = _readPos(address(v));
+        int256 nav = int256(v.navWad());
+        if (p.szi == 0) return nav;
+        uint64 absSz = uint64(p.szi > 0 ? p.szi : -p.szi);
+        int256 markNtl = int256(uint256(absSz) * uint256(hub.markPxOf(PERP_MKT)));
+        int256 uPnL6 = p.szi > 0
+            ? markNtl - int256(uint256(p.entryNtl))
+            : int256(uint256(p.entryNtl)) - markNtl;
+        return nav + uPnL6 * int256(10 ** (18 - uint256(CoreTypes.PERP_USD_DECIMALS)));
     }
 
     /// The 3rd zone: in the post-halving free-exit window, fully exit (realizing the perp PnL
@@ -506,6 +534,17 @@ contract BacktestRealTest is VenueTestBase {
         // step out of the market during the bear and draw down materially less.
         assertGt(mn.c1MaxDDbps, b.c1MaxDDbps + 500, "Mini draws down >5pp more than B4 in cycle 1");
         assertGt(mn.c1MaxDDbps, pm.c1MaxDDbps + 500, "Mini draws down >5pp more than Pro Max");
+        // A leveraged product CANNOT have a near-zero drawdown, and for a long time this table
+        // published one: measured on `navWad` alone, Pro Max read 0.00 %, because NAV excludes
+        // unrealized perp PnL (B3) and pure-perp Pro Max holds nothing else. This floor is what
+        // makes that unmeasurable-again: revert `_equityWad` to plain NAV and it fails at ~0.
+        assertGt(
+            pm.c1MaxDDbps, 5000, "Pro Max must show a real drawdown (>50pp); NAV alone reads ~0"
+        );
+        // And the honest ordering the README now states: leverage costs drawdown. Pro Max rotates
+        // like B4/Pro so it beats spot-holding Mini, but its leveraged growth leg draws DEEPER
+        // than either unlevered rotator. Published as "less drawdown" until 2026-07-31.
+        assertGt(pm.c1MaxDDbps, b.c1MaxDDbps, "Pro Max draws deeper than B4 (it is levered)");
         // Sanity: Mini is a small haircut under raw HODL (operator fee only), not a multiple.
         assertGt(mn.compoundedX1000, 4_000_000, "Mini compounds ~HODL (>4000x over 3 cycles)");
         assertLt(mn.compoundedX1000, 5_500_000, "Mini below raw HODL (fee drag), not above");
