@@ -243,7 +243,7 @@ liquidation sits at the structural stop; a single frozen stop, captured once at 
 at flip / exit / liquidation, means a held position is never re-adjusted (no re-lever on a price
 move or a permissionless anchor flip). The exact state machine, the worked acceptance numbers, and
 the remaining interims (the halving volume-add, the growth-rise ratchet floor, per-slice DCA) are
-`docs/design/STRUCTURAL-STATE-MACHINE.md`; the derivation is `docs/design/PROPOSAL-structural-leverage.md`.
+`docs/design/STRUCTURAL-STATE-MACHINE.md`, which is normative for sizing and carries the derivation.
 
 ## 8. Checkpoints, fees, reward weight
 

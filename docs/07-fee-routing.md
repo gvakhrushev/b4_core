@@ -426,4 +426,30 @@ There is no path by which claiming DIR converts into USDC or vice versa: the poo
 - The keeper (`src/periphery/Keeper.sol`) is permissionless and calls nothing but permissionless entry points — `advance`, `lockPrices`, `sweep`, `capture`, `claimFor` and the `currentReportable` view on the pool, plus (for strict pools) `foldPenalty`, `crankSleeve`, and free-window `initiateSleeveExit`; and `crank`, `settle`, `claimDeferred` on each vault. It cannot change a route, choose a target, market or price, or redirect a payout: every recipient is fixed vault state.
 - `FEE_F`, `EXIT_Q`, `MAX_OPERATOR_BPS`, `MIN_REFERRER_BPS` are `internal constant` — changing them requires deploying different bytecode, i.e. a different protocol.
 
+## Known limitation — the pool is flat through the fall
+
+The penalty is paid **in kind**, so it carries the exiter's stance only in one regime. A growth-zone
+exiter holds spot, and the pool receives mostly the directional asset — long, carried. A fall-zone
+exiter of a shorting product (Pro, Pro Max) holds settlement token on both legs, so the pool
+receives almost pure USDC and **sits flat during exactly the zone whose stance is short**. Stayers
+therefore capture no fall alpha from the penalty basket; it is held passively until the next
+settlement. This is shipped behaviour, not a bug, and the honest interim.
+
+Closing it means the pool running a short of its own, which is designed but **not built**. Two
+findings from that design work are recorded here because they constrain any future attempt and were
+each expensive to derive:
+
+- **Escrow must be a segregated sub-ledger, never the pool's raw balance.** `capture()` sweeps
+  everything above `liability[token]` into distributable `accruing`, so escrow left in the balance
+  is either swept away (the mechanism silently degrades to passive) or double-counted against
+  `liability`, haircutting unrelated stayers through the `claimFor` shortfall path. Any
+  implementation needs an `escrowTotal` that `capture()` nets out, and an invariant asserting
+  `balance ≥ liability + escrow` through every branch.
+- **A standing, topped-up pool short is not implementable on the current engine.** The structural
+  stop is re-derived only while the position is flat and held frozen while it is live
+  (`B4VaultEngine.sol:994-1006`) — that freeze *is* the fix for the reverted re-lever class. So
+  folded increments would inherit the first increment's stop instead of sizing at their own price,
+  which is precisely the blended-entry drift the design assumed away. A fresh, once-sized, frozen
+  vault per funding round is the shape the shipped engine permits.
+
 Further reading: [`spec/SPECIFICATION.md`](../spec/SPECIFICATION.md) §2 (route), §8 (settlement), §9 (exit); [`spec/HAZARDS.md`](../spec/HAZARDS.md) B5 and D1–D5; [`INVARIANTS.md`](../INVARIANTS.md); [`docs/audits/REGISTRY.md`](audits/REGISTRY.md) for the internal adversarial-review history behind V3-ACCT-1 and V3-POOL-1 (an independent external audit remains an unmet release gate — [`spec/SECURITY_MODEL.md`](../spec/SECURITY_MODEL.md) §5).

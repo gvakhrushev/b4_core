@@ -340,11 +340,9 @@ docs/         guides, plus the audit (docs/audits/) and design (docs/design/) re
 everything under `docs/` explains rather than binds. The specification began life as a
 standalone clean-room package one directory up, which for a while left a second, unversioned,
 byte-identical copy of all six documents beside the repository — two sets that could only drift
-apart, with only one of them the code was judged against. There is now one copy, here. The
-prompt the build was handed over on is kept as provenance at
-[`docs/design/CLEANROOM-HANDOFF.md`](docs/design/CLEANROOM-HANDOFF.md); it records *why* the code
-is shaped the way it is, chiefly that `spec/HAZARDS.md` is binding design input and not
-background reading.
+apart, with only one of them the code was judged against. There is now one copy, here.
+`spec/HAZARDS.md` is binding design input, not background reading — it states so itself, and it
+is why the async surface is shaped the way it is.
 
 ## Security
 

@@ -52,8 +52,8 @@ a permissionless **keeper** merely advances the machine.
   for the implementation per `HAZARDS` G3)
 - [`../INVARIANTS.md`](../INVARIANTS.md) — invariant → test traceability with honest gaps
 - [`docs/audits/REGISTRY.md`](audits/REGISTRY.md) — the security dossier and full internal audit history
-- [`../SLITHER.md`](audits/SLITHER.md) — static-analysis triage
+- [`audits/SLITHER.md`](audits/SLITHER.md) — static-analysis triage
 - [`../SECURITY.md`](../SECURITY.md) — how to report a vulnerability
-- [`design/`](design/) — accepted design proposals, the structural state machine, and
-  [`CLEANROOM-HANDOFF.md`](design/CLEANROOM-HANDOFF.md): the prompt this repository was built
-  from, kept as provenance for why the code is shaped the way it is
+- [`design/STRUCTURAL-STATE-MACHINE.md`](design/STRUCTURAL-STATE-MACHINE.md) — normative for
+  position sizing: every `(product, calendar state, price-vs-anchor)` state, with the owner's
+  worked numbers as the acceptance criteria
