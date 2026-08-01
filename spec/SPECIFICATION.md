@@ -174,8 +174,8 @@ rule covers both sides:
 | Confirmation window | 62-window `[T, T+W]` and post-halving `[halving, halving+W]` (min close) | the `W` days ending at the 38.2% pivot (max close, corroborated — see below) |
 | Sizing | window: `stop = p − (p − floor)/g` (DCA slices); after the pivot: `MinStop = B − (B − floor)/g`, `stop = clamp(p·(1 − 1/g), MinStop, B)` | window: `stop = p + (p − prevPeak)/g` (DCA slices); after the pivot: `MaxStop = C + (C − prevPeak)/g`, `stop = clamp(p·(1 + 1/g), C, MaxStop)` |
 | Leverage | `L = p/(p − stop)`, clamped by the venue max | `L = p/(stop − p)`, clamped by the venue max, **no 1× floor** |
-| Depth behaviour | three bands: capped at the confirmed bottom `B` for a high entry (`L → 1×`), the base `g` in the middle, lifted by `MinStop` near the bottom | three bands: pinned to `C` for a deep entry — `L` crosses `1×` at `p = C/2` and is deliberately sub-1× below — the base `g` in the middle, and lifted by the `prevPeak`-boosted `MaxStop` near the peak (≈ 4.8× at the cycle-4 pivot) |
-| Refusal | `p ≤ MinStop` → flat base | `p ≥ MaxStop` → flat base |
+| Depth behaviour | three bands: capped at the confirmed bottom `B` for a high entry (`L → 1×`), the base `g` in the middle, lifted by `MinStop` near the bottom | three bands: pinned to `C` for a deep entry — `L` crosses `1×` at `p = C/2` and is deliberately sub-1× below — the base `g` in the middle, and lifted by the `prevPeak`-boosted `MaxStop` near the peak. The near-peak maximum is `φ·C/(C − Pp)`, reached at `p = C` (**3.93×** on cycle-4 anchors `C = 115,265`, `Pp = 67,774`). The 4.83× quoted here previously belonged to the superseded interpolating rule, which the engine no longer calls. |
+| Refusal | `p ≤ MinStop` → no leveraged position (hold settlement, re-evaluated each crank) | `p ≥ MaxStop` → no leveraged position (hold settlement, re-evaluated each crank) |
 | Genesis | `floor = 0` → flat base `g` | no `prevPeak` → flat base `g` |
 
 `W ≈ 20 days` is structural, not tuned: `W = q²·cycle` with `q = φ⁻³/2 = 0.118` — the same

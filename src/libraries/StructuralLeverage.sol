@@ -207,8 +207,11 @@ library StructuralLeverage {
         if (C == 0) return maxStop; // window: the per-slice stop IS this
         // A stale or too-low `C` drags `maxStop` down with it, and it can land at or below the
         // live price — a short stop BELOW the entry is not a conservative stop, it is a
-        // liquidation already crossed. Refuse and let the caller fall back to the flat base
-        // rather than emit it (the same refusal `shortStopWad` has always carried).
+        // liquidation already crossed. Refuse rather than emit it (the same refusal
+        // `shortStopWad` has always carried). NOTE the actual consequence: the engine does NOT
+        // size at the flat base on a 0 — `_perpTargetMargin` leaves `marginNeedWad` at 0 and the
+        // vault holds settlement token with NO exposure until the price or the anchor moves. That
+        // is the safe reading of "the structure refuses"; it is also recoverable, not a wedge.
         if (p >= maxStop) return 0;
         uint256 flat = Phi.wmul(p, Phi.PHI); // p·φ = p·(1 + 1/φ)
         if (flat < C) flat = C; // never inside the printed peak

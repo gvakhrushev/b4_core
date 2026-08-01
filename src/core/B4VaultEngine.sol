@@ -1216,11 +1216,13 @@ abstract contract B4VaultEngine is B4VaultStorage {
             return StructuralLeverage.longStop(pxWad, floor_, 0);
         }
         if (zone == Calendar.Zone.TerminalGrowth && cap_ != 0) {
-            // L-post: this cycle's low `B = cap_` is confirmed ⇒ the FIXED MinStop
-            // `B − (B − Pb)/φ`, deeper than flat-φ, so the venue liquidation can never sit above a
-            // level the market already printed and held (the mirror of the short's fixed maxStop —
-            // without it a leveraged long over-levers all of terminal growth and a retest of the
-            // cycle low liquidates a position the structural stop was designed to survive).
+            // L-post: this cycle's low `B = cap_` is confirmed ⇒ `clamp(p/φ², MinStop, B)`
+            // with `MinStop = B − (B − Pb)/φ`. The CAP at `B` is the safety: the venue
+            // liquidation can never sit above a level the market already printed and held, so a
+            // retest of the cycle low cannot close a position the structural stop was designed to
+            // survive. The floor at `MinStop` is the second anchor's lift near the bottom, and
+            // between them the long runs at its base `φ`. (Entry-DEPENDENT since 2026-08-01 — it
+            // was a single fixed `MinStop` before, which made the `φ` band unreachable.)
             return StructuralLeverage.longStop(pxWad, floor_, cap_);
         }
         return StructuralLeverage.longStop(pxWad, 0, 0); // L-rise: flat φ (p/φ²) — documented interim

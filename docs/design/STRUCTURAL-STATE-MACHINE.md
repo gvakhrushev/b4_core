@@ -71,11 +71,18 @@ deliberately `sub-1×`. **Long and short are exact mirrors** (min↔max, −↔+
 the refusal: when the delta collapses so the bound lands on the entry itself, both sides refuse
 and the caller falls back to the flat base.
 
-*(Two earlier drafts are superseded. One interpolated the post-pivot stop with the entry price.
-The other fixed the post-pivot stop at `maxStop`/`MinStop` for every entry — that made the
-flat-`φ` band unreachable and, worse, put a deep short's liquidation INSIDE the printed peak,
-which is the one thing the pin exists to prevent: entering near `T` after a 60–70 % fall, a
-flat-`φ` short liquidates at `p·φ` and the 30–60 % bounces that occur there would close it.)*
+*(Two earlier drafts are superseded. One interpolated the post-pivot stop with the entry price
+(`stop = p + (maxStop − p)/φ`). The other fixed the post-pivot stop at `maxStop`/`MinStop` for
+every entry, which made the base-`φ` band unreachable at any price.*
+
+*Be precise about the direction, because an earlier version of this note got it backwards: that
+fixed stop sat strictly ABOVE `C`, so it never liquidated a deep short inside the printed peak.
+It was over-conservative, not unsafe, and moving to the clamp RAISES leverage at depth
+(PMs2: 0.52× → 1.00×). The hazard the `C`-pin addresses belongs to the FLAT-`φ` rule that the
+clamp adopts as its base: entering near `T` after a 60–70 % fall, a flat-`φ` short liquidates at
+`p·φ`, inside the printed peak, and the 30–60 % bounces that occur there would close it. The pin
+is what keeps the new base from doing that — it is a guard on the base, not a repair of the
+superseded rule.)*
 
 ---
 
@@ -170,7 +177,7 @@ short `p_liq = (entryNtl + margin)/szi`. A slice at price `p` with target stop `
 
 Per-crank (leveraged leg; a Pro long is spot and never reaches here):
 1. `perpF = decompose(target).perp`; `stop` = §2/§3 for the current state (window: use the current
-   price `p`; post-pivot: the confirmed extreme, fixed).
+   price `p`; post-pivot: `clamp(base g-stop, confirmed extreme, delta bound)` — entry-DEPENDENT since 2026-08-01).
 2. `marginTarget = capital · |perpF|/g` — ramps `0→capital` over the opening window. A day-15
    entrant starts at the current 50% target; by day 20 the full target is deployed.
 3. `perpMargin < marginTarget` → **ADD** a slice (`Δm = marginTarget − perpMargin`, `szi_inc = Δm/|p−s|`).
@@ -196,7 +203,7 @@ the confirmed peak `C` to `shortStructStop` ONLY post-pivot (Fall) AND only when
 (this cycle's peak); everywhere else `C = 0`, so the S-win (OpeningFall, peak still forming) uses the
 live price `p` and a SKIPPED/stale peak window never anchors the short to a systematically-too-low
 prior peak (over-lever — the anti-conservative direction). The LONG mirrors this: L-post
-(TerminalGrowth, cycle low `B = cap` confirmed) uses the FIXED `MinStop = B − (B − Pb)/φ`; L-win uses
+(TerminalGrowth, cycle low `B = cap` confirmed) uses `clamp(p/φ², MinStop, B)` with `MinStop = B − (B − Pb)/φ`; L-win uses
 the live `p`. `B4Pool.peaks()` exposes `peakTag` for the freshness check.
 
 ## 5. Implementation status
@@ -213,7 +220,7 @@ the live `p`. `B4Pool.peaks()` exposes `peakTag` for the freshness check.
   re-traded (a price move or a permissionless anchor flip can't re-lever it — C1/C4). The single
   frozen `perpStopWad` (with its side) is **re-derived every idle crank while FLAT** and held only
   while live, so a full exit, a no-loss venue close, or an async funding gap re-opens FRESH. Adds
-  size at the live mark; every size is capped at the venue max leverage. Both post-pivot fixed stops
+  size at the live mark; every size is capped at the venue max leverage. Both post-pivot clamps
   (long L-post `MinStop`, short S-post `maxStop`) are zone-gated, and the short's confirmed peak is
   freshness-gated. Long AND short structural (Pro flat / Pro Max 2-anchor), whole deposit deployed,
   liquidation at the structural stop — `StructuralSizing.t.sol`. Current suite status belongs
