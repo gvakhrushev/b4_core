@@ -112,7 +112,7 @@ contract B4Vault is B4VaultEngine {
     ///         downscaling requires a normal exit and a new vault.
     function selectPolicy(address strategy, uint256 scaleWad) external onlyOwner nonReentrant {
         if (exitShareWad != 0) revert ExitPending();
-        _delegate(abi.encodeCall(B4VaultOps.opsSelectPolicy, (strategy, scaleWad)));
+        _delegateTo(recovery, abi.encodeCall(B4VaultRecovery.opsSelectPolicy, (strategy, scaleWad)));
     }
 
     /// @dev Factory-resolved strategy targets are passed into initialization instead of

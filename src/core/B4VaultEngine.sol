@@ -1024,17 +1024,35 @@ abstract contract B4VaultEngine is B4VaultStorage {
         }
     }
 
-    /// @dev Structural target size (lots) placing the venue liquidation at `stop`. A held
-    ///      position's existing `absNow` lots already liquidate at `stop` given their frozen avg
-    ///      entry, so only the ADDED margin is sized — and at the live `mark`, the price a new
-    ///      slice actually fills at, so `szi_inc = Δm/|mark − stop|` keeps the increment's own
-    ///      liquidation on `stop` and the combined liquidation never drifts off it (critic:
-    ///      deposit/ramp add mis-priced at avg entry). A reduce/hold sizes at the (unchanged) avg
-    ///      entry. The whole position is finally capped at the venue max leverage (SPEC §7b): an
-    ///      unclamped structural size near an anchor implies L→∞ (rejected order / liquidation not
-    ///      at the stop); the clamp de-levers (liquidation FURTHER than the stop — the safe way).
+    /// @dev The stop a NEW slice is sized against: the structural stop at the LIVE price, not the
+    ///      one frozen when the position opened. No flat/held special case is needed — when flat,
+    ///      `_perpTargetMargin` has just frozen this same derivation at this same price, so the
+    ///      two coincide by construction. A refusal at this price falls back to the frozen stop,
+    ///      which sizes the add no larger than the held lots' own rule — never larger.
+    function _sliceStopWad(uint256 pxWad, uint256 frozen) internal view returns (uint256) {
+        uint256 s = perpStopLong ? _longStopWad(pxWad) : _shortStopWad(pxWad);
+        return s == 0 ? frozen : s;
+    }
+
+    /// @dev Structural target size (lots). TWO stops, and the split is the whole point:
+    ///      `heldStopWad` is the FROZEN stop the existing `absNow` lots were opened against — they
+    ///      are never re-priced, which is what stops a price move or an anchor flip re-trading a
+    ///      held position (C1/C4). `sliceStopWad` is the structural stop derived at the CURRENT
+    ///      price, and the ADD is sized against it at the live `mark`: `szi_inc = Δm/|mark −
+    ///      sliceStop|`, so every increment lands its OWN liquidation on the rule's stop for the
+    ///      price it actually fills at (STRUCTURAL-STATE-MACHINE §6). The combined liquidation is
+    ///      then the margin-weighted average of the two, which is correct and expected — a top-up
+    ///      at a better price SHOULD move the blended stop. Sizing the increment against the
+    ///      frozen stop instead is what produced the A29 over-lever: after an adverse move the
+    ///      frozen stop sits far closer than the rule allows at the new price (measured 9.0× where
+    ///      the rule gives φ), because since A26 the post-pivot stop DEPENDS on the entry price.
+    ///      A reduce/hold sizes at the (unchanged) avg entry against the frozen stop. The whole
+    ///      position is finally capped at the venue max leverage (SPEC §7b): an unclamped
+    ///      structural size near an anchor implies L→∞ (rejected order / liquidation not at the
+    ///      stop); the clamp de-levers (liquidation FURTHER than the stop — the safe way).
     function _szTargetStructural(
-        uint256 stopWad,
+        uint256 heldStopWad,
+        uint256 sliceStopWad,
         uint256 marginNeedWad,
         uint256 avgEntryWad,
         uint256 markWad,
@@ -1042,11 +1060,11 @@ abstract contract B4VaultEngine is B4VaultStorage {
     ) internal view returns (uint64) {
         bool long = perpStopLong;
         uint256 denomEntry = long
-            ? (avgEntryWad > stopWad ? avgEntryWad - stopWad : 0)
-            : (stopWad > avgEntryWad ? stopWad - avgEntryWad : 0);
+            ? (avgEntryWad > heldStopWad ? avgEntryWad - heldStopWad : 0)
+            : (heldStopWad > avgEntryWad ? heldStopWad - avgEntryWad : 0);
         uint256 denomMark = long
-            ? (markWad > stopWad ? markWad - stopWad : 0)
-            : (stopWad > markWad ? stopWad - markWad : 0);
+            ? (markWad > sliceStopWad ? markWad - sliceStopWad : 0)
+            : (sliceStopWad > markWad ? sliceStopWad - markWad : 0);
         if (denomMark == 0) return absNow; // mark at/through the stop: no stop-pinned slice to add
         uint256 dec = 10 ** _dir.perpSzDecimals;
         uint256 effMarginWad =
@@ -1160,7 +1178,12 @@ abstract contract B4VaultEngine is B4VaultStorage {
         // at the avg entry, and caps the whole position at the venue max leverage.
         uint64 szTarget = structural
             ? _szTargetStructural(
-                stopWad, marginNeedWad, pos.szi != 0 ? _avgEntryWad(pos) : markWad, markWad, absNow
+                stopWad,
+                _sliceStopWad(pxWad, stopWad),
+                marginNeedWad,
+                pos.szi != 0 ? _avgEntryWad(pos) : markWad,
+                markWad,
+                absNow
             )
             : _szTargetFlat(markWad, v, perpF);
 

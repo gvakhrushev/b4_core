@@ -41,34 +41,6 @@ contract B4VaultOps is B4VaultEngine {
         _;
     }
 
-    // ================================================================= policy
-
-    /// @notice Read a strategy once, then bind its resolved targets.  A configured
-    ///         pool validates the exact canonical strategy pair, scale and direction of
-    ///         the product transition before any vault state changes.
-    function opsSelectPolicy(address strategy, uint256 scaleWad) external onlyInitialized {
-        // Re-targeting mutates growth/fall; a leg already in flight was planned against the OLD
-        // target and would verify against the new one. Require idle. `targets()` is an external
-        // call to a not-yet-validated strategy address, so the entry (B4Vault.selectPolicy)
-        // carries `nonReentrant`; this cannot re-enter deposit/crank mid-selection.
-        _requireIdle();
-        (int256 g, int256 f) = IStrategy(strategy).targets();
-        if (!IB4PoolPolicy(pool).policyAllowedForVault(address(this), strategy, g, f, scaleWad)) {
-            revert BadPolicy();
-        }
-        if (scaleWad == 0 || scaleWad > Phi.MAX_SCALE) revert BadPolicy();
-        if (Phi.abs(g) > Phi.MAX_BASE_TARGET || Phi.abs(f) > Phi.MAX_BASE_TARGET) {
-            revert BadPolicy();
-        }
-        int256 rg = g * int256(scaleWad) / int256(Phi.WAD);
-        int256 rf = f * int256(scaleWad) / int256(Phi.WAD);
-        if (Phi.abs(rg) > Phi.PHI || Phi.abs(rf) > Phi.PHI) revert BadPolicy();
-        growthTarget = rg;
-        fallTarget = rf;
-        IB4PoolPolicy(pool).setVaultPolicy(IB4PoolPolicy(pool).policyIdForStrategy(strategy));
-        emit PolicySelected(strategy, rg, rf, scaleWad);
-    }
-
     // ================================================================= settlement snapshot
 
     /// @notice Capture the interval's valuation instant — permissionless, one-shot, and confined
