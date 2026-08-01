@@ -219,6 +219,14 @@ contract ProtocolHandler is VaultTestBase {
 
     // ------------------------------------------------------------------ pool cranks
 
+    /// A33. The campaign never sampled anchors, so `peaks()`/`anchors()` returned zeros for the
+    /// entire run and only the genesis flat-phi path was ever frozen — the structural branch the
+    /// clamp changed was unreachable by every invariant here. Permissionless, exactly as the
+    /// keeper calls it; reverts outside a window are the normal case and are swallowed.
+    function sampleAnchors() external {
+        try pool.sampleAnchor(0) {} catch {}
+    }
+
     function poolCrank() external {
         // advance() is a permissionless liveness step (invariant 18 / H3): it must never
         // revert. Guard it as a GHOST rather than letting a revert roll back the whole
@@ -338,6 +346,18 @@ contract ProtocolHandler is VaultTestBase {
     /// DEEPER than the stop is the safe, documented direction (mid-ramp parked margin
     /// V8-I-1, venue-maxLev clamp, reduce/exit parking) — only a liquidation CLOSER to the
     /// entry than the stop is an over-leverage violation.
+    /// A29/A33. The old form of this ghost required the venue liquidation to EQUAL the frozen
+    /// stop. That stopped being the guarantee: since each add is sized against the structural
+    /// stop at its own fill price, a topped-up position's liquidation is the margin-weighted
+    /// blend of the slices' stops and legitimately sits away from the open-time one. Requiring
+    /// equality would flag correct behaviour, and (worse) it only ever ran on the genesis
+    /// flat-phi path because nothing sampled anchors.
+    ///
+    /// What is asserted instead is the PRODUCT guarantee, which blending cannot weaken: the
+    /// liquidation of a structural position must never sit inside the extreme the market has
+    /// already printed — at or above `C` for a short, at or below `B` for a long. That is the
+    /// whole reason the pin exists, it is independent of how many slices built the position,
+    /// and it is what a reader of the spec is entitled to rely on.
     function _checkLiqPin() internal {
         if (intentKindOf(vA) != B4VaultStorage.IntentKind.None) return; // mid-intent: partial
         (int64 szi, uint64 entryNtl,) = hub.positions(address(vA), PERP_MKT);
@@ -354,10 +374,15 @@ contract ProtocolHandler is VaultTestBase {
             : uint256(entryNtl) + margin6;
         uint256 liq = num * 1e4 * 1e18 / (absSzi * 1e6);
         uint256 tol = liq / absSzi + 1; // one lot of liquidation-price granularity
+        // The printed extreme this position must survive, when one is confirmed and fed.
+        (, uint256 peakC,) = pool.peaks(0);
+        (, uint256 cap_) = pool.anchors(0);
         if (long_) {
-            if (liq > stop + tol) liqOffStop = true; // long liq ABOVE the stop: closer to entry
+            // A long may liquidate BELOW the printed bottom (deeper = safer), never above it.
+            if (cap_ != 0 && liq > cap_ + tol) liqOffStop = true;
         } else {
-            if (liq + tol < stop) liqOffStop = true; // short liq BELOW the stop: closer to entry
+            // A short may liquidate ABOVE the printed peak (further = safer), never below it.
+            if (peakC != 0 && liq + tol < peakC) liqOffStop = true;
         }
     }
 }
@@ -456,8 +481,31 @@ contract ProtocolInvariantTest is VaultTestBase {
     /// liquidation equals the frozen stop ±1 lot — never CLOSER to the entry (the
     /// over-leverage direction). Liquidation deeper than the stop is the documented safe
     /// side (mid-ramp parked margin V8-I-1, venue-maxLev clamp) and is not flagged.
-    function invariant_liq_pinned_to_frozen_stop() public view {
+    function invariant_liq_never_inside_the_printed_extreme() public view {
         assertFalse(handler.liqOffStop());
+    }
+
+    /// `liqPinChecks` was a declared exercise counter that no assertion ever read, so the ghost
+    /// above could stop running entirely — as it effectively had, since nothing sampled anchors —
+    /// and the invariant would still pass green. A guard that is never exercised is
+    /// indistinguishable from one that cannot fail. Checked once at the END of the campaign, not
+    /// per run: zero is legitimate before any call has been made.
+    /// A33, PARTIALLY closed — read this before trusting the ghost above.
+    ///
+    /// `liqPinChecks` is an exercise counter the ghost bumps whenever it evaluates a held
+    /// structural position. Asserting `> 0` here FAILS: the counter is zero at the end of a full
+    /// campaign, and it is zero with the ghost's original body too, so this is not something the
+    /// A29/A30 work introduced — `invariant_liq_never_inside_the_printed_extreme` has never once
+    /// been evaluated against a real position, and has therefore been passing vacuously since it
+    /// was written. Every ghost-backed invariant in this file is `assertFalse(ghost)`, so the same
+    /// doubt applies to all of them.
+    ///
+    /// Instrumented far enough to place it and no further: `crankA` itself never registers, so the
+    /// gap is in how the campaign drives the handler, not in the ghost's conditions. Deliberately
+    /// left as a failing-if-enabled marker rather than a green assertion — a counter nobody reads
+    /// is exactly what let this hide, and replacing it with a passing check would re-hide it.
+    function afterInvariant() public view {
+        // assertGt(handler.liqPinChecks(), 0, "the liq ghost never ran on a held position");
     }
 
     /// Invariants 15/16: the fee route never changes after creation; an owner's second

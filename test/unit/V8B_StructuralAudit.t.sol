@@ -196,9 +196,32 @@ contract V8B_StructuralAuditTest is Test {
         // a <= anchor refuses on BOTH sides.
         assertEq(StructuralLeverage.longStop(usd(100), usd(100), 0), 0);
         assertEq(StructuralLeverage.shortStructStop(usd(100), usd(100), 0), 0);
-        assertEq(StructuralLeverage.longStop(usd(100), usd(50), usd(50)), 0, "B <= Pb post-pivot");
+        // A31. Post-pivot, `extreme <= prevExtreme` means the promoted delta anchor is wrong (a
+        // poisoned or stale prior cycle), not that there is nothing to size. Refusing there held
+        // the product flat for the WHOLE regime — hundreds of days — over one bad anchor. Both
+        // sides now DEGRADE to the one-anchor rule instead: the base g-stop, still bounded by the
+        // printed extreme, which is exactly Pro's short. Symmetric, and neither side refuses.
         assertEq(
-            StructuralLeverage.shortStructStop(usd(100), usd(50), usd(50)), 0, "C <= Pp post-pivot"
+            StructuralLeverage.shortStructStop(usd(100), usd(50), usd(50)),
+            161803398874989484800,
+            "short degrades to max(p*phi, C), not a refusal"
+        );
+        assertEq(
+            StructuralLeverage.longStop(usd(100), usd(50), usd(50)),
+            38196601125010515200,
+            "long degrades to p/phi^2 (the B cap does not bind at this entry)"
+        );
+        // The pin still holds through the degradation: the short's liquidation is not inside `C`,
+        // the long's is not above `B`. Losing the boost is the cost of losing the delta anchor;
+        // losing the guarantee would not be acceptable.
+        assertGe(
+            StructuralLeverage.shortStructStop(usd(60), usd(50), usd(50)), usd(50), "still pinned"
+        );
+        assertLe(
+            StructuralLeverage.longStop(usd(200), usd(50), usd(50)), usd(50), "still capped at B"
+        );
+        assertEq(
+            StructuralLeverage.shortStructStop(usd(50), usd(100), 0), 0, "window still refuses"
         );
         // longLev refuses p <= stop; shortStructLev refuses stop <= p — symmetric outcomes.
         assertEq(StructuralLeverage.longLev(usd(386), usd(100), usd(850)), 0, "entry below MinStop");

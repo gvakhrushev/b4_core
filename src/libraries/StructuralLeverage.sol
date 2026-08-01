@@ -164,7 +164,15 @@ library StructuralLeverage {
     ///         side, put liquidation inside the printed extreme. Returns 0 on no positive delta.
     function longStop(uint256 p, uint256 Pb, uint256 B) internal pure returns (uint256) {
         uint256 a = B == 0 ? p : B; // window: p is the low estimate; post: the confirmed low
-        if (a <= Pb) return 0;
+        if (a <= Pb) {
+            // Mirror of the short: in the WINDOW there is no positive delta to size against, so
+            // refuse. POST-PIVOT it means the promoted `Pb` is wrong, and refusing would hold the
+            // product flat for the whole terminal-growth leg over one bad anchor — degrade to the
+            // one-anchor rule instead, still capped at the printed bottom `B`.
+            if (B == 0) return 0;
+            uint256 flatOnly = p - Phi.wmul(p, Phi.INV_PHI);
+            return flatOnly > B ? B : flatOnly;
+        }
         uint256 minStop = a - Phi.wmul(a - Pb, Phi.INV_PHI); // a − 0.618·(a − Pb)
         if (B == 0) return minStop; // window: the per-slice stop IS this
         if (p <= minStop) return 0; // refusal: a long stop at/above its own entry
@@ -202,7 +210,21 @@ library StructuralLeverage {
     ///         speeds — Pro's stop tracks `2p` down to it, Pro Max's tracks `p·φ`.
     function shortStructStop(uint256 p, uint256 Pp, uint256 C) internal pure returns (uint256) {
         uint256 a = C == 0 ? p : C;
-        if (a <= Pp) return 0;
+        if (a <= Pp) {
+            // The delta anchor is unusable: `Pp` sits at or above the anchor it is supposed to be
+            // below. In the WINDOW that just means the price has not yet cleared the prior peak,
+            // and there is nothing to size against — refuse.
+            //
+            // POST-PIVOT it means the promoted `prevPeak` is wrong (a poisoned or stale prior
+            // cycle). Refusing there would hold the product flat for the WHOLE Fall — a
+            // multi-hundred-day denial driven by one bad anchor. Degrade instead to the
+            // ONE-anchor rule, which is exactly Pro's short: `max(p·φ, C)`, still pinned so the
+            // liquidation is never inside the printed peak. Losing the boost is the right cost
+            // for losing confidence in the anchor that produces it; losing the position is not.
+            if (C == 0) return 0;
+            uint256 flatOnly = Phi.wmul(p, Phi.PHI);
+            return flatOnly < C ? C : flatOnly;
+        }
         uint256 maxStop = a + Phi.wmul(a - Pp, Phi.INV_PHI);
         if (C == 0) return maxStop; // window: the per-slice stop IS this
         // A stale or too-low `C` drags `maxStop` down with it, and it can land at or below the

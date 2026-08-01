@@ -154,8 +154,11 @@ contract V8C_PeakWickTest is VaultTestBase {
         assertEq(pp, 0, "FIXED: wick NEVER promoted (pre-fix: 70k poisoned prevPeak)");
         assertEq(c, 90_000e18, "honest C' confirmed dense");
 
+        // 50k, not 80k: at 80k the base-phi stop lands mid-band, the clamp is inert, and the
+        // assertion below would pass identically with NO anchor fed. At 50k the pin binds, so it
+        // actually proves the honest C' reached the engine.
         vm.warp(hts + Calendar.P + 30 days);
-        _setPx(80_000);
+        _setPx(50_000);
         B4Vault v = createVault(address(proMax));
         fundAndDeposit(v, 0, 120_000e6);
         crankUntilIdle(v, 60);
@@ -163,17 +166,20 @@ contract V8C_PeakWickTest is VaultTestBase {
         assertLt(readPos(address(v)).szi, 0, "short opened on the honest anchors");
         assertEq(
             v.perpStopWad(),
-            StructuralLeverage.shortStructStop(80_000e18, 0, 90_000e18),
+            StructuralLeverage.shortStructStop(50_000e18, 0, 90_000e18),
             "prevPeak 0 (sparse window discarded whole)"
         );
-        uint256 lev = _levWad(v);
-        assertApproxEqRel(
-            lev, StructuralLeverage.shortStructLev(80_000e18, 0, 90_000e18), 0.03e18, "~1.22x"
+        assertEq(v.perpStopWad(), 90_000e18, "pinned to the honest C', not the wick");
+        assertGt(
+            v.perpStopWad(),
+            StructuralLeverage.shortStructStop(50_000e18, 0, 0),
+            "the honest anchor CHANGED the stop"
         );
+        // Read the poisoning where it bites — the cap, not the pin (see V9AnchorDensity).
         assertLt(
-            lev,
+            StructuralLeverage.shortStructLev(80_000e18, 0, 90_000e18),
             StructuralLeverage.shortStructLev(80_000e18, 40_000e18, 90_000e18),
-            "de-levered vs the honest 1.96x baseline -- never the poisoned 3.58x"
+            "a promoted 70k wick WOULD have over-levered -- it never got promoted"
         );
     }
 }

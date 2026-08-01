@@ -217,24 +217,31 @@ contract V9AnchorDensityTest is VaultTestBase {
         assertEq(pp, 100_000e18);
         assertEq(c, 130_000e18, "dense sampling confirms the true peak");
 
+        // Entry at 70k, DELIBERATELY inside the band where the anchors bind. At 90k the base
+        // phi stop (90k*phi = 145.6k) sits between C and maxStop, so the clamp is inert and the
+        // engine emits the SAME stop it would with no anchors at all — the assertion below could
+        // not tell "the honest dense peak was fed" from "nothing was fed", which is what this
+        // test exists to prove. At 70k the pin binds (70k*phi = 113.3k < C).
         vm.warp(hts + Calendar.P + 30 days); // Fall of cycle 1
-        _setPx(90_000);
+        _setPx(70_000);
         B4Vault v = createVault(address(proMax));
         fundAndDeposit(v, 0, 120_000e6);
         crankUntilIdle(v, 60);
         assertLt(readPos(address(v)).szi, 0, "short opened");
         assertEq(
             v.perpStopWad(),
-            StructuralLeverage.shortStructStop(90_000e18, 100_000e18, 130_000e18),
-            "honest fixed maxStop (148.5k)"
+            StructuralLeverage.shortStructStop(70_000e18, 100_000e18, 130_000e18),
+            "sized on the confirmed anchors"
         );
-        assertApproxEqRel(
-            _levWad(v),
-            StructuralLeverage.shortStructLev(90_000e18, 100_000e18, 130_000e18),
-            0.03e18,
-            "honest ~1.54x"
+        // The discriminator: with the anchors the stop is pinned to the printed peak; without
+        // them it would be the bare base-phi stop. These must NOT be equal.
+        assertEq(v.perpStopWad(), 130_000e18, "pinned to the confirmed peak C");
+        assertGt(
+            v.perpStopWad(),
+            StructuralLeverage.shortStructStop(70_000e18, 0, 0),
+            "the anchors CHANGED the stop -- this is what the density gate buys"
         );
-        assertGt(_liqShortWad(v), 130_000e18, "liquidation BEYOND the proven extreme");
+        assertGe(_liqShortWad(v), 130_000e18, "liquidation not inside the proven extreme");
     }
 
     /// V8-M-2 regression (direction-H PoC numbers): one wicked print (70k) in a window
@@ -257,25 +264,32 @@ contract V9AnchorDensityTest is VaultTestBase {
         assertEq(pp, 0, "wick NEVER promoted (pre-fix: 70k poisoned prevPeak)");
         assertEq(c, 90_000e18, "honest dense C' confirmed");
 
+        // 50k, not 80k: at 80k the base-phi stop sits mid-band and the clamp is inert, so the
+        // assertion would pass identically with no anchor fed at all. At 50k the pin binds.
         vm.warp(hts + Calendar.P + 30 days); // Fall of cycle 1
-        _setPx(80_000);
+        _setPx(50_000);
         B4Vault v = createVault(address(proMax));
         fundAndDeposit(v, 0, 120_000e6);
         crankUntilIdle(v, 60);
         assertLt(readPos(address(v)).szi, 0, "short opened on the honest anchors");
         assertEq(
             v.perpStopWad(),
-            StructuralLeverage.shortStructStop(80_000e18, 0, 90_000e18),
+            StructuralLeverage.shortStructStop(50_000e18, 0, 90_000e18),
             "unconfirmed cycle-0 window discarded whole (prevPeak 0)"
         );
-        uint256 lev = _levWad(v);
-        assertApproxEqRel(
-            lev, StructuralLeverage.shortStructLev(80_000e18, 0, 90_000e18), 0.03e18, "~1.22x"
+        assertEq(v.perpStopWad(), 90_000e18, "pinned to the honest C', not the wick");
+        assertGt(
+            v.perpStopWad(),
+            StructuralLeverage.shortStructStop(50_000e18, 0, 0),
+            "the honest anchor CHANGED the stop"
         );
+        // The poisoning damage is a CAP effect, so it has to be read where the cap binds: at a
+        // deep entry the pin dominates and a poisoned prevPeak changes nothing (both 1.25x here),
+        // which is why this comparison is taken at 80k rather than at the engine's 50k entry.
         assertLt(
-            lev,
+            StructuralLeverage.shortStructLev(80_000e18, 0, 90_000e18),
             StructuralLeverage.shortStructLev(80_000e18, 40_000e18, 90_000e18),
-            "de-levered vs the honest 1.96x baseline -- never the poisoned 3.58x"
+            "a promoted 40k wick WOULD have over-levered -- it never got promoted"
         );
     }
 

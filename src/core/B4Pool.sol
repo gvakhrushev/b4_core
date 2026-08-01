@@ -541,11 +541,12 @@ contract B4Pool is IB4PoolPolicy {
             //     window narrows when a wick must occur, but only corroboration makes a single
             //     one worthless.
             //
-            // The cost, stated rather than hidden: the served level is the second-highest close,
-            // so a top that prints on exactly one close is understated until a second close
-            // reaches it. Understating `peakC` pushes the short's stop further out and LOWERS
-            // leverage — the conservative direction — and the error is bounded by the gap
-            // between the two highest closes, where an admitted wick would be unbounded.
+            // `peakC` is the corroborated second-highest close and is what gets promoted into
+            // the NEXT cycle's `prevPeak`, where a LOW value is the safe one (a lower `Pp` widens
+            // `C − Pp`, pushes `maxStop` further out and lowers leverage). It is deliberately NOT
+            // what `peaks()` serves as this cycle's `C` — there the safe direction is the
+            // opposite, so the getter serves the raw `peakTop`. An earlier note here claimed
+            // understatement was "the conservative direction" for the short; that was inverted.
             if (atClose) {
                 if (pxp > a.peakTop) {
                     // A new candidate. The level it displaces is now attested by its own day, so
@@ -604,8 +605,10 @@ contract B4Pool is IB4PoolPolicy {
             a.lowDensity = Density(1, now112, now112);
         } else {
             // NOT mirrored from the peak side: the two anchors fail in OPPOSITE directions.
-            // A too-high `peakC` shrinks the short's `(C − Pp)` and RAISES leverage, so the
-            // peak value is tied to the daily cadence (M-3). A too-low `cap` moves the long's
+            // A too-high `prevPeak` shrinks the short's `(C − Pp)`, pulls `maxStop` toward `C` and
+            // RAISES leverage, so the value promoted across cycles is tied to the daily cadence
+            // and to corroboration (M-3). (A too-high CURRENT peak does the reverse — it widens
+            // the delta and lowers leverage — which is why `peaks()` serves the raw max there.) A too-low `cap` moves the long's
             // stop FURTHER from price and LOWERS leverage — the conservative direction — so
             // the low ratchets on EVERY observation, as the sampling doc requires ("sampling
             // MORE lowers the recorded low and therefore lowers leverage; the pool benefits
@@ -650,6 +653,22 @@ contract B4Pool is IB4PoolPolicy {
         returns (uint256 prevPeak, uint256 peakC, uint256 peakTag)
     {
         Anchor storage a = _anchor[i];
+        // DIRECTION, corrected 2026-08-01 — an earlier note here had it backwards. `maxStop =
+        // C + (C − Pp)/φ` and the pin `stop ≥ C` are BOTH increasing in `C`, so a too-LOW `C`
+        // pulls the short's stop CLOSER and RAISES leverage. Understating the peak is the
+        // ANTI-conservative direction, and since the stop is now pinned exactly at `C` (A26)
+        // there is no `maxStop` headroom left to absorb the error.
+        //
+        // The served value stays the CORROBORATED `peakC` even so, because the two failures are
+        // not equally cheap. Inflating costs one sandwich: `sampleAnchor` is permissionless, the
+        // close window is an hour wide, and a same-day wick already moves the raw `peakTop`
+        // (`AuditH4M3_Anchors`), so an attacker can push the price for one instant, sample it
+        // themselves, and unwind — paying slippage, not a sustained market move. Serving
+        // `peakTop` would hand that attacker the pin and let one print hold the short at a
+        // fraction of its size for the whole Fall. Understating instead requires every keeper to
+        // miss the top, which is a liveness assumption on a permissionless call, not an attacker
+        // capability. The residual — the pin sitting at the second-highest close rather than the
+        // printed top — is real, bounded by the gap between them, and recorded (REGISTRY A30).
         return (a.prevPeak, _confirmed(a.peakDensity) ? a.peakC : 0, a.peakTag);
     }
 
