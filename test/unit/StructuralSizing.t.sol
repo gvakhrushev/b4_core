@@ -136,17 +136,26 @@ contract StructuralSizingTest is VaultTestBase {
         (, uint256 peakC,) = pool.peaks(DIR);
         assertEq(peakC, 50_000e18, "peak confirmed");
 
-        // Fall zone: deposit and open the φ short (pure perp) at 40k — a deep short, sub-1×.
+        // Fall zone: deposit and open the short at 25k. 40k was used here and is MID-BAND
+        // (40k·φ = 64.7k sits between C and maxStop), so the clamp is inert there and the
+        // engine emits the same stop it would with no peak fed at all — the assertion below
+        // could not tell that the confirmed C reached it. At 25k the C-pin binds.
         warpTo(Calendar.P + 30 days);
-        _setPx(40_000);
+        _setPx(25_000);
         B4Vault v = createVault(address(proMax));
         fundAndDeposit(v, 0, 120_000e6);
         crankUntilIdle(v, 60);
 
         CoreTypes.Position memory p = readPos(address(v));
         assertLt(p.szi, 0, "phi short opened (pure perp)");
-        // Short liquidation = (entryNtl + margin)/|szi|; the confirmed-peak stop is C + (C−0)/φ.
-        uint256 stop = StructuralLeverage.shortStructStop(40_000e18, 0, 50_000e18);
+        // Short liquidation = (entryNtl + margin)/|szi|; the deep entry is pinned to C.
+        uint256 stop = StructuralLeverage.shortStructStop(25_000e18, 0, 50_000e18);
+        assertEq(stop, 50_000e18, "deep entry pins to the confirmed peak");
+        assertGt(
+            stop,
+            StructuralLeverage.shortStructStop(25_000e18, 0, 0),
+            "the confirmed peak CHANGED the stop -- not the bare base-phi value"
+        );
         uint256 liq = Phi.mulDiv(
             (uint256(p.entryNtl) + v.perpMargin6()) * 1e4, Phi.WAD, uint256(uint64(-p.szi)) * 1e6
         );
@@ -269,7 +278,7 @@ contract StructuralSizingTest is VaultTestBase {
 
         uint256 minStop = StructuralLeverage.longStop(80_000e18, floor_, cap_);
         assertGt(readPos(address(v)).szi, 0, "leveraged long open in terminal growth");
-        assertApproxEqRel(_liqWad(v), minStop, 0.03e18, "liq at the FIXED MinStop, not flat-phi");
+        assertApproxEqRel(_liqWad(v), minStop, 0.03e18, "liq on the clamped structural stop");
         assertLt(
             minStop, StructuralLeverage.longStop(80_000e18, 0, 0), "MinStop is deeper than flat-phi"
         );

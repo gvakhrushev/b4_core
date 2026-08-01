@@ -244,9 +244,11 @@ contract V9AnchorDensityTest is VaultTestBase {
         assertGe(_liqShortWad(v), 130_000e18, "liquidation not inside the proven extreme");
     }
 
-    /// V8-M-2 regression (direction-H PoC numbers): one wicked print (70k) in a window
-    /// sampled only twice can never be repaired and pre-fix promoted into prevPeak,
-    /// over-levering the NEXT cycle to 3.58× vs the 1.96× honest baseline. Fixed: the
+    /// V8-M-2 regression: one wicked print (70k) in a window sampled only twice can never be
+    /// repaired and pre-fix promoted into prevPeak, over-levering the NEXT cycle. Under the
+    /// clamped rule (A26) the over-lever reads 1.96× against a 1.62× honest baseline, and only
+    /// at an entry where the cap binds — at a deep entry the C-pin dominates and the poisoning
+    /// is invisible, which is why the comparison below is taken at 80k. Fixed: the
     /// 2-sample window never confirms — the wick is neither fed nor promoted; the next
     /// cycle sizes off the honest dense anchors only (de-levered vs honest: fail-safe).
     function test_single_wick_peak_not_promoted_not_fed() public {

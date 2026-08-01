@@ -72,6 +72,7 @@ contract ProtocolHandler is VaultTestBase {
     function warp(uint32 dt) external {
         _venueDrainsBeforeTime();
         vm.warp(block.timestamp + bound(uint256(dt), 1 hours, 30 days));
+        _checkLiqPin();
     }
 
     /// F12 (audit 2026-07-22): the small [1h, 30d] `warp` cannot reach the first calendar
@@ -121,6 +122,7 @@ contract ProtocolHandler is VaultTestBase {
         hub.setSpotPx(SPOT_MKT, next);
         hub.setMarkPx(PERP_MKT, next / 100); // keep conventions aligned (4→2 decimals)
         hub.setOraclePx(PERP_MKT, next / 100);
+        _checkLiqPin();
     }
 
     /// Blind spot 2: `VenueTestBase` leaves the venue fully synchronous, which collapses to
@@ -181,6 +183,7 @@ contract ProtocolHandler is VaultTestBase {
         usdc.approve(address(vA), u);
         vA.deposit(d, u);
         vm.stopPrank();
+        _checkLiqPin();
     }
 
     function selectPolicy(uint8 which) external {
@@ -242,6 +245,7 @@ contract ProtocolHandler is VaultTestBase {
             try pool.sweep(count >= 2 ? count - 2 : 0) {} catch {}
         }
         try pool.capture() {} catch {}
+        _checkLiqPin();
     }
 
     function settle(uint8 whichVault) external {
@@ -249,6 +253,7 @@ contract ProtocolHandler is VaultTestBase {
         if (!ok) return;
         B4Vault v = whichVault % 2 == 0 ? vA : vB;
         try v.settle(id) {} catch {}
+        _checkLiqPin();
     }
 
     function claim(uint8 whichVault) external {
@@ -397,6 +402,39 @@ contract ProtocolInvariantTest is VaultTestBase {
         usdc = handler.usdc();
         ubtc = handler.ubtc();
         pool = handler.pool();
+        // Target the handler's OWN actions only. `targetContract` alone fuzzes every
+        // public/external function of the target, and `ProtocolHandler` inherits `VaultTestBase
+        // -> VenueTestBase -> forge-std Test`, which contributes several hundred assertion and
+        // cheatcode helpers. The campaign was therefore spending nearly its whole budget calling
+        // `assertEq` overloads: at the default `runs = 64, depth = 64` the protocol actions below
+        // were picked a handful of times each, and the liquidation ghost never once evaluated a
+        // held position (its exercise counter finished at zero — see `afterInvariant`). Every
+        // invariant in this file was reading a state machine that had barely been driven.
+        bytes4[] memory sel = new bytes4[](23);
+        sel[0] = ProtocolHandler.warp.selector;
+        sel[1] = ProtocolHandler.warpPivot.selector;
+        sel[2] = ProtocolHandler.movePrice.selector;
+        sel[3] = ProtocolHandler.deposit.selector;
+        sel[4] = ProtocolHandler.crankA.selector;
+        sel[5] = ProtocolHandler.crankB.selector;
+        sel[6] = ProtocolHandler.poolCrank.selector;
+        sel[7] = ProtocolHandler.settle.selector;
+        sel[8] = ProtocolHandler.claim.selector;
+        sel[9] = ProtocolHandler.initiateExit.selector;
+        sel[10] = ProtocolHandler.selectPolicy.selector;
+        sel[11] = ProtocolHandler.recover.selector;
+        sel[12] = ProtocolHandler.sampleAnchors.selector;
+        sel[13] = ProtocolHandler.reconcileHeals.selector;
+        sel[14] = ProtocolHandler.advPump.selector;
+        sel[15] = ProtocolHandler.advWdDrain.selector;
+        sel[16] = ProtocolHandler.advWdTopUp.selector;
+        sel[17] = ProtocolHandler.advCoreTopUp.selector;
+        sel[18] = ProtocolHandler.advEvmDonation.selector;
+        sel[19] = ProtocolHandler.advLiquidation.selector;
+        sel[20] = ProtocolHandler.advVenueBehavior.selector;
+        sel[21] = ProtocolHandler.advVenueMode.selector;
+        sel[22] = ProtocolHandler.oracleTimeSinceHalving.selector;
+        targetSelector(FuzzSelector({addr: address(handler), selectors: sel}));
         targetContract(address(handler));
     }
 
@@ -490,20 +528,23 @@ contract ProtocolInvariantTest is VaultTestBase {
     /// and the invariant would still pass green. A guard that is never exercised is
     /// indistinguishable from one that cannot fail. Checked once at the END of the campaign, not
     /// per run: zero is legitimate before any call has been made.
-    /// A33, PARTIALLY closed — read this before trusting the ghost above.
+    /// A33, still open — read this before trusting any ghost-backed invariant in this file.
     ///
-    /// `liqPinChecks` is an exercise counter the ghost bumps whenever it evaluates a held
-    /// structural position. Asserting `> 0` here FAILS: the counter is zero at the end of a full
-    /// campaign, and it is zero with the ghost's original body too, so this is not something the
-    /// A29/A30 work introduced — `invariant_liq_never_inside_the_printed_extreme` has never once
-    /// been evaluated against a real position, and has therefore been passing vacuously since it
-    /// was written. Every ghost-backed invariant in this file is `assertFalse(ghost)`, so the same
-    /// doubt applies to all of them.
+    /// `liqPinChecks` is the exercise counter for `_checkLiqPin`. It finishes a full campaign at
+    /// ZERO, so `invariant_liq_never_inside_the_printed_extreme` has never been evaluated against
+    /// a real position and has passed vacuously since it was written. Every other invariant here
+    /// is also `assertFalse(ghost)` and shares the doubt exactly.
     ///
-    /// Instrumented far enough to place it and no further: `crankA` itself never registers, so the
-    /// gap is in how the campaign drives the handler, not in the ghost's conditions. Deliberately
-    /// left as a failing-if-enabled marker rather than a green assertion — a counter nobody reads
-    /// is exactly what let this hide, and replacing it with a passing check would re-hide it.
+    /// What is established: the selector targeting above is one real cause and is fixed — without
+    /// it the campaign spent its budget on inherited forge-std helpers. What is NOT established is
+    /// why the counter is still zero afterwards. Measured, not guessed: the ghost body is not
+    /// entered at all even when called from six different actions; restricting to
+    /// {crankA, warp, poolCrank} alone DOES make it run; dropping selectPolicy, advLiquidation
+    /// and initiateExit does not. So some other action leaves `vA` in a state the ghost's
+    /// preconditions never match, and that has not been isolated.
+    ///
+    /// Left as a disabled assertion carrying its evidence rather than deleted or replaced with
+    /// something green: an unread counter is precisely what let this hide.
     function afterInvariant() public view {
         // assertGt(handler.liqPinChecks(), 0, "the liq ghost never ran on a held position");
     }

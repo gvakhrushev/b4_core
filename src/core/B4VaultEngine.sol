@@ -1214,7 +1214,7 @@ abstract contract B4VaultEngine is B4VaultStorage {
     ///      Density gate (V8-M-1): `B4Pool.anchors()` WITHHOLDS an under-sampled `cap` as 0,
     ///      which the `cap_ != 0` gates below then treat exactly like an absent anchor —
     ///      the L-halving/L-post regimes skip and the long degrades to the fail-safe flat-φ
-    ///      rise instead of pinning the fixed MinStop to a sparse low.
+    ///      rise instead of clamping against a sparse low.
     function _longStopWad(uint256 pxWad) internal view returns (uint256) {
         (uint256 floor_, uint256 cap_) = IB4PoolAnchors(pool).anchors(_dirAssetIndex);
         uint256 t = IHalvingOracle(oracle).timeSinceHalving();
@@ -1266,8 +1266,8 @@ abstract contract B4VaultEngine is B4VaultStorage {
     ///      Density gate (V8-M-1/V8-M-2): `B4Pool.peaks()` WITHHOLDS an under-sampled `peakC`
     ///      as 0 — a sparse window or a single wick is treated exactly like "this cycle's peak
     ///      unknown", so the short degrades to the clamp-backed window extrapolation off the
-    ///      (promotion-gated, hence confirmed) `prevPeak` instead of pinning the fixed maxStop
-    ///      inside the price range the market already proved.
+    ///      (promotion-gated, hence confirmed) `prevPeak` instead of clamping against a peak the
+    ///      market has not actually proved.
     function _shortStopWad(uint256 pxWad) internal view returns (uint256) {
         (uint256 prevPeak, uint256 peakC, uint256 peakTag) =
             IB4PoolAnchors(pool).peaks(_dirAssetIndex);

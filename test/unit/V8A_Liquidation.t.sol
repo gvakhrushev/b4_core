@@ -255,7 +255,7 @@ contract V8A_LiquidationTest is VaultTestBase {
         crankUntilIdle(v, 60);
 
         uint256 stop = StructuralLeverage.shortStructStop(99_900e18, 99_400e18, 100_000e18);
-        assertEq(v.perpStopWad(), stop, "frozen fixed maxStop");
+        assertEq(v.perpStopWad(), stop, "frozen at the clamp value for this entry");
         assertFalse(v.perpStopLong(), "short side");
         CoreTypes.Position memory p = readPos(address(v));
         assertLt(p.szi, 0, "clamped short opened");

@@ -138,11 +138,11 @@ library StructuralLeverage {
     }
 
     // ================================================================= §7b state machine
-    // The corrected sizing per docs/design/STRUCTURAL-STATE-MACHINE.md. ONE fixed stop:
-    // `stop = extreme ∓ 0.618·(extreme − prevExtreme)`. Two regimes — window (extreme not
-    // confirmed ⇒ each DCA slice uses its own price `p` as the extreme estimate) and post-pivot
-    // (extreme confirmed ⇒ the stop is FIXED for every entry, only the leverage varies). Long
-    // and short are exact mirrors. Leverage always divides by the ENTRY price. `INV_PHI = 1/φ`.
+    // The corrected sizing per docs/design/STRUCTURAL-STATE-MACHINE.md. Two regimes — window
+    // (extreme not confirmed ⇒ each DCA slice uses its own price `p` as the extreme estimate) and
+    // post-pivot (extreme confirmed ⇒ the product's base `g`-stop CLAMPED between the two
+    // anchors, so it moves with the entry and the leverage follows from where it lands). Long and
+    // short are exact mirrors, refusal included. Leverage always divides by the ENTRY price.
 
     /// @notice Structural stop for a leveraged LONG (Pro Max). `Pb` = previous cycle bottom;
     ///         `B` = this cycle's confirmed 62-window low, or 0 in the window regime.

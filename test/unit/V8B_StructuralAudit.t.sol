@@ -125,7 +125,7 @@ contract V8B_StructuralAuditTest is Test {
         uint256 s = usd(4000) + Phi.wmul(usd(3000), theta2);
         assertApproxEqRel(s, usd(5854), TOL, "PM1 stop passes with theta+0.4%");
         assertApproxEqRel(Phi.mulDiv(usd(4000), WAD, s - usd(4000)), 2.157e18, TOL, "PM1 L passes");
-        // PMs1 / PMs2 (fixed maxStop short)
+        // PMs1 / PMs2 (short: the Pp cap, then the C pin)
         assertApproxEqRel(Phi.mulDiv(usd(5000), WAD, s - usd(5000)), 5.855e18, TOL, "PMs1 L passes");
         uint256 sDeep = usd(4000) + Phi.wmul(usd(3000), theta2);
         assertApproxEqRel(
@@ -135,7 +135,7 @@ contract V8B_StructuralAuditTest is Test {
         uint256 l2 = usd(1000) - Phi.wmul(usd(900), theta2);
         assertApproxEqRel(l2, usd(444), TOL, "PM2 stop passes with theta+0.4%");
         assertApproxEqRel(Phi.mulDiv(usd(1000), WAD, usd(1000) - l2), 1.798e18, TOL, "PM2 L passes");
-        // PM3 / PM4 (fixed MinStop long) — PM3 carries the widest owner-rounding (0.136%)
+        // PM3 / PM4 (long: the Pb floor, then the base phi band) — PM3 carries the widest owner-rounding (0.136%)
         uint256 l3 = usd(850) - Phi.wmul(usd(750), theta2);
         assertApproxEqRel(l3, usd(387), TOL, "PM3 stop passes with theta+0.4%");
         assertApproxEqRel(Phi.mulDiv(usd(800), WAD, usd(800) - l3), 1.937e18, TOL, "PM3 L passes");

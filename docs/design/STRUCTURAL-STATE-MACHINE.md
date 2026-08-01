@@ -148,10 +148,10 @@ is "done" for a row when the engine/library reproduces the number. Ran on `data/
 | P3 | Pro short | S-post | 2000 | C=4200 | 4200 | 0.91× | pinned to C |
 | PM1 | Pro Max short | S-win | 4000 | Pp=1000 | 5854 | 2.16× | p+(p−Pp)/φ |
 | PM2 | Pro Max long | L-win | 1000 | Pb=100 | 444 | 1.80× | p−(p−Pb)/φ |
-| PM3 | Pro Max long | L-post | 800 | B=850,Pb=100 | 387 | 1.94× | fixed MinStop |
+| PM3 | Pro Max long | L-post | 800 | B=850,Pb=100 | 387 | 1.94× | entry near the bottom: the `MinStop` floor binds |
 | PM4 | Pro Max long | L-post | 2000 | B=850,Pb=100 | 764 | 1.618× | mid-band: neither anchor binds ⇒ base `φ` |
 | PM4b | Pro Max long | L-post | 9000 | B=850,Pb=100 | 850 | 1.10× | capped at the printed bottom |
-| PMs1 | Pro Max short | S-post | 5000 | C=4000,Pp=1000 | 5854 | 5.85× | fixed maxStop |
+| PMs1 | Pro Max short | S-post | 5000 | C=4000,Pp=1000 | 5854 | 5.85× | shallow entry: the `maxStop` cap binds |
 | PMs2 | Pro Max short | S-post | 2000 | C=4000,Pp=1000 | 4000 | 1.00× | pinned to C; `p = C/2` is the 1× crossover |
 | PMs3 | Pro Max short | S-post | 3000 | C=4000,Pp=1000 | 4854 | 1.618× | mid-band: neither anchor binds ⇒ base `φ` |
 | PM5 | Pro Max long | L-halving d1 | 3000 | B=850 | 1671 | — | per-day add |

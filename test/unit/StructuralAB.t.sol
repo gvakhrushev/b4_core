@@ -67,7 +67,7 @@ contract StructuralABTest is Test {
     }
 
     function test_PMs1_promax_short_post_shallow() public {
-        // doc: fixed maxStop 5854, L 5.85x — same fixed stop as PM1 (anchor is C now).
+        // doc: shallow entry — p*phi overshoots maxStop 5854, so the Pp cap binds. L 5.85x.
         assertEq(
             StructuralLeverage.shortStructStop(usd(5000), usd(1000), usd(4000)),
             5854101966249684544000,
@@ -143,7 +143,7 @@ contract StructuralABTest is Test {
     }
 
     function test_PM3_promax_long_post_below_B() public {
-        // doc: fixed MinStop 387 = B - (B-Pb)/phi — exact 386.474508437578864 (drop
+        // doc: entry near the bottom — the Pb floor MinStop 387 = B - (B-Pb)/phi binds (drop
         // floor(750 * INV_PHI) = 463.525491562421136). Widest owner-rounding row: 0.136%.
         assertEq(
             StructuralLeverage.longStop(usd(800), usd(100), usd(850)),
