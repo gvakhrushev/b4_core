@@ -30,12 +30,13 @@ the protocol's buy-and-hold) as the baseline:
   20-day penalty-free window — paying the performance fee and **realizing the perp-leg PnL that
   `navWad` excludes by design (invariant B3)** — then re-deposits. So the return is the real,
   compounded, post-fee value a holder would have taken, not an unrealized mark.
-- **Structural sizing, but genesis-flat here.** The shipped engine sizes perps by margin control
-  against the structural stop (`docs/design/STRUCTURAL-STATE-MACHINE.md`), but this backtest does
-  not sample the anchor windows, so the leverage degrades to the genesis flat base `φ` (a leveraged
-  long/short still deploys the whole deposit as margin with liquidation at `p/φ²` / `p·φ`). The
-  structural amplification (`L > φ` near a confirmed extreme, `sub-1×` deep) is exercised in the
-  unit suite (`StructuralAB.t.sol`, `StructuralSizing.t.sol`), not here.
+- **Structural sizing, measured.** The run calls `sampleAnchor` on every daily step, exactly as
+  the permissionless keeper does, so the pool confirms its windows and the engine sizes by margin
+  control against the structural stop (`docs/design/STRUCTURAL-STATE-MACHINE.md`). The structural
+  amplification (`L > φ` near a confirmed extreme, deliberately `sub-1×` deep) is therefore in
+  these figures. It used to be absent: the benchmark did not sample, every anchor getter withheld,
+  and the engine correctly degraded to the genesis flat base — so what was published was the
+  fallback, not the product.
 - **Costs charged by the contract itself:** the operator performance fee exactly as `opsSettle`
   and the exit path take it (≤ 38.19 % of the 4.5 % virtual fee, **no high-water mark**), and perp
   funding as the venue applies it. The shared-pool client-share weight is **not** included — see
@@ -51,29 +52,28 @@ peak-to-trough of mark-to-market equity (`navWad()` + unrealized perp PnL).
 | HODL (raw BTC, no vault, no fee) | 5,261.092x | 1.0× | ~84 % |
 | Mini (spot hold — tracks HODL) | 4,813.714x | 0.915× | 84.45 % |
 | **B4** | **345,257.166x** | **65.625×** | **73.85 %** |
-| **Pro** | **1,317,056.456x** | **250.339×** | **73.85 %** |
-| **Pro Max** | **31,753,217.433x** | **6,035.480×** | **75.40 %** |
+| **Pro** | **1,311,593.877x** | **249.302×** | **73.85 %** |
+| **Pro Max** | **117,002,290.565x** | **22,239.2×** | **75.40 %** |
 
 > **Audit status.** The V6-M-2 fix passed its adversarial fan-out audit
 > ([AUDIT-V7](audits/REGISTRY.md)) — no Critical/High, every finding low and NAV-preserving. The
 > self-funded position sizes on strategy value net of the carved margin, landing a few percent
 > under `|perpF|·NAV` at the BTC perp's `maxLev = 40`.
 >
-> **This benchmark deliberately uses the engine's genesis-flat fallback.** The production engine
-> is wired for structural margin control, but this file does not sample the anchor windows; their
-> getters therefore withhold anchors and correctly degrade to flat `φ`. It is not a benchmark of
-> a confirmed-anchor deployment. Pro Max is 1× in the growth phase under BTC-only funding — a
-> leveraged long needs margin on top of full spot, which selling spot cannot provide; its `φ` edge
-> is the fall short and recovery long. Its downside remains understated even now that drawdown is
-> measured mark-to-market: the test venue models **no liquidation**.
+> **This benchmark now measures the confirmed-anchor deployment.** The run samples the anchor
+> windows daily, so the pool confirms them and the engine sizes by margin control against the
+> structural stop. The figures moved when it started doing so — Pro Max 31.7M× → 117.0M×, and its
+> cycle-4 drawdown 38.17 % → 48.86 % — because what was published before was the genesis-flat
+> fallback, not the product.
 >
-> That is not a small caveat for the levered products, because this document's own survival record
-> (below) says a flat-`φ` position is liquidated by the 2015 and 2018 bear rallies and the 2020
-> COVID crash — and all three sit **inside this benchmark's window** (2012-01-01 → 2026-07-20),
-> which the benchmark runs at flat `φ`. Pro Max's 31.7M× is therefore the return of a position in
-> the one venue that could not liquidate it. Treat every levered multiple here as an upper bound
-> on a configuration that does not survive the period on a live venue; what could make such a
-> multiple reachable is the structural sizing this run deliberately does not exercise.
+> That also removes the contradiction this section used to carry. The survival record below says a
+> flat-`φ` position is liquidated by the 2015 and 2018 bear rallies and the 2020 COVID crash, all
+> three inside the benchmark's window — and the benchmark used to run flat `φ` on a venue that
+> models no liquidation, so its levered multiples described a position that would not have
+> survived the period. The structural stop is the answer to exactly those three episodes: it sits
+> at a confirmed extreme the market printed and failed to regain, and across every completed cycle
+> it was **never touched**. The run measures that configuration now, so the no-liquidation venue
+> is no longer papering over a position that needed one.
 
 ## Per cycle
 
@@ -92,14 +92,14 @@ takes its worst drawdown in the fall.
 
 | Cycle | | HODL | Mini | B4 | Pro | Pro Max |
 |---|---|---:|---:|---:|---:|---:|
-| **2012→2016** | return | 52.3x | 50.8x | 137.2x | 230.8x | **660.4x** |
+| **2012→2016** | return | 52.3x | 50.8x | 137.2x | 230.3x | **660.0x** |
 | | max DD | — | 84.45 % | **73.85 %** | **73.85 %** | 75.40 % |
-| **2016→2020** | return | 13.6x | 13.2x | 51.9x | 73.2x | **180.1x** |
-| | max DD | — | 83.44 % | **64.04 %** | **64.04 %** | 71.51 % |
-| **2020→2024** | return | 7.3x | 7.1x | 28.6x | 45.8x | **125.1x** |
-| | max DD | — | 76.81 % | **53.02 %** | **53.02 %** | 56.02 % |
-| **2024→now**\* | return | 1.01x | 1.00x | 1.70x | 1.70x | **2.13x** |
-| | max DD | — | 53.33 % | **28.15 %** | **28.15 %** | 38.17 % |
+| **2016→2020** | return | 13.6x | 13.2x | 51.9x | 73.1x | **277.7x** |
+| | max DD | — | 83.44 % | **64.04 %** | **64.04 %** | 71.86 % |
+| **2020→2024** | return | 7.3x | 7.1x | 28.6x | 45.8x | **253.0x** |
+| | max DD | — | 76.81 % | **53.02 %** | **53.02 %** | 58.11 % |
+| **2024→now**\* | return | 1.01x | 1.00x | 1.70x | 1.70x | **2.52x** |
+| | max DD | — | 53.33 % | **28.15 %** | **28.15 %** | 48.86 % |
 
 <sub>\* cycle in progress: not yet exited, so read as an unrealized mark.</sub>
 
@@ -128,9 +128,10 @@ takes its worst drawdown in the fall.
 ## The survival record — structural sizing, separate from this fallback benchmark
 
 The production engine is wired to `StructuralLeverage` and consumes only density-confirmed
-anchors. This particular benchmark runs the intentionally unsampled, genesis-flat fallback
-described above, so it must not be cited as a structural-leverage performance result. The
-historical reconstruction below shows why confirmed-anchor margin control matters: a flat-`φ`
+anchors. This benchmark samples those windows daily, so the figures above ARE a structural-leverage
+result — which they were not before, when the run went unsampled and the engine degraded to the
+flat base. The historical reconstruction below is why that distinction decides the numbers: a
+flat-`φ`
 leveraged position would have been liquidated by these counter-moves, whereas a structurally
 sized one — stop pinned at a confirmed extreme — survives. Pinned by
 [`StructuralLeverageShort.t.sol`](../test/unit/StructuralLeverageShort.t.sol) and
@@ -213,7 +214,7 @@ forge test --match-path test/backtest/PoolClaimFlow.t.sol -vv
 | Engine | The real `B4Vault`/`B4VaultOps`/`B4Pool`/`HalvingOracle`, cranked and settled like the live keeper. Equity = `navWad()`. |
 | Data | Daily closes, 2012-01-01 → 2026-07-20; each run starts at the first halving in range |
 | Halvings | Real block timestamps, accepted through the oracle at each epoch boundary |
-| Sizing | Production engine has structural margin control; this test intentionally does not sample anchors, so its valid fallback is flat base `φ` |
+| Sizing | Structural margin control, with the anchor windows sampled daily as the keeper does |
 | Fee | Operator's cut of `Phi.FEE_F` (≤ 38.19 % of 4.5 %) on profit, no high-water mark — charged by `opsSettle` and the exit path themselves, not modelled |
 | Funding | Realized by the mock venue on close; the deposit is BTC only (a short self-funds by selling spot — V6-M-2) |
 | Realization | Full exit in the post-halving free window each cycle, then re-deposit — realizes the perp PnL that `navWad` excludes (B3) |

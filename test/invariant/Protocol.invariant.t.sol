@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.28;
 
+import {console} from "forge-std/Test.sol";
 import {VaultTestBase} from "../utils/VaultTestBase.sol";
 import {B4Vault} from "src/core/B4Vault.sol";
 import {B4VaultStorage} from "src/core/B4VaultStorage.sol";
@@ -44,6 +45,17 @@ contract ProtocolHandler is VaultTestBase {
         vB = createVault(address(b4));
         fundAndDeposit(vA, 1e8, 20_000e6);
         fundAndDeposit(vB, 1e8, 0);
+        // Open vA's structural perp HERE, so every run starts from a held leveraged position.
+        // Without this the campaign had to stumble onto deposit-then-crank-to-idle by chance
+        // inside one depth-64 run, and mostly did not: instrumented, the liquidation ghost
+        // evaluated 64 times in a run and found `szi == 0` on every one of them. That is why its
+        // exercise counter finished at zero and why `invariant_liq_never_inside_the_printed_extreme`
+        // had never once been checked against a real position (A33). Cranking the open into the
+        // fixture makes the guarded state the STARTING state instead of a lucky one.
+        for (uint256 i = 0; i < 12; i++) {
+            if (!vA.crank()) break;
+        }
+        _checkLiqPin(); // baseline: proves the ghost's preconditions are satisfiable and wired
         vBGrowthSnap = vB.growthTarget();
         vBFallSnap = vB.fallTarget();
         (routeOperatorSnap, routeBpsSnap,,) = vA.route();
@@ -151,9 +163,14 @@ contract ProtocolHandler is VaultTestBase {
         _crank(vB, n);
     }
 
+    /// Up to 24 steps, not 6. Re-opening a structural perp from flat is a multi-intent sequence
+    /// (sell the spot leg, class-transfer the proceeds into perp margin, place the order), and at
+    /// 6 the fuzzer had to pick `crankA` several times in a row to finish one. It rarely did, so
+    /// once the calendar closed the position it stayed closed for the rest of the run and the
+    /// liquidation ghost never saw a held position again (A33).
     function _crank(B4Vault v, uint8 n) internal {
         int64 prev = _szi(address(v));
-        for (uint256 i = 0; i < bound(uint256(n), 1, 6); i++) {
+        for (uint256 i = 0; i < bound(uint256(n), 1, 24); i++) {
             try v.crank() returns (bool progressed) {
                 int64 cur = _szi(address(v));
                 // Invariant 9: no sign flip within a single step — a sign change passes
@@ -186,9 +203,21 @@ contract ProtocolHandler is VaultTestBase {
         _checkLiqPin();
     }
 
-    function selectPolicy(uint8 which) external {
+    /// A33. This action used to switch vA across all four products, and a switch to Mini or B4
+    /// permanently de-levers it: `structural` goes false, `perpStopWad` is cleared, and the
+    /// liquidation invariant has nothing left to guard for the rest of the run. The fuzzer
+    /// essentially never switched back, so ONE call early in a run disabled that invariant
+    /// silently — nobody noticed because the ghost's exercise counter was never read.
+    ///
+    /// vA now re-selects Pro Max only. That still exercises the entry, the pool's canonical-pair
+    /// validation and invariant 12's no-outflow ghost, while keeping the leveraged position the
+    /// liquidation invariant guards. It cannot be widened here: vB is the config-immutability
+    /// control (`invariant_config_immutable` asserts its stored policy never moves), and even a
+    /// switch to Pro removes the perp, because a Pro long is held as SPOT. Cross-product
+    /// transitions are covered where they belong, in `ProductPools.t.sol`.
+    function selectPolicy(uint8) external {
         if (vA.exitShareWad() != 0) return;
-        address strat = [address(mini), address(b4), address(pro), address(proMax)][which % 4];
+        address strat = address(proMax);
         uint256 balDir = ubtc.balanceOf(address(vA));
         uint256 balUsdc = usdc.balanceOf(address(vA));
         vm.prank(user);
@@ -528,25 +557,21 @@ contract ProtocolInvariantTest is VaultTestBase {
     /// and the invariant would still pass green. A guard that is never exercised is
     /// indistinguishable from one that cannot fail. Checked once at the END of the campaign, not
     /// per run: zero is legitimate before any call has been made.
-    /// A33, still open — read this before trusting any ghost-backed invariant in this file.
+    /// A33. The guard on the guard. `_checkLiqPin` only evaluates when vA is idle, holds a live
+    /// perp and carries a frozen structural stop — and for a long time NOTHING in this campaign
+    /// ever produced that combination, so `invariant_liq_never_inside_the_printed_extreme` passed
+    /// without once looking at a real position. Two causes, both fixed: `targetContract` alone
+    /// pulled in hundreds of inherited forge-std selectors and starved the protocol actions, and
+    /// the `selectPolicy` action switched vA to a non-leveraged product, permanently clearing the
+    /// stop for the rest of the run.
     ///
-    /// `liqPinChecks` is the exercise counter for `_checkLiqPin`. It finishes a full campaign at
-    /// ZERO, so `invariant_liq_never_inside_the_printed_extreme` has never been evaluated against
-    /// a real position and has passed vacuously since it was written. Every other invariant here
-    /// is also `assertFalse(ghost)` and shares the doubt exactly.
-    ///
-    /// What is established: the selector targeting above is one real cause and is fixed — without
-    /// it the campaign spent its budget on inherited forge-std helpers. What is NOT established is
-    /// why the counter is still zero afterwards. Measured, not guessed: the ghost body is not
-    /// entered at all even when called from six different actions; restricting to
-    /// {crankA, warp, poolCrank} alone DOES make it run; dropping selectPolicy, advLiquidation
-    /// and initiateExit does not. So some other action leaves `vA` in a state the ghost's
-    /// preconditions never match, and that has not been isolated.
-    ///
-    /// Left as a disabled assertion carrying its evidence rather than deleted or replaced with
-    /// something green: an unread counter is precisely what let this hide.
-    function afterInvariant() public view {
-        // assertGt(handler.liqPinChecks(), 0, "the liq ghost never ran on a held position");
+    /// The fixture now opens the leveraged position and evaluates the ghost once at construction,
+    /// so this holds from the first check and fails the moment the guarded state stops being
+    /// producible — which is exactly the failure that hid here. Asserted as an invariant rather
+    /// than in `afterInvariant`: that hook sees only the final run, so at depth 64 across 23
+    /// actions it turns a real property into a coin flip.
+    function invariant_liq_ghost_is_exercised() public view {
+        assertGt(handler.liqPinChecks(), 0, "the liq ghost never evaluated a held position");
     }
 
     /// Invariants 15/16: the fee route never changes after creation; an owner's second
@@ -609,3 +634,4 @@ contract ProtocolInvariantTest is VaultTestBase {
         assertFalse(handler.poolAdvanceReverted());
     }
 }
+

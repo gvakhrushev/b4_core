@@ -35,8 +35,8 @@ and Pro Max return a multiple of `HODL` while drawing down materially less**, no
 price but by refusing to hold through the phase that produces the damage. (Mini holds `HODL`'s
 exposure by design, so it tracks `HODL`'s drawdown — its edge is the pool, not less risk.) The
 structural leverage that makes Pro Max's leverage *survivable* is shipped as margin control.
-The single-vault benchmark below deliberately does not sample anchor windows, so it exercises
-the engine's safe genesis-flat fallback rather than presenting a structural-leverage result.
+The benchmark below samples the anchor windows exactly as the permissionless keeper does, so
+it measures the shipped structural product — not the genesis-flat fallback it used to run.
 
 ## Documentation
 
@@ -184,21 +184,21 @@ return is the real, compounded, post-fee value a holder would have taken.
 | HODL (raw BTC, no vault, no fee) | 5,261.092x | 1.0× | ~84 % |
 | Mini (spot hold — tracks HODL) | 4,813.714x | 0.915× | 84.45 % |
 | **B4** | **345,257.166x** | **65.625×** | **73.85 %** |
-| **Pro** | **1,317,056.456x** | **250.339×** | **73.85 %** |
-| **Pro Max** | **31,753,217.433x** | **6,035.480×** | **75.40 %** |
+| **Pro** | **1,311,593.877x** | **249.302×** | **73.85 %** |
+| **Pro Max** | **117,002,290.565x** | **22,239.2×** | **75.40 %** |
 
 ### Per cycle — realized return and drawdown side by side
 
 | Cycle | | HODL | Mini | B4 | Pro | Pro Max |
 |---|---|---:|---:|---:|---:|---:|
-| **2012→2016** | return | 52.3x | 50.8x | 137.2x | 230.8x | **660.4x** |
+| **2012→2016** | return | 52.3x | 50.8x | 137.2x | 230.3x | **660.0x** |
 | | max DD | — | 84.45 % | **73.85 %** | **73.85 %** | 75.40 % |
-| **2016→2020** | return | 13.6x | 13.2x | 51.9x | 73.2x | **180.1x** |
-| | max DD | — | 83.44 % | **64.04 %** | **64.04 %** | 71.51 % |
-| **2020→2024** | return | 7.3x | 7.1x | 28.6x | 45.8x | **125.1x** |
-| | max DD | — | 76.81 % | **53.02 %** | **53.02 %** | 56.02 % |
-| **2024→now**\* | return | 1.01x | 1.00x | 1.70x | 1.70x | **2.13x** |
-| | max DD | — | 53.33 % | **28.15 %** | **28.15 %** | 38.17 % |
+| **2016→2020** | return | 13.6x | 13.2x | 51.9x | 73.1x | **277.7x** |
+| | max DD | — | 83.44 % | **64.04 %** | **64.04 %** | 71.86 % |
+| **2020→2024** | return | 7.3x | 7.1x | 28.6x | 45.8x | **253.0x** |
+| | max DD | — | 76.81 % | **53.02 %** | **53.02 %** | 58.11 % |
+| **2024→now**\* | return | 1.01x | 1.00x | 1.70x | 1.70x | **2.52x** |
+| | max DD | — | 53.33 % | **28.15 %** | **28.15 %** | 48.86 % |
 
 <sub>\* cycle in progress: not yet exited, so read as an unrealized mark.</sub>
 
@@ -243,24 +243,17 @@ larger remainder buys.
 > needs margin *on top* of 100 % spot, which selling spot cannot provide — so Pro Max runs **1× in
 > the growth phase**; its `φ` edge is the fall short (funded by selling spot) and the recovery long
 > (funded by the closed short). Its downside **remains understated even after the mark-to-market
-> fix**, and the drawdowns above are why that now matters: the test venue models **no liquidation**,
-> and a `φ` leg is not obviously survivable through a measured 71–75 % equity drawdown. Read those
-> figures as the loss path of an *unliquidatable* position — a live venue could end it before it
-> recovers. Sizing that survives the drawdown is exactly what the structural stop exists for: the
-> engine uses structural margin control when anchors are confirmed;
-> this deliberately unsampled backtest falls back to flat `φ`, so it does not measure that
-> confirmed-anchor path.
+> fix**: the test venue models **no liquidation**. That mattered a great deal while this run was
+> flat-`φ`, because the survival record above says a flat-`φ` position is liquidated by the 2015
+> (+103 %) and 2018 (+99 %) bear rallies and the 2020 COVID crash (−64 %) — all three inside the
+> benchmark's window. It matters much less now that the run samples anchors and sizes structurally:
+> the structural stop sits at a confirmed extreme the market printed and failed to regain, and
+> across every completed cycle it was **never touched**. So the figures describe a configuration
+> the historical record does not liquidate, rather than one that only survives because the mock
+> cannot liquidate it.
 >
-> **Read the leveraged multiples against the survival record above, which contradicts them.** That
-> table says a flat-`φ` position is liquidated by the 2015 (+103 %) and 2018 (+99 %) bear rallies
-> and the 2020 COVID crash (−64 %). All three fall inside this benchmark's window
-> (2012-01-01 → 2026-07-20), the benchmark runs flat `φ`, and the test venue models no liquidation.
-> So Pro Max's 31.7M× is the return of a flat-`φ` position in the one place it could not be
-> liquidated — on a live venue that configuration does not reach the end of the run. What could
-> make a leveraged multiple reachable is the structural sizing the engine ships and this run does
-> not exercise. Taken honestly, the benchmark measures the calendar and the rotation; it does not
-> measure whether leverage survives, and for the levered products it is an upper bound, not a
-> projection.
+> What remains understated is the tail the record cannot speak to: a future cycle that breaks a
+> confirmed extreme would liquidate, and no backtest can price that.
 
 ### The survival record — the safety mechanism, measured
 

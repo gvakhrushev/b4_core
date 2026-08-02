@@ -31,8 +31,8 @@ import {
 ///        that BTC into USDC (V6-M-2). Income is realized per cycle — a full exit in the 20-day
 ///        post-halving free window pays the fee and realizes the perp PnL that navWad excludes
 ///        (B3), then re-deposits. StructuralLeverage IS wired in the engine, but this run
-///        deliberately never samples anchors, so sizing falls back to flat-`φ` — the
-///        confirmed-anchor path is measured by StructuralAB/StructuralSizing, not here.
+///        samples the anchor windows daily as the keeper does, so the confirmed-anchor
+///        structural path is what these figures measure.
 ///        Run: `forge test --match-path 'test/backtest/BacktestReal.t.sol' -vv`
 contract BacktestRealTest is VenueTestBase {
     uint32 constant SRC_EID = 30_101;
@@ -342,6 +342,11 @@ contract BacktestRealTest is VenueTestBase {
             if (ts[i] < cycleStart || ts[i] > readPoint) continue;
             vm.warp(ts[i]);
             _setPx(ts[i]);
+            // Sample the anchor windows exactly as the permissionless keeper does. Without this
+            // the pool's getters withhold every anchor and the engine correctly degrades to the
+            // flat-phi genesis fallback — which is what this benchmark used to measure. Sampling
+            // makes it measure the SHIPPED structural product instead.
+            try pool.sampleAnchor(1) {} catch {} // index 0 is settlement; reverts outside a window
             if (!done[0]) {
                 _crankUntilIdle(v, 40); // open the growth position for this epoch
                 done[0] = true;
