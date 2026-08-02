@@ -326,13 +326,25 @@ claim is paid in. One participant's claims, in kind:
 | Pro Max | 0.0036 BTC | $5,556 | 1.11× |
 
 A leveraged position is a **settlement-margined perp**, so realizing it returns settlement token.
-Pro Max's claim is 99.9 % USDC and simply cannot appreciate in the claimer's hands, while Mini's
-is 100 % the asset. On identical penalty inflows (9,524 folds for every product) the leveraged
-sleeve also ends with **half** the peak NAV of the unlevered ones — running the strategy on the
-penalty did not, on this history, beat holding it.
+Pro Max's claim is 99.9 % USDC and cannot appreciate in the claimer's hands afterwards, while
+Mini's is 100 % the asset and rides the next thirteen years of it.
+
+The sleeve itself is the most valuable of the four: on identical inflows (9,524 folds for every
+product) the Pro Max sleeve peaks at **24,763** in mark-to-market equity against **18,366** for
+the unlevered ones. The leverage works on the penalty exactly as it works on a deposit. What the
+stayer ends up holding is the settlement token it was realized into, and that is where the gap
+comes from — the payout form, not the strategy.
+
+**B4 and Pro claim almost the same, and that is composition, not a wash.** Their BTC legs are
+identical to the digit (2.570 BTC each) because in the growth regime they ARE the same product —
+both target `1`. Pro's short shows up only in the settlement leg, $367 against B4's $303, a real
++21 %. At the end price the BTC leg is worth $167,440 and that $64 edge is 0.04 % of the total, so
+it disappears in the rounding. The reason it stays small is structural: the sleeve is realized
+into the basket at **every** free window, four times a cycle, so a fall-zone short never
+accumulates across a cycle the way the growth-zone asset does.
 
 The pool is where Mini earns. For the leveraged products it is a rounding error against their own
-strategy return, and that is a property of the payout form, not a gap in the mechanism.
+strategy return.
 
 **Why no universal multiplier is given.** Weight is *your own* accumulated performance-fee share — it scales
 with your vault's dollar profit (Pro Max's absolute profit dwarfs Mini's, so it earns
