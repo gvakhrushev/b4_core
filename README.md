@@ -296,14 +296,33 @@ whole history with ten equal daily depositors, two of whom exit the same day (`r
 One participant simply stays. Its cumulative deposits, its final vault NAV and the claims it
 actually received are all read off the contracts:
 
-| Product | Pool claims, valued at the END | as a multiple of deposits | share of that participant's final total |
-|---|---:|---:|---:|
-| Mini | 188,607 | **3.79×** | **2.6 %** |
-| B4 | 167,730 | 3.37× | 0.038 % |
-| Pro | 167,794 | 3.37× | 0.0067 % |
-| Pro Max | 5,790 | 0.12× | 0.0000168 % |
+Every product folds the **same** penalty into its sleeve over the run — 11,240 measured, identical
+to the digit for all four — so any difference in what comes back is the sleeve's strategy working
+on it. Per unit of the participant's own deposits:
 
-**The valuation is the whole point, and it used to be wrong.** The penalty is paid **in kind** and
+| Product | delivered, at receipt | per deposit | held to the end | per deposit |
+|---|---:|---:|---:|---:|
+| Mini | 10,391 | 0.2086× | 188,607 | **3.79×** |
+| B4 | 10,511 | 0.2110× | 167,730 | 3.37× |
+| Pro | 10,576 | **0.2123×** | 167,794 | 3.37× |
+| Pro Max | 5,581 | 0.1120× | 5,790 | 0.12× |
+
+At delivery the ladder is the expected one — **Mini < B4 < Pro**, each product's sleeve compounding
+the same penalty a little harder, and B4 and Pro do differ (+0.6 % to Pro, its fall-zone short).
+The margin is thin because the sleeve is realized into the basket at every free window, four times
+a cycle, so no leg accumulates across a cycle.
+
+**Pro Max breaks the ladder and it is not yet explained.** It delivers half, while its sleeve peaks
+*highest* of the four in mark-to-market equity (24,763 against 18,366). Peak equity that does not
+reach the basket points at the realization, not the strategy — the leveraged sleeve is closed four
+times a cycle and its gain is unrealized at the peak. Recorded as open rather than explained: this
+page has already carried three confident explanations of Pro Max that measurement then overturned.
+
+**Both columns are given because both are true and they answer different questions.** "At receipt"
+is what the pool delivered; "held to the end" is what the claimer is holding now, and the gap is
+the appreciation an in-kind payout carries.
+
+**The end valuation used to be wrong.** The penalty is paid **in kind** and
 sits in the pool until a distribution point, so it keeps moving with the asset — both while it
 waits and after it is claimed. Summing each claim at the price of the day it landed prices a 2013
 BTC claim at $130 for ever; valued at the end, the same claims are **16–18× larger** (Mini 10,391 → 188,607). That correction is the difference between the pool looking like rounding and
