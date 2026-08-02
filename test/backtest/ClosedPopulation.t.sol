@@ -300,11 +300,19 @@ contract ClosedPopulationTest is SimTest {
         // the contract's live `nav`, never from an assumed zero-profit cash flow.
     }
 
+    /// The sleeve is an ordinary product vault holding the penalty, and a permissionless keeper
+    /// cranks it to idle exactly as it cranks every other vault. This used to advance it by ONE
+    /// async step per day outside a free window, which is not what a keeper does and is not
+    /// enough to deploy: putting a USDC penalty to work is a sequence of intents (sell or
+    /// class-transfer, fund margin, place the order), so one step a day left the penalty sitting
+    /// undeployed while the calendar moved on. Pro Max was hit hardest — its fall-zone penalty
+    /// arrives as settlement token, so it needs the whole sequence before it holds anything that
+    /// can appreciate, and it was measured barely appreciating at all.
     function _driveProductSleeve(bool freeWindow) internal {
         if (freeWindow) {
             pool.initiateSleeveExit(productPolicy, 1);
         }
-        for (uint256 i = 0; i < (freeWindow ? 180 : 1); i++) {
+        for (uint256 i = 0; i < (freeWindow ? 180 : 24); i++) {
             if (!pool.crankSleeve(productPolicy, 1)) break;
         }
     }

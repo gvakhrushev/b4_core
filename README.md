@@ -310,11 +310,29 @@ BTC claim at $130 for ever; valued at the end, the same claims are **16–18× l
 10,391 → 188,607). That correction is the difference between the pool looking like rounding and
 being Mini's entire edge.
 
-**Pro Max is the exception and it is the documented one.** Its claims appreciate only 1.11×,
-because a fall-zone exit from a shorting product holds settlement token on both legs, so its
-penalty basket arrives as USDC rather than as the asset — the same limitation recorded in
-[Fees, penalty and the pool](docs/07-fee-routing.md). The pool is where Mini earns; for the
-leveraged products it is a rounding error against their own strategy return.
+**Pro Max is the exception, and the reason is the payout form, not idle capital.** The penalty is
+not held passively for any product: `foldPenalty` deposits it into that product's sleeve — an
+ordinary vault running the same strategy, engine and structural stop — and cranks it. Measured
+over the run, the Pro Max sleeve holds a perp on **4,717 of 4,982 days**. It is working.
+
+What differs is what the sleeve is holding when a free window realizes it, and therefore what the
+claim is paid in. One participant's claims, in kind:
+
+| Product | claimed in the asset | claimed in settlement | appreciation to the end |
+|---|---:|---:|---:|
+| Mini | 2.895 BTC | — | 18.2× |
+| B4 | 2.570 BTC | $303 | 16.0× |
+| Pro | 2.570 BTC | $367 | 15.9× |
+| Pro Max | 0.0036 BTC | $5,556 | 1.11× |
+
+A leveraged position is a **settlement-margined perp**, so realizing it returns settlement token.
+Pro Max's claim is 99.9 % USDC and simply cannot appreciate in the claimer's hands, while Mini's
+is 100 % the asset. On identical penalty inflows (9,524 folds for every product) the leveraged
+sleeve also ends with **half** the peak NAV of the unlevered ones — running the strategy on the
+penalty did not, on this history, beat holding it.
+
+The pool is where Mini earns. For the leveraged products it is a rounding error against their own
+strategy return, and that is a property of the payout form, not a gap in the mechanism.
 
 **Why no universal multiplier is given.** Weight is *your own* accumulated performance-fee share — it scales
 with your vault's dollar profit (Pro Max's absolute profit dwarfs Mini's, so it earns

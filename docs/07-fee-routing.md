@@ -426,6 +426,23 @@ There is no path by which claiming DIR converts into USDC or vice versa: the poo
 - The keeper (`src/periphery/Keeper.sol`) is permissionless and calls nothing but permissionless entry points — `advance`, `lockPrices`, `sweep`, `capture`, `claimFor` and the `currentReportable` view on the pool, plus (for strict pools) `foldPenalty`, `crankSleeve`, and free-window `initiateSleeveExit`; and `crank`, `settle`, `claimDeferred` on each vault. It cannot change a route, choose a target, market or price, or redirect a payout: every recipient is fixed vault state.
 - `FEE_F`, `EXIT_Q`, `MAX_OPERATOR_BPS`, `MIN_REFERRER_BPS` are `internal constant` — changing them requires deploying different bytecode, i.e. a different protocol.
 
+## Measured: the leveraged sleeve did not beat holding
+
+Every product's penalty is put to work — `foldPenalty` deposits it into that product's sleeve, an
+ordinary vault running the same strategy, engine and structural stop, and cranks it. Over the full
+history the Pro Max sleeve holds a perp on 4,717 of 4,982 days, so the capital is deployed, not
+idle.
+
+It did not pay. On identical inflows (9,524 folds for every product) the leveraged sleeve ends
+with **half** the peak NAV of the unlevered ones, and because a leveraged position is a
+settlement-margined perp, realizing it at the free-window exit returns settlement token — so the
+claim reaches the stayer as 99.9 % USDC, which then cannot appreciate. Mini's sleeve holds spot
+and pays 100 % in the asset, and its claims are worth 18.2× more by the end of the run.
+
+Recorded as a measured property rather than a defect: the mechanism does what it was designed to
+do, and on this history the unlevered form of it was worth more. Numbers and method in
+[the backtest](11-backtest.md).
+
 ## Known limitation — the pool is flat through the fall
 
 The penalty is paid **in kind**, so it carries the exiter's stance only in one regime. A growth-zone
