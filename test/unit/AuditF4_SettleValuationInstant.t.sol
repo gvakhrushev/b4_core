@@ -193,4 +193,94 @@ contract AuditF4_SettleValuationInstantTest is VaultTestBase {
         _assertSettledAgainst(v, pinned, entryBefore, basePre);
         assertGt(ubtc.balanceOf(operator) + ubtc.balanceOf(referrer), 0, "and it was paid in kind");
     }
+
+    /// The EXIT-side residual of freezing the NAV, and the counterpart of the deposit-side raise
+    /// audit A1 added. `settle` re-anchors `entryLedgerWad` from the frozen `settleNavWad`, and
+    /// the settlement point sits inside a `freeExit` transition zone — so an exit between
+    /// `snapshotNav` and `settle` is both reachable and penalty-free.
+    ///
+    /// Left stale, the snapshot still values the withdrawn share: `entryLedgerWad` scales by
+    /// `keep` while the NAV does not, so the exited notional reads as profit. Pre-fix, a 50% exit
+    /// at a 130k NAV over a 100k entry made settle measure 80k of profit where 15k was real —
+    /// 5.3x — minting pool weight against a shared basket on capital the vault no longer held.
+    function test_F4_exit_between_snapshot_and_settle_does_not_mint_on_withdrawn_capital() public {
+        B4Vault v = _vaultWithProfit();
+        hub.setSpotPx(SPOT_MKT, 130_000 * 1e4);
+        uint256 id = _openInterval();
+
+        uint256 entryBefore = v.entryLedgerWad();
+
+        vm.prank(user);
+        v.snapshotNav(id);
+        uint256 pinned = v.settleNavWad();
+        uint256 realProfit = pinned - entryBefore;
+
+        // Exit half, inside the same settlement window — free, by calendar geometry.
+        vm.prank(user);
+        v.initiateExit(5e17);
+        for (uint256 k = 0; k < 60 && v.exitShareWad() != 0; k++) {
+            v.crank();
+        }
+        assertEq(v.exitShareWad(), 0, "the exit completed inside the window");
+
+        uint256 scaled = v.settleNavWad();
+        assertEq(scaled, Phi.wmul(pinned, 5e17), "the frozen NAV scaled by the same keep");
+
+        // The exit itself already scaled the standing base and credited the exiting share's
+        // client share, so settle's contribution is measured from where the exit left it.
+        uint256 basePre = v.rewardBaseWad();
+        uint256 entryAfterExit = v.entryLedgerWad();
+        v.settle(id);
+
+        // Settle must measure HALF the profit, not the profit of a position half of which left.
+        _assertSettledAgainst(v, scaled, entryAfterExit, basePre);
+        assertApproxEqRel(
+            scaled - entryAfterExit, realProfit / 2, 0.01e18, "profit tracks what stayed"
+        );
+    }
+
+    /// The THIRD direction of the frozen-NAV class, and the reason settle caps rather than
+    /// trusting the snapshot. A1 keeps the snapshot in step when a deposit raises the books and
+    /// A5 when an exit scales them down — but a REALIZED LOSS lowers them with nothing tracking
+    /// it, and no per-mover hook can cover a mover nobody has thought of yet.
+    ///
+    /// Reachable inside the report window: the target ramps away from zero right after the
+    /// settlement point, so the crank re-opens a position and funds perp margin, and an adverse
+    /// close there is written down by `_reconcile` while the snapshot still values the vault as
+    /// it stood before. Pre-cap, settle re-anchored the entry ledger to 120k while the vault held
+    /// 117k — charging a fee and minting pool weight on 3k the venue had already taken.
+    function test_F4_settle_never_values_above_the_books_after_a_realized_loss() public {
+        B4Vault v = createVault(address(pro));
+        fundAndDeposit(v, 0, 120_000e6);
+        crankUntilIdle(v, 60);
+
+        vm.warp(_pointTime());
+        crankUntilIdle(v, 60);
+        pool.advance();
+        uint256 id = pool.intervalCount() - 1;
+        pool.lockPrices(id);
+
+        vm.prank(user);
+        v.snapshotNav(id);
+        uint256 frozen = v.settleNavWad();
+
+        // The crank re-opens into the new regime and funds margin; the venue then takes half.
+        vm.warp(_pointTime() + 12 hours);
+        crankUntilIdle(v, 60);
+        uint64 m = v.perpMargin6();
+        assertGt(m, 0, "precondition: margin funded inside the report window");
+        hub.setPosition(address(v), PERP_MKT, 0, 0); // liquidated flat
+        hub.setWithdrawable(address(v), m / 2);
+        crankUntilIdle(v, 40); // _reconcile writes the loss down
+
+        uint256 live = v.navWad();
+        assertLt(live, frozen, "the vault really is worth less than the snapshot says");
+
+        v.settle(id);
+
+        // Settle must have valued the vault at the books, not at the stale snapshot. The entry
+        // ledger it re-anchors is the direct witness: pre-cap it read the frozen 120k.
+        assertLe(v.entryLedgerWad(), live, "settle valued the vault above what it actually holds");
+        assertLt(v.entryLedgerWad(), frozen, "and strictly below the stale snapshot");
+    }
 }

@@ -34,7 +34,8 @@ contract RealizedCloseTest is VaultTestBase {
         uint256 closeStart = GENESIS_TS + Calendar.P - Calendar.W;
 
         // Day-by-day through the 10-day closing leg, at a DIFFERENT price each day.
-        uint256[10] memory px = [uint256(3_900), 4_000, 4_100, 3_950, 4_050, 4_200, 3_900, 4_000, 4_150, 4_000];
+        uint256[10] memory px =
+            [uint256(3_900), 4_000, 4_100, 3_950, 4_050, 4_200, 3_900, 4_000, 4_150, 4_000];
         uint256 prevDir = type(uint256).max;
         for (uint256 d = 0; d < 10; d++) {
             vm.warp(closeStart + d * 1 days);

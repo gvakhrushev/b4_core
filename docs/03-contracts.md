@@ -4,7 +4,7 @@ A contract-by-contract reference of everything that ships under `src/` — what 
 
 > **Status.** B4 is **pre-mainnet and not externally audited**. Venue semantics (CoreWriter action execution and atomicity, Core account activation, precompile ABI/gas) are **not locally provable** and are mandatory funded release gates — see [`spec/SECURITY_MODEL.md`](../spec/SECURITY_MODEL.md) §5. Nothing here should be read as a production-readiness claim.
 >
-> For the design rationale behind these boundaries, read [`ARCHITECTURE.md`](../ARCHITECTURE.md). Normative behavior lives in [`spec/SPECIFICATION.md`](../spec/SPECIFICATION.md); the hazard catalogue in [`spec/HAZARDS.md`](../spec/HAZARDS.md); invariants in [`INVARIANTS.md`](../INVARIANTS.md); the security dossier and internal adversarial-review history in [`REPORT.md`](audits/REPORT.md) (an independent external audit is still outstanding).
+> For the design rationale behind these boundaries, read [`ARCHITECTURE.md`](../ARCHITECTURE.md). Normative behavior lives in [`spec/SPECIFICATION.md`](../spec/SPECIFICATION.md); the hazard catalogue in [`spec/HAZARDS.md`](../spec/HAZARDS.md); invariants in [`INVARIANTS.md`](../INVARIANTS.md); the security dossier and internal adversarial-review history in [`docs/audits/REGISTRY.md`](audits/REGISTRY.md) (an independent external audit is still outstanding).
 
 ---
 
@@ -221,6 +221,7 @@ function recoverEvm(address token) external;                          // onlyOwn
 function recoverCoreSpot(bool dirToken) external;                     // onlyOwner
 function recoverPerpSurplus() external;                               // onlyOwner
 function emergencyClearRecovery() external;                           // onlyOwner
+function abandonStuckReturn() external;                              // onlyOwner
 
 function crank() external returns (bool progressed);                  // permissionless
 function snapshotNav(uint256 intervalId) external;                    // permissionless
@@ -242,7 +243,8 @@ function strategyValueWad() external view returns (uint256);
 | `snapshotNav` | anyone | Delegates to `opsSnapshotNav`: captures this interval's NAV **and the price it was measured at**, together, at one instant. One-shot per interval, only inside `Calendar.SNAPSHOT_WINDOW` (the settlement day), requires an idle engine. The vault **owner** calls it at `pointTime` to remove every caller's discretion over the price their interval weight is minted at (F4); anyone may call it for liveness. Optional in the common path — `settle` captures it itself when it runs inside the same window. |
 | `settle` | anyone | Delegates to `opsSettle`. Values the interval off the captured snapshot, never off the price of the instant *it* runs; past the snapshot window with nothing captured it reverts `NavNotSnapshotted` and the interval defers to the next checkpoint. |
 | `recoverEvm` / `recoverCoreSpot` / `recoverPerpSurplus` | owner | Recovery of **unaccounted** surplus only (see §4.6). |
-| `emergencyClearRecovery` | owner | Only for a stuck *surplus-recovery* intent (`RecoverSpotDir`, `RecoverSpotUsdc`, `RecoverPerpPhase1/2`) and only after `EMERGENCY_TIMEOUT` (3 days) — else `NotRecoveryIntent` / `TooEarly`. Asset-transfer intents can never be discarded. |
+| `emergencyClearRecovery` | owner | Only for a stuck *surplus-recovery* intent (`RecoverSpotDir`, `RecoverSpotUsdc`, `RecoverPerpPhase1/2`) and only after `EMERGENCY_TIMEOUT` (3 days) — else `NotRecoveryIntent` / `TooEarly`. Safe because those funds stay on Core and remain re-recoverable. |
+| `abandonStuckReturn` | owner | The one asset-transfer escape, for a `ReturnDir`/`ReturnUsdc` whose EVM credit was permanently lost. Three gates: owner-only, `RETURN_ABANDON_TIMEOUT` (30 days, ~720× any honest delay), and the Core source must actually have **decreased** — while it still holds the amount the leg is merely slow and `_verifyReturn`'s resend branch is live, so abandoning is refused (`ReturnNotStuck`). Writes the Core books down to the real balance (`LossReconciled`) and clears the intent. It records a loss that already happened: without it the leg can neither complete nor resend (A7) and the whole vault is frozen for good. A credit arriving later lands as unaccounted balance and is recovered through `recoverEvm`. |
 | `claimDeferred` | anyone | Retries a failed payout; pays **only the recorded recipient**. |
 
 Fee-route validation (`_validateRoute`): `operatorBps ≤ Phi.MAX_OPERATOR_BPS` (3819); a non-zero rate requires a non-zero operator address; a referrer requires a non-zero operator rate and `referrerBps ∈ [3819, 10000]`; a zero referrer must carry a zero `referrerBps`.
@@ -307,6 +309,7 @@ function recoverSleeveEvm(uint8 policy, uint256 assetIndex, uint256 tokenIndex) 
 function recoverSleeveCoreSpot(uint8 policy, uint256 assetIndex, bool dirToken) external;  // permissionless
 function recoverSleevePerpSurplus(uint8 policy, uint256 assetIndex) external;              // permissionless
 function clearSleeveRecovery(uint8 policy, uint256 assetIndex) external;                   // permissionless
+function abandonSleeveStuckReturn(uint8 policy, uint256 assetIndex) external;              // permissionless
 function registerVault(address vault) external;                     // factory only
 
 // views
@@ -332,7 +335,25 @@ Behavior worth knowing:
 - **`sweep`** rolls an expired interval's unclaimed inventory back into `accruing` exactly once, leaving liability unchanged.
 - **`capture`** turns an uncommitted balance above recorded liability into inventory — measured receipt only. A donation becomes pool inventory, never vault profit. **`capturePenalty`** preserves that direct path for legacy pools; in a strict Product Pool only settlement plus the exiting vault's directional token enter `(policy, directional asset)` escrow. Another whitelisted token remains ordinary donation inventory.
 - **Strict sleeves** are created only by `B4ProductFactory` for the immutable canonical policy and directional asset. `foldPenalty` zero-resets allowance, transfers only the recorded escrow into that sleeve, and starts the ordinary engine. `crankSleeve` is permissionless. `initiateSleeveExit` works only in `Calendar.freeExit`; only then can returned sleeve capital be captured into `accruing` and later claimed. `escrowHeld` is excluded from ordinary claim shortfall accounting while the sleeve is live.
-- **Sleeve owner-escapes.** A sleeve is created with `owner == pool`, so the pool is the only address that can satisfy the vault's `onlyOwner`. `cancelSleeveExit` relays `B4Vault.cancelExit` and is the pool-side half of the dead-feed escape (INVARIANTS row 20); it is refused unless the sleeve's exit is provably unable to finalize — the directional spot price reads zero **and** the sleeve still holds directional value, the exact complement of `_finalizeExit`'s deferral test — so it can never be used to grief a healthy sleeve exit. Honest bound on what it buys: while the feed is still dead, cancelling does **not** on its own restore a *directional* `foldPenalty` — `B4Vault.deposit` reverts `ZeroPrice` in its own directional branch (H-3) — it restores the settlement-only fold, returns the sleeve to the sync planner instead of pinning it on the exit machine, and makes it usable the instant the feed returns. `recoverSleeveEvm` / `recoverSleeveCoreSpot` / `recoverSleevePerpSurplus` relay the vault's own bounded `balance − recorded` recovery (HAZARDS B6); the recipient is the vault's immutable `owner`, i.e. this pool, and the arrival is admitted by measured delta into `accruing` + `liability`, so recovered surplus is distributed by reported weight like any other inventory. `recoverSleeveEvm` names a token by **whitelist index**, never by address, so everything it can move has a drain path; a non-whitelisted airdrop stays in the sleeve. `clearSleeveRecovery` relays `emergencyClearRecovery` and is mandatory alongside them: a recovery intent the venue never completes would otherwise block the sleeve's crank and strand its principal. None of these lets a caller choose an address, an amount or a recipient.
+> **`policy` is the policy ID, never the mask bit — and for Pro and Pro Max they are different
+> numbers.** A policy id `p` occupies mask bit `1 << (p − 1)`:
+>
+> | product | policy id | mask bit |
+> |---|---|---|
+> | Mini | 1 | 1 |
+> | B4 | 2 | 2 |
+> | Pro | **3** | **4** |
+> | Pro Max | **4** | **8** |
+>
+> Every entrypoint and mapping keyed by `policy` above takes the **id**; only `policyMask` uses
+> the bits. They agree for Mini and B4 and diverge for Pro and Pro Max, which is what makes the
+> confusion easy to make and hard to see. `penaltyEscrow(4, dir, 0)` for Pro returns a **silent
+> zero** — it reads Pro Max's escrow — rather than reverting, so a monitor concludes there is
+> nothing to fold. In an aggregate pool (mask 15) the sleeve forwarders would act on the wrong
+> product's sleeve instead of failing; in an isolated pool they revert `NotASleeve`, which is why
+> the mistake tends to survive testing and surface in production.
+
+- **Sleeve owner-escapes.** A sleeve is created with `owner == pool`, so the pool is the only address that can satisfy the vault's `onlyOwner`. `cancelSleeveExit` relays `B4Vault.cancelExit` and is the pool-side half of the dead-feed escape (INVARIANTS row 20); it is refused unless the sleeve's exit is provably unable to finalize — the directional spot price reads zero **and** the sleeve still holds directional value, the exact complement of `_finalizeExit`'s deferral test — so it can never be used to grief a healthy sleeve exit. Honest bound on what it buys: while the feed is still dead, cancelling does **not** on its own restore a *directional* `foldPenalty` — `B4Vault.deposit` reverts `ZeroPrice` in its own directional branch (H-3) — it restores the settlement-only fold, returns the sleeve to the sync planner instead of pinning it on the exit machine, and makes it usable the instant the feed returns. `recoverSleeveEvm` / `recoverSleeveCoreSpot` / `recoverSleevePerpSurplus` relay the vault's own bounded `balance − recorded` recovery (HAZARDS B6); the recipient is the vault's immutable `owner`, i.e. this pool, and the arrival is admitted by measured delta into `accruing` + `liability`, so recovered surplus is distributed by reported weight like any other inventory. `recoverSleeveEvm` names a token by **whitelist index**, never by address, so everything it can move has a drain path; a non-whitelisted airdrop stays in the sleeve. `clearSleeveRecovery` relays `emergencyClearRecovery` and is mandatory alongside them: a recovery intent the venue never completes would otherwise block the sleeve's crank and strand its principal. `abandonSleeveStuckReturn` relays `abandonStuckReturn` for the same reason and is mandatory on the same grounds — it is the only escape from a Core→EVM leg whose credit was permanently lost, and without the forwarder that escape did not exist for a sleeve at all, leaving **pooled** capital permanently strandable where a user vault's was not (the L-1 gap, repeated by A6 and closed by A9). None of these lets a caller choose an address, an amount or a recipient.
 - Untrusted token reads go through `_safeBalanceOf`: a `staticcall` with gas capped at `TOKEN_READ_GAS = 100_000` and the return copy bounded to 32 bytes, so a hostile token can neither revert, OOG, nor return-bomb the loop.
 
 **The pool may NOT:** be administered, paused or upgraded; hold authority over any vault; swap assets; or grow its liability other than by measured receipt.
@@ -481,5 +502,5 @@ Deliberate exclusions matter as much as inclusions: carry-style operation is an 
 
 - [`ARCHITECTURE.md`](../ARCHITECTURE.md) — deep design rationale for every boundary above
 - [`INVARIANTS.md`](../INVARIANTS.md) — the invariant list these contracts are built to preserve
-- [`REPORT.md`](audits/REPORT.md) — status dossier and internal adversarial-review rounds; an independent external audit is a mandatory unmet release gate · [`SLITHER.md`](audits/SLITHER.md) — static-analysis triage
+- [`docs/audits/REGISTRY.md`](audits/REGISTRY.md) — status dossier and internal adversarial-review rounds; an independent external audit is a mandatory unmet release gate · [`SLITHER.md`](audits/SLITHER.md) — static-analysis triage
 - [`spec/SPECIFICATION.md`](../spec/SPECIFICATION.md) · [`spec/WHITEPAPER.md`](../spec/WHITEPAPER.md) · [`spec/HAZARDS.md`](../spec/HAZARDS.md) · [`spec/SECURITY_MODEL.md`](../spec/SECURITY_MODEL.md) · [`spec/REQUIREMENTS.md`](../spec/REQUIREMENTS.md) · [`spec/TEST_PLAN.md`](../spec/TEST_PLAN.md)

@@ -110,9 +110,9 @@ contract B4Vault is B4VaultEngine {
     /// @notice Select an enabled policy.  In configured pools this is an immutable
     ///         product-domain transition: only an equal-or-higher product is accepted;
     ///         downscaling requires a normal exit and a new vault.
-    function selectPolicy(address strategy, uint256 scaleWad) external onlyOwner {
+    function selectPolicy(address strategy, uint256 scaleWad) external onlyOwner nonReentrant {
         if (exitShareWad != 0) revert ExitPending();
-        _delegate(abi.encodeCall(B4VaultOps.opsSelectPolicy, (strategy, scaleWad)));
+        _delegateTo(recovery, abi.encodeCall(B4VaultRecovery.opsSelectPolicy, (strategy, scaleWad)));
     }
 
     /// @dev Factory-resolved strategy targets are passed into initialization instead of
@@ -164,6 +164,17 @@ contract B4Vault is B4VaultEngine {
             valueWad += _toWad(received, _usdc.evmDecimals); // fixed 1 USD (C3)
         }
         entryLedgerWad += valueWad;
+        // If a settlement snapshot for a not-yet-settled interval is already frozen, `settle`
+        // re-anchors `entryLedgerWad` from that frozen `settleNavWad` — captured BEFORE this
+        // deposit — which would silently drop this principal from the basis, so it reappears as
+        // phantom profit at the next checkpoint and mints pool weight on the depositor's own
+        // capital (weight integrity, INVARIANTS #19; the deposit-in-window residual of C-1/F4).
+        // Keep the frozen NAV consistent with the raised ledger. A stale snapshot for an
+        // interval that never settles is harmless: `_captureNav` recomputes NAV from the live
+        // composition, so this can never double-count.
+        if (settleNavIdPlusOne > lastSettledPlusOne) {
+            settleNavWad += valueWad;
+        }
         emit Deposited(dirAmount, usdcAmount, valueWad, entryLedgerWad);
     }
 
@@ -271,15 +282,19 @@ contract B4Vault is B4VaultEngine {
     /// @notice Owner escape for a stuck SURPLUS-RECOVERY intent only (A6): the funds stay
     ///         on Core and remain re-recoverable. Asset-transfer intents can never be
     ///         discarded — with A2/A3 they always progress after the timeout.
+    /// @notice Owner escape for a Core→EVM return whose credit never arrived — realizes the loss
+    ///         and frees the vault (A7's permanent-wedge residual). Gated on 30 days AND on the
+    ///         source having actually decreased; see `B4VaultRecovery.opsAbandonStuckReturn`.
+    function abandonStuckReturn() external onlyOwner {
+        _delegateTo(recovery, abi.encodeCall(B4VaultRecovery.opsAbandonStuckReturn, ()));
+    }
+
+    /// @dev Body moved to `B4VaultRecovery` so this contract keeps only the dispatcher: both
+    ///      escapes are cold-path owner calls, and `B4Vault` had run out of EIP-170 headroom
+    ///      while the recovery module has ~17 KB. The external selector is unchanged, which
+    ///      matters — `B4Pool.clearSleeveRecovery` relays it for pool-owned sleeves.
     function emergencyClearRecovery() external onlyOwner {
-        IntentKind k = intent.kind;
-        if (
-            k != IntentKind.RecoverSpotDir && k != IntentKind.RecoverSpotUsdc
-                && k != IntentKind.RecoverPerpPhase1 && k != IntentKind.RecoverPerpPhase2
-        ) revert NotRecoveryIntent();
-        if (block.timestamp < intent.createdAt + EMERGENCY_TIMEOUT) revert TooEarly();
-        emit EmergencyCleared(k);
-        _clearIntent();
+        _delegateTo(recovery, abi.encodeCall(B4VaultRecovery.opsEmergencyClearRecovery, ()));
     }
 
     // ================================================================= views

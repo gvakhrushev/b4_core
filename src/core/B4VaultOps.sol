@@ -41,29 +41,6 @@ contract B4VaultOps is B4VaultEngine {
         _;
     }
 
-    // ================================================================= policy
-
-    /// @notice Read a strategy once, then bind its resolved targets.  A configured
-    ///         pool validates the exact canonical strategy pair, scale and direction of
-    ///         the product transition before any vault state changes.
-    function opsSelectPolicy(address strategy, uint256 scaleWad) external onlyInitialized {
-        (int256 g, int256 f) = IStrategy(strategy).targets();
-        if (!IB4PoolPolicy(pool).policyAllowedForVault(address(this), strategy, g, f, scaleWad)) {
-            revert BadPolicy();
-        }
-        if (scaleWad == 0 || scaleWad > Phi.MAX_SCALE) revert BadPolicy();
-        if (Phi.abs(g) > Phi.MAX_BASE_TARGET || Phi.abs(f) > Phi.MAX_BASE_TARGET) {
-            revert BadPolicy();
-        }
-        int256 rg = g * int256(scaleWad) / int256(Phi.WAD);
-        int256 rf = f * int256(scaleWad) / int256(Phi.WAD);
-        if (Phi.abs(rg) > Phi.PHI || Phi.abs(rf) > Phi.PHI) revert BadPolicy();
-        growthTarget = rg;
-        fallTarget = rf;
-        IB4PoolPolicy(pool).setVaultPolicy(IB4PoolPolicy(pool).policyIdForStrategy(strategy));
-        emit PolicySelected(strategy, rg, rf, scaleWad);
-    }
-
     // ================================================================= settlement snapshot
 
     /// @notice Capture the interval's valuation instant — permissionless, one-shot, and confined
@@ -177,7 +154,28 @@ contract B4VaultOps is B4VaultEngine {
         // it must use what was captured, or defer the interval.
         uint256 pxWad = _snapshotNav(intervalId);
         // Idle ⇒ every in-flight leg has credited its bucket; NAV is exact.
-        uint256 nav = settleNavWad;
+        //
+        // Capped by what the books say the vault holds NOW, valued at the SAME frozen price.
+        // Freezing a NAV promises the interval is valued at one instant, which makes it wrong the
+        // moment the vault's value moves for a reason that is not the price — and the window is
+        // three days long, so several such movers are reachable: a deposit raises the books
+        // (A1 keeps the snapshot in step), an exit scales them down (A5 does), and a realized
+        // loss lowers them with nothing tracking it at all. The target ramps away from zero right
+        // after the settlement point, so the crank re-opens a position and funds margin inside
+        // the window; an adverse close there is written down by `_reconcile` while the snapshot
+        // still values the vault as it stood before. Measured on the pre-cap tree: live NAV
+        // 117,000 against a frozen 120,000, so settle charged a fee and minted pool weight on
+        // 3,000 of capital the venue had already taken.
+        //
+        // The cap is what makes that a closed class rather than a list of patched movers: no
+        // future mover can raise the settled NAV above the recorded books, whether or not anyone
+        // remembers to hook it. Re-valuing at the LIVE price instead would reopen F4 — the settle
+        // caller would choose the price again — so the books are valued at `pxWad`, the instant
+        // the snapshot pinned. Only the downward direction is covered here by construction; the
+        // upward one still needs its mover to raise the snapshot (A1), because a cap cannot
+        // invent value the snapshot never recorded.
+        uint256 nav = _navWad(pxWad);
+        if (settleNavWad < nav) nav = settleNavWad;
         uint256 e = entryLedgerWad;
         uint256 profit = nav > e ? nav - e : 0;
         uint256 virtualFee = Phi.wmul(profit, Phi.FEE_F);
@@ -254,7 +252,6 @@ contract B4VaultOps is B4VaultEngine {
         }
     }
 
-
     // ================================================================= planners
 
     /// @notice One planning step under the crank: exit machine if an exit is pending,
@@ -262,6 +259,39 @@ contract B4VaultOps is B4VaultEngine {
     function opsPlanStep() external onlyInitialized returns (bool) {
         if (exitShareWad != 0) return _planExitStep();
         return _planSyncStep();
+    }
+
+    /// @dev Write down spot principal to the real Core spot balance — the spot analogue of
+    ///      `_reconcile` (which covers only perp margin). A vault's own spot balance normally
+    ///      only GROWS from outside (donations add; nothing external subtracts), so this is a
+    ///      no-op on the happy path. But a cross-margin liquidation reaching spot USDC, or a
+    ///      partial `spotSend`, can leave a booked bucket ABOVE the real balance; a Return leg
+    ///      for that phantom remainder then proves `decreased` yet never reaches
+    ///      `received >= evmNeeded` and livelocks the exit while NAV stays overstated (audit
+    ///      M-1, second clause). Called only at an idle engine (its callers require it), so any
+    ///      gap is a realized loss, not an in-flight leg of our own.
+    function _reconcileSpot() internal {
+        uint64 dirBal = _spotBal(_dir.coreToken);
+        if (coreDirWei > dirBal) {
+            emit LossReconciled(coreDirWei - dirBal);
+            coreDirWei = dirBal;
+        }
+        // Rotation and margin USDC share one Core token; funding is headroom-capped so their
+        // sum always fits uint64. Compare the SUM to the real balance, absorbing any shortfall
+        // from rotation (strategy) first, then margin.
+        uint64 rot = coreUsdcRotatedWei;
+        uint64 marg = coreUsdcMarginWei;
+        uint64 usdcBal = _spotBal(_usdc.coreToken);
+        // uint256 sum so this can NEVER revert-on-overflow: a revert here runs on the exit
+        // crank and would re-freeze the very exit this heals.
+        uint256 booked = uint256(rot) + marg;
+        if (booked > usdcBal) {
+            uint256 loss = booked - usdcBal;
+            uint64 fromRot = loss < rot ? uint64(loss) : rot; // ≤ rot
+            coreUsdcRotatedWei = rot - fromRot;
+            coreUsdcMarginWei = marg - uint64(loss - fromRot); // loss − fromRot ≤ marg
+            emit LossReconciled(uint64(loss));
+        }
     }
 
     /// @dev One exit step: flatten to raw zero → harvest → reconcile → return all Core
@@ -278,6 +308,7 @@ contract B4VaultOps is B4VaultEngine {
             return true;
         }
         _reconcile();
+        _reconcileSpot(); // write down spot principal above the real Core balance (audit M-1)
         if (perpMargin6 > 0) {
             _startFromPerp(Purpose.Margin, perpMargin6);
             return true;
@@ -363,6 +394,19 @@ contract B4VaultOps is B4VaultEngine {
         uint256 keep = Phi.WAD - x;
         entryLedgerWad = Phi.wmul(e, keep);
         rewardBaseWad = Phi.wmul(rewardBaseWad + Phi.wmul(clientShare, x), keep);
+        // Keep a frozen settlement snapshot consistent with the capital that just left — the
+        // EXIT-side counterpart of the deposit-side raise in `B4Vault.deposit` (audit A1).
+        // `settle` re-anchors `entryLedgerWad` from the frozen `settleNavWad`, and the settlement
+        // point sits inside a `freeExit` transition zone, so an exit between `snapshotNav` and
+        // `settle` is both reachable and penalty-free. Left stale, the snapshot still values the
+        // withdrawn share: `entryLedgerWad` scales by `keep` while the NAV does not, so the
+        // exited notional reads as profit. Measured on a 50% exit at a 130k NAV over a 100k
+        // entry: settle took 80k of profit where 15k was real — 5.3x — minting pool weight
+        // against a shared basket on capital the vault no longer held (INVARIANTS #19, the
+        // exit-in-window residual of F4). Scaling by the same `keep` both sides use restores it.
+        if (settleNavIdPlusOne > lastSettledPlusOne) {
+            settleNavWad = Phi.wmul(settleNavWad, keep);
+        }
         // A full exit (`keep == 0`) therefore zeroes the standing base, as SPEC §9 requires.
         // The call-ORDER asymmetry this used to leave — `settle` then `exit` kept the weight
         // already reported to the pool, `exit` then `settle` never reported it — is closed on
@@ -396,7 +440,10 @@ contract B4VaultOps is B4VaultEngine {
             // token sitting there (audit H-1). try/catch for the same reason the capture
             // below is wrapped: a pool-side failure must never freeze an exit.
             if (s.poolWad > 0) {
-                try IB4PoolVault(pool).beginPenalty() {} catch {}
+                try IB4PoolVault(pool).beginPenalty() {}
+                catch {
+                    emit PenaltyRoutingDegraded(false);
+                }
             }
             dirEvm = _payBucket(_dir.evmToken, dirEvm, x, s);
             usdcRotatedEvm = _payBucket(_usdc.evmToken, usdcRotatedEvm, x, s);
@@ -408,7 +455,10 @@ contract B4VaultOps is B4VaultEngine {
             // can never freeze this exit (V3-POOL-1) — the penalty is safe in the pool and
             // any keeper capture() re-accounts it later.
             if (s.poolWad > 0) {
-                try IB4PoolVault(pool).capturePenalty() {} catch {}
+                try IB4PoolVault(pool).capturePenalty() {}
+                catch {
+                    emit PenaltyRoutingDegraded(true);
+                }
             }
         }
 
@@ -434,5 +484,4 @@ contract B4VaultOps is B4VaultEngine {
         _payOut(token, pool, toPool);
         return bucket - toOwner - toOperator - toPool;
     }
-
 }

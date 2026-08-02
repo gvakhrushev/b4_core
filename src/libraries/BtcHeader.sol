@@ -7,7 +7,7 @@ pragma solidity 0.8.28;
 ///         never taken from the message envelope.
 /// @dev Hash is produced in Bitcoin-internal byte order (the raw dSHA256 output, i.e. the
 ///      byte-reversed form of the conventional display hex). The Citrea light client's
-///      stored convention must be confirmed at integration — funded gate (docs/audits/REPORT.md).
+///      stored convention must be confirmed at integration — funded gate (`docs/audits/REGISTRY.md`).
 library BtcHeader {
     uint256 internal constant HEADER_LENGTH = 80;
     /// Bitcoin halving period in blocks.

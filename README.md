@@ -11,7 +11,7 @@ venue (HyperEVM + HyperCore), one accounting model, no admin.
 > [!WARNING]
 > **Pre-mainnet. Not externally audited. Do not use with real funds.**
 > The mandatory funded network gates ([`spec/SECURITY_MODEL.md`](spec/SECURITY_MODEL.md) §5)
-> are unmet, and venue semantics cannot be proven off-chain. See [`REPORT.md`](docs/audits/REPORT.md) for
+> are unmet, and venue semantics cannot be proven off-chain. See [`docs/audits/REGISTRY.md`](docs/audits/REGISTRY.md) for
 > exactly what is and is not proven.
 
 ## What the protocol protects — by construction
@@ -19,14 +19,14 @@ venue (HyperEVM + HyperCore), one accounting model, no admin.
 The protocol does not guess tops or bottoms. It removes the ways a cycle position dies. Each
 protection is **structural** — enforced by code and calendar geometry, not by promises — and
 the table marks what is live in the shipped contracts versus specified-and-tested but pending
-the leverage-sizing redo (full status: [REPORT.md](docs/audits/REPORT.md)):
+the leverage-sizing redo (full status: [`docs/audits/REGISTRY.md`](docs/audits/REGISTRY.md)):
 
 | Threat | Structural protection | Status |
 |---|---|---|
 | Admin/key compromise | **There are no keys.** No upgrade proxy, no pause, no privileged fund mover — nothing for an attacker or insider to take over. | shipped |
 | Riding the bear | **The calendar steps aside.** A pure function of time since the proven halving rotates B4/Pro out of the market for the fall regime — the phase where buy-and-hold takes its −76…−84 % cycle drawdown. | shipped |
 | Chasing price | **Sized once, then held.** Positions are sized when the calendar rotates and never re-traded against a moving NAV — no volatility drag, no discretionary re-entry. | shipped |
-| Stuck execution | **Self-healing by anyone.** Async execution is proven by venue state reads; every step is permissionlessly crankable. Worst reachable state is delayed liveness — never fund loss, never frozen funds. | shipped |
+| Stuck execution | **Self-healing by anyone.** Async execution is proven by venue state reads; every step is permissionlessly crankable, so no step depends on a privileged party showing up. Accounting stays conservative under every stall: nothing is credited that was not measured, so a stuck vault never misprices or mis-pays. **The one case that is not self-healing is bounded, not denied.** If the venue takes a Core→EVM debit and the credit is then permanently lost, the leg can neither complete nor safely resend — resending after a proven debit could send twice (`spec/HAZARDS.md` A7). That capital is gone, and no contract can undo it. What the vault does not do is add itself to the loss: after 30 days the owner calls `abandonStuckReturn`, which writes the books down to what Core actually holds and frees the vault, and a credit arriving later still reaches the owner as recoverable surplus. So the honest claim is: **funds already lost by the venue stay lost; the rest of the vault does not go with them.** Reaching that state at all needs a venue failure the funded gates exist to characterise. | shipped |
 | Exit denial | **The exit cannot be blocked.** Exit liveness depends on no operator, keeper, oracle update or pool interaction; penalties route through guarded one-way paths. | shipped |
 | Liquidation by an ordinary swing | **Stops sit at confirmed extremes.** A leveraged position's liquidation is placed by margin size at a price the market already printed and failed to regain — the confirmed low (longs) or peak (shorts) — never a stop order. Verified on every completed cycle: the structural stop was never touched, while a flat-`φ` position is liquidated by the +99–103 % bear rallies (shorts) or the −64 % COVID crash (longs). | **shipped** (margin control, both sides — the engine sizes the position so the venue liquidation sits at the structural stop; [state machine](docs/design/STRUCTURAL-STATE-MACHINE.md)) |
 
@@ -35,8 +35,8 @@ and Pro Max return a multiple of `HODL` while drawing down materially less**, no
 price but by refusing to hold through the phase that produces the damage. (Mini holds `HODL`'s
 exposure by design, so it tracks `HODL`'s drawdown — its edge is the pool, not less risk.) The
 structural leverage that makes Pro Max's leverage *survivable* is shipped as margin control.
-The single-vault benchmark below deliberately does not sample anchor windows, so it exercises
-the engine's safe genesis-flat fallback rather than presenting a structural-leverage result.
+The benchmark below samples the anchor windows exactly as the permissionless keeper does, so
+it measures the shipped structural product — not the genesis-flat fallback it used to run.
 
 ## Documentation
 
@@ -53,7 +53,7 @@ implementation is judged against lives in [`spec/`](spec/) — citations of the 
 `HAZARDS A2` or `SPECIFICATION §4` refer to it.
 
 Implementation records: [`ARCHITECTURE.md`](ARCHITECTURE.md) (design decisions) ·
-[`REPORT.md`](docs/audits/REPORT.md) (security dossier + audit history) ·
+[`docs/audits/REGISTRY.md`](docs/audits/REGISTRY.md) (security dossier + audit history) ·
 [`SLITHER.md`](docs/audits/SLITHER.md) (static-analysis triage).
 
 ## How it works
@@ -184,27 +184,39 @@ return is the real, compounded, post-fee value a holder would have taken.
 | HODL (raw BTC, no vault, no fee) | 5,261.092x | 1.0× | ~84 % |
 | Mini (spot hold — tracks HODL) | 4,813.714x | 0.915× | 84.45 % |
 | **B4** | **345,257.166x** | **65.625×** | **73.85 %** |
-| **Pro** | **1,317,056.456x** | **250.339×** | **73.85 %** |
-| **Pro Max** | **31,753,217.433x** | **6,035.480×** | **1.96 %** |
+| **Pro** | **1,311,593.877x** | **249.302×** | **73.85 %** |
+| **Pro Max** | **117,002,290.565x** | **22,239.2×** | **75.40 %** |
 
 ### Per cycle — realized return and drawdown side by side
 
 | Cycle | | HODL | Mini | B4 | Pro | Pro Max |
 |---|---|---:|---:|---:|---:|---:|
-| **2012→2016** | return | 52.3x | 50.8x | 137.2x | 230.8x | **660.4x** |
-| | max DD | — | 84.45 % | **73.85 %** | **73.85 %** | **0.00 %** |
-| **2016→2020** | return | 13.6x | 13.2x | 51.9x | 73.2x | **180.1x** |
-| | max DD | — | 83.44 % | **64.04 %** | **64.04 %** | **1.96 %** |
-| **2020→2024** | return | 7.3x | 7.1x | 28.6x | 45.8x | **125.1x** |
-| | max DD | — | 76.81 % | **53.02 %** | **53.02 %** | **0.73 %** |
-| **2024→now**\* | return | 1.01x | 1.00x | 1.70x | 1.70x | **2.13x** |
-| | max DD | — | 53.33 % | **28.15 %** | **28.15 %** | **0.00 %** |
+| **2012→2016** | return | 52.3x | 50.8x | 137.2x | 230.3x | **660.0x** |
+| | max DD | — | 84.45 % | **73.85 %** | **73.85 %** | 75.40 % |
+| **2016→2020** | return | 13.6x | 13.2x | 51.9x | 73.1x | **277.7x** |
+| | max DD | — | 83.44 % | **64.04 %** | **64.04 %** | 71.86 % |
+| **2020→2024** | return | 7.3x | 7.1x | 28.6x | 45.8x | **253.0x** |
+| | max DD | — | 76.81 % | **53.02 %** | **53.02 %** | 58.11 % |
+| **2024→now**\* | return | 1.01x | 1.00x | 1.70x | 1.70x | **2.52x** |
+| | max DD | — | 53.33 % | **28.15 %** | **28.15 %** | 48.86 % |
 
-<sub>\* cycle in progress: not yet exited, so read as an unrealized `navWad` mark.</sub>
+<sub>\* cycle in progress: not yet exited, so read as an unrealized mark.</sub>
 
-Read the two rows together: **more return, less drawdown.** B4/Pro/Pro Max cut ~10 pp off Mini's
-cycle drawdown because they step out of the market (into USDC or a short) during the bear that
-produces it. Selling the whole spot position to stand up the short makes Pro a full-size short of
+Drawdown is measured on **mark-to-market equity** — `navWad()` plus the perp's unrealized PnL —
+not on NAV alone. NAV excludes unrealized PnL by design (B3), which is right for settlement and
+useless as a risk gauge for a leveraged product: Pro Max holds `spot = 0`, so its entire position
+is the one leg NAV cannot see, and measured on NAV its drawdown reads ~0 whatever the position
+does. An earlier version of this table published that ~0 as if it were the product's risk.
+
+Read the two rows together, and read *where* the drawdown happens — that is the whole mechanism.
+**Mini sets its worst drawdown inside the fall zone in every one of the four cycles; B4, Pro and
+Pro Max never do, in any cycle.** They are in USDC or short there, so what remains for them is
+ordinary intra-bull volatility in the growth or recovery zone — it gives back accumulated
+*profit*, not principal — and it lands 9–19 pp under Mini's bear. The rotating three take their
+worst hits on the *same days* as each other (the April-2013 crash sets all three in cycle 1),
+because in the growth zone they are all ~1× long; the point-or-two spread between them there is
+composition, not a risk property of the levered product. Selling the whole spot
+position to stand up the short makes Pro a full-size short of
 the fall, so it clears B4 by a wide margin (1.317M× vs 345k×); Pro Max adds the `φ` leg on top. The
 short's edge is largest in cycle 1 (the deepest fall) and compresses in the shallower later
 cycles. Mini holds spot in both regimes and pays only the operator's real cut (≈ 1.72 % of
@@ -220,8 +232,8 @@ larger remainder buys.
 > shows the mechanism faithfully; it cannot promise a live keeper reproduces the multiple to the
 > digit.
 >
-> **The [V6-M-2](docs/audits/AUDIT-V6.md) engine fix that lets the short self-fund passed its
-> adversarial fan-out audit ([AUDIT-V7](docs/audits/AUDIT-V7.md)) with no Critical/High — every
+> **The [V6-M-2](docs/audits/REGISTRY.md) engine fix that lets the short self-fund passed its
+> adversarial fan-out audit ([AUDIT-V7](docs/audits/REGISTRY.md)) with no Critical/High — every
 > finding is low and NAV-preserving** (no fund loss, no freeze). Known bounded edges: the
 > self-funded position sizes on strategy value net of the carved margin, so it lands a few percent
 > under `|perpF|·NAV` at the BTC perp's `maxLev = 40` (more at low `maxLev`); a mixed BTC+USDC
@@ -230,11 +242,18 @@ larger remainder buys.
 > **Pro Max is not `φ`-levered for the whole cycle under BTC-only funding.** A leveraged *long*
 > needs margin *on top* of 100 % spot, which selling spot cannot provide — so Pro Max runs **1× in
 > the growth phase**; its `φ` edge is the fall short (funded by selling spot) and the recovery long
-> (funded by the closed short). Its downside is also understated twice: the test venue models **no
-> liquidation** (a `φ` leg through a deep drawdown would be liquidated live), and `navWad` excludes
-> unrealized perp PnL (B3). The engine uses structural margin control when anchors are confirmed;
-> this deliberately unsampled backtest falls back to flat `φ`, so it does not measure that
-> confirmed-anchor path.
+> (funded by the closed short). Its downside **remains understated even after the mark-to-market
+> fix**: the test venue models **no liquidation**. That mattered a great deal while this run was
+> flat-`φ`, because the survival record above says a flat-`φ` position is liquidated by the 2015
+> (+103 %) and 2018 (+99 %) bear rallies and the 2020 COVID crash (−64 %) — all three inside the
+> benchmark's window. It matters much less now that the run samples anchors and sizes structurally:
+> the structural stop sits at a confirmed extreme the market printed and failed to regain, and
+> across every completed cycle it was **never touched**. So the figures describe a configuration
+> the historical record does not liquidate, rather than one that only survives because the mock
+> cannot liquidate it.
+>
+> What remains understated is the tail the record cannot speak to: a future cycle that breaks a
+> confirmed extreme would liquidate, and no backtest can price that.
 
 ### The survival record — the safety mechanism, measured
 
@@ -272,7 +291,62 @@ product; it becomes common claim inventory only after the sleeve's free-window e
 Max cannot silently dilute Mini while either position is live. The precise lifecycle and stop
 boundaries are in [Fees, penalty and the pool](docs/07-fee-routing.md#strict-product-pools-carry-the-strategy-with-the-penalty).
 
-**Why no multiplier is given.** Weight is *your own* accumulated performance-fee share — it scales
+**What it is worth, measured.** The closed-population runner drives the real contracts across the
+whole history with ten equal daily depositors, two of whom exit the same day (`r = 20 %` churn).
+One participant simply stays. Its cumulative deposits, its final vault NAV and the claims it
+actually received are all read off the contracts:
+
+| Product | Pool claims, valued at the END | as a multiple of deposits | share of that participant's final total |
+|---|---:|---:|---:|
+| Mini | 188,607 | **3.79×** | **2.6 %** |
+| B4 | 167,771 | 3.37× | 0.04 % |
+| Pro | 167,989 | 3.37× | 0.010 % |
+| Pro Max | 6,058 | 0.12× | 0.00003 % |
+
+**The valuation is the whole point, and it used to be wrong.** The penalty is paid **in kind** and
+sits in the pool until a distribution point, so it keeps moving with the asset — both while it
+waits and after it is claimed. Summing each claim at the price of the day it landed prices a 2013
+BTC claim at $130 for ever; valued at the end, the same claims are **16–18× larger** (Mini
+10,391 → 188,607). That correction is the difference between the pool looking like rounding and
+being Mini's entire edge.
+
+**Pro Max is the exception, and the reason is the payout form, not idle capital.** The penalty is
+not held passively for any product: `foldPenalty` deposits it into that product's sleeve — an
+ordinary vault running the same strategy, engine and structural stop — and cranks it. Measured
+over the run, the Pro Max sleeve holds a perp on **4,717 of 4,982 days**. It is working.
+
+What differs is what the sleeve is holding when a free window realizes it, and therefore what the
+claim is paid in. One participant's claims, in kind:
+
+| Product | claimed in the asset | claimed in settlement | appreciation to the end |
+|---|---:|---:|---:|
+| Mini | 2.895 BTC | — | 18.2× |
+| B4 | 2.570 BTC | $303 | 16.0× |
+| Pro | 2.570 BTC | $367 | 15.9× |
+| Pro Max | 0.0036 BTC | $5,556 | 1.11× |
+
+A leveraged position is a **settlement-margined perp**, so realizing it returns settlement token.
+Pro Max's claim is 99.9 % USDC and cannot appreciate in the claimer's hands afterwards, while
+Mini's is 100 % the asset and rides the next thirteen years of it.
+
+The sleeve itself is the most valuable of the four: on identical inflows (9,524 folds for every
+product) the Pro Max sleeve peaks at **24,763** in mark-to-market equity against **18,366** for
+the unlevered ones. The leverage works on the penalty exactly as it works on a deposit. What the
+stayer ends up holding is the settlement token it was realized into, and that is where the gap
+comes from — the payout form, not the strategy.
+
+**B4 and Pro claim almost the same, and that is composition, not a wash.** Their BTC legs are
+identical to the digit (2.570 BTC each) because in the growth regime they ARE the same product —
+both target `1`. Pro's short shows up only in the settlement leg, $367 against B4's $303, a real
++21 %. At the end price the BTC leg is worth $167,440 and that $64 edge is 0.04 % of the total, so
+it disappears in the rounding. The reason it stays small is structural: the sleeve is realized
+into the basket at **every** free window, four times a cycle, so a fall-zone short never
+accumulates across a cycle the way the growth-zone asset does.
+
+The pool is where Mini earns. For the leveraged products it is a rounding error against their own
+strategy return.
+
+**Why no universal multiplier is given.** Weight is *your own* accumulated performance-fee share — it scales
 with your vault's dollar profit (Pro Max's absolute profit dwarfs Mini's, so it earns
 disproportionately more weight, not the same cut). Both the numerator (penalty volume) and the
 denominator (every *other* participating vault's weight) depend on who else uses the protocol at
@@ -290,8 +364,8 @@ multiple. The code-grounded numbers are the worked settlement/exit examples in
 > trading fees; perps were not liquid before ~2016, so early-cycle Pro/Pro Max are
 > hypotheticals; the population simulation's pool income uses explicit 10% / 20% behavioural
 > assumptions. The `StructuralLeverage` math, both anchor ratchets and the vault-engine margin
-> control are shipped and tested; this benchmark's lack of anchor samples is why it uses its
-> documented flat-`φ` fallback.
+> control are shipped and tested, and this benchmark samples the anchor windows, so the figures
+> are the structural path rather than the flat fallback.
 
 Method and every omitted cost: [Backtest](docs/11-backtest.md).
 
@@ -340,11 +414,9 @@ docs/         guides, plus the audit (docs/audits/) and design (docs/design/) re
 everything under `docs/` explains rather than binds. The specification began life as a
 standalone clean-room package one directory up, which for a while left a second, unversioned,
 byte-identical copy of all six documents beside the repository — two sets that could only drift
-apart, with only one of them the code was judged against. There is now one copy, here. The
-prompt the build was handed over on is kept as provenance at
-[`docs/design/CLEANROOM-HANDOFF.md`](docs/design/CLEANROOM-HANDOFF.md); it records *why* the code
-is shaped the way it is, chiefly that `spec/HAZARDS.md` is binding design input and not
-background reading.
+apart, with only one of them the code was judged against. There is now one copy, here.
+`spec/HAZARDS.md` is binding design input, not background reading — it states so itself, and it
+is why the async surface is shaped the way it is.
 
 ## Security
 

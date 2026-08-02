@@ -138,21 +138,47 @@ library StructuralLeverage {
     }
 
     // ================================================================= §7b state machine
-    // The corrected sizing per docs/design/STRUCTURAL-STATE-MACHINE.md. ONE fixed stop:
-    // `stop = extreme ∓ 0.618·(extreme − prevExtreme)`. Two regimes — window (extreme not
-    // confirmed ⇒ each DCA slice uses its own price `p` as the extreme estimate) and post-pivot
-    // (extreme confirmed ⇒ the stop is FIXED for every entry, only the leverage varies). Long
-    // and short are exact mirrors. Leverage always divides by the ENTRY price. `INV_PHI = 1/φ`.
+    // The corrected sizing per docs/design/STRUCTURAL-STATE-MACHINE.md. Two regimes — window
+    // (extreme not confirmed ⇒ each DCA slice uses its own price `p` as the extreme estimate) and
+    // post-pivot (extreme confirmed ⇒ the product's base `g`-stop CLAMPED between the two
+    // anchors, so it moves with the entry and the leverage follows from where it lands). Long and
+    // short are exact mirrors, refusal included. Leverage always divides by the ENTRY price.
 
     /// @notice Structural stop for a leveraged LONG (Pro Max). `Pb` = previous cycle bottom;
-    ///         `B` = this cycle's confirmed 62-window low, or 0 in the window regime. Window
-    ///         ⇒ anchor is the entry `p`; post-pivot ⇒ anchor is `B` (stop fixed, independent
-    ///         of the entry). Returns 0 on no positive delta.
+    ///         `B` = this cycle's confirmed 62-window low, or 0 in the window regime.
+    ///
+    ///         WINDOW (`B == 0`): the extreme is not yet printed, so each DCA slice uses its own
+    ///         price as the low estimate — `stop = p − (p − Pb)/φ`.
+    ///
+    ///         POST-PIVOT (`B` confirmed): the base is the product's own `g`-leverage stop,
+    ///         `p·(1 − 1/φ) = p/φ²`, bounded on BOTH sides by the two anchors:
+    ///           * capped at `B` — the liquidation may never sit ABOVE the printed bottom, or a
+    ///             routine retest of that bottom closes the position. This is what de-levers a
+    ///             HIGH entry (the mirror of a short entered deep into the fall);
+    ///           * floored at `MinStop = B − (B − Pb)/φ` — the previous cycle's bottom is the
+    ///             second anchor, and it is what LIFTS leverage above the flat base near the low.
+    ///
+    ///         So `φ` is the base and the anchors bend it either way, which is the whole point of
+    ///         the second anchor. An earlier revision pinned the post-pivot stop to a single fixed
+    ///         `MinStop` for every entry; that made the flat-`φ` band unreachable and, on the short
+    ///         side, put liquidation inside the printed extreme. Returns 0 on no positive delta.
     function longStop(uint256 p, uint256 Pb, uint256 B) internal pure returns (uint256) {
         uint256 a = B == 0 ? p : B; // window: p is the low estimate; post: the confirmed low
-        if (a <= Pb) return 0;
-        uint256 drop = Phi.wmul(a - Pb, Phi.INV_PHI); // 0.618·(a − Pb)
-        return a > drop ? a - drop : 0;
+        if (a <= Pb) {
+            // Mirror of the short: in the WINDOW there is no positive delta to size against, so
+            // refuse. POST-PIVOT it means the promoted `Pb` is wrong, and refusing would hold the
+            // product flat for the whole terminal-growth leg over one bad anchor — degrade to the
+            // one-anchor rule instead, still capped at the printed bottom `B`.
+            if (B == 0) return 0;
+            uint256 flatOnly = p - Phi.wmul(p, Phi.INV_PHI);
+            return flatOnly > B ? B : flatOnly;
+        }
+        uint256 minStop = a - Phi.wmul(a - Pb, Phi.INV_PHI); // a − 0.618·(a − Pb)
+        if (B == 0) return minStop; // window: the per-slice stop IS this
+        if (p <= minStop) return 0; // refusal: a long stop at/above its own entry
+        uint256 flat = p - Phi.wmul(p, Phi.INV_PHI); // p·(1 − 1/φ) = p/φ²
+        if (flat > B) flat = B; // never above the printed bottom
+        return flat < minStop ? minStop : flat; // Pb-boosted floor
     }
 
     /// @notice Effective LONG leverage `L = p/(p − stop)`. 0 when the entry sits at/below the
@@ -163,13 +189,55 @@ library StructuralLeverage {
         return Phi.mulDiv(p, Phi.WAD, p - s);
     }
 
-    /// @notice Structural stop for a leveraged SHORT (Pro Max) — the mirror of `longStop`.
-    ///         `Pp` = previous cycle peak; `C` = this cycle's confirmed peak, or 0 in the
-    ///         window regime. `stop = anchor + 0.618·(anchor − Pp)`.
+    /// @notice Structural stop for a leveraged SHORT (Pro Max) — the exact mirror of `longStop`.
+    ///         `Pp` = previous cycle peak; `C` = this cycle's confirmed peak, or 0 in the window.
+    ///
+    ///         WINDOW (`C == 0`): per-slice, `stop = p + (p − Pp)/φ`.
+    ///
+    ///         POST-PIVOT (`C` confirmed): base is the `g`-leverage stop `p·(1 + 1/φ) = p·φ`,
+    ///         bounded by the two anchors:
+    ///           * floored at `C` — the liquidation may NEVER sit below the printed peak. This is
+    ///             the case that matters: entering near `T`, after a 60-70 % fall with the reversal
+    ///             close, a flat-`φ` short at `p` liquidates at `p·φ`, which is INSIDE the peak the
+    ///             market already printed, and the 30-60 % bounces that occur there would close it.
+    ///             Pinning to `C` forces leverage down instead — through 1× at `p = C/2` and
+    ///             deliberately sub-1× below that;
+    ///           * capped at `maxStop = C + (C − Pp)/φ` — the second anchor, which pulls the stop
+    ///             CLOSER for a shallow entry near the peak and so BOOSTS leverage well above `φ`.
+    ///
+    ///         Identical in shape to `shortFlatStop` (Pro, `g = 1` ⇒ `max(2p, C)`); Pro Max only
+    ///         adds the `Pp` cap. Both products therefore converge on the same C-pin, at different
+    ///         speeds — Pro's stop tracks `2p` down to it, Pro Max's tracks `p·φ`.
     function shortStructStop(uint256 p, uint256 Pp, uint256 C) internal pure returns (uint256) {
         uint256 a = C == 0 ? p : C;
-        if (a <= Pp) return 0;
-        return a + Phi.wmul(a - Pp, Phi.INV_PHI);
+        if (a <= Pp) {
+            // The delta anchor is unusable: `Pp` sits at or above the anchor it is supposed to be
+            // below. In the WINDOW that just means the price has not yet cleared the prior peak,
+            // and there is nothing to size against — refuse.
+            //
+            // POST-PIVOT it means the promoted `prevPeak` is wrong (a poisoned or stale prior
+            // cycle). Refusing there would hold the product flat for the WHOLE Fall — a
+            // multi-hundred-day denial driven by one bad anchor. Degrade instead to the
+            // ONE-anchor rule, which is exactly Pro's short: `max(p·φ, C)`, still pinned so the
+            // liquidation is never inside the printed peak. Losing the boost is the right cost
+            // for losing confidence in the anchor that produces it; losing the position is not.
+            if (C == 0) return 0;
+            uint256 flatOnly = Phi.wmul(p, Phi.PHI);
+            return flatOnly < C ? C : flatOnly;
+        }
+        uint256 maxStop = a + Phi.wmul(a - Pp, Phi.INV_PHI);
+        if (C == 0) return maxStop; // window: the per-slice stop IS this
+        // A stale or too-low `C` drags `maxStop` down with it, and it can land at or below the
+        // live price — a short stop BELOW the entry is not a conservative stop, it is a
+        // liquidation already crossed. Refuse rather than emit it (the same refusal
+        // `shortStopWad` has always carried). NOTE the actual consequence: the engine does NOT
+        // size at the flat base on a 0 — `_perpTargetMargin` leaves `marginNeedWad` at 0 and the
+        // vault holds settlement token with NO exposure until the price or the anchor moves. That
+        // is the safe reading of "the structure refuses"; it is also recoverable, not a wedge.
+        if (p >= maxStop) return 0;
+        uint256 flat = Phi.wmul(p, Phi.PHI); // p·φ = p·(1 + 1/φ)
+        if (flat < C) flat = C; // never inside the printed peak
+        return flat > maxStop ? maxStop : flat; // Pp-boosted cap
     }
 
     /// @notice Effective SHORT leverage `L = p/(stop − p)` (Pro Max). Sub-1× deep — the safety.

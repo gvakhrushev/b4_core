@@ -29,11 +29,13 @@ jobs:
       - name: Install Foundry
         uses: foundry-rs/foundry-toolchain@v1
         with:
-          # `stable` is more reproducible than the mutable nightly (RAW-COV12-SUPPLY-002),
-          # but it is still a MOVING channel: a new stable release can change fuzz/invariant
-          # scheduling or a lint. For a fully reproducible gate before production, pin a
-          # concrete release (e.g. version: "1.0.0") here and in the slither job (V3-CI-1).
-          version: stable
+          # Pinned, not `stable` (V3-CI-1 / RAW-COV12-SUPPLY-002). `stable` is a MOVING channel:
+          # a new release can change fuzz/invariant scheduling or a lint, so a green run stops
+          # meaning the same thing over time and a red one cannot be reproduced. `solc_version`
+          # is already pinned in foundry.toml; this pins the toolchain around it.
+          # The remaining supply-chain gap is the action tags above — pinning those needs the
+          # full commit SHA of each release, which has to be looked up at release time.
+          version: "1.7.1"
 
       - name: Show Forge version
         run: forge --version
@@ -46,6 +48,23 @@ jobs:
         # inherit the full engine for leg-level access and are never deployed, so EIP-170
         # does not apply to them; skipping test/script keeps the gate meaningful.
         run: forge build --sizes --skip 'test/**' --skip 'script/**'
+
+      # B4Vault delegatecalls B4VaultOps and B4VaultRecovery, so all three run against ONE
+      # storage. Their layouts match only because each inherits B4VaultStorage and adds no state
+      # of its own — until this step, nothing enforced that. Declaring a variable on a module
+      # instead of on the shared base makes it read slots the vault never writes, and the unit
+      # tests cannot see it: at runtime every call already shares the vault's storage, so the
+      # divergence is a compile-time property only a layout comparison catches.
+      - name: Storage-layout guard (delegatecall modules)
+        run: ./script/check-storage-layout.sh
+
+      # A reference to a test that does not exist reads as evidence, so it suppresses the very
+      # checking it appears to have had: Keeper.sol cited test/unit/GasBounds.t.sol as the source
+      # of all four of its gas budgets, three times, and the file had never existed. Same rot
+      # attacks INVARIANTS.md, whose whole value is the invariant -> test mapping, and the finding
+      # registry, whose promise is the test named in its last column.
+      - name: Citation integrity (live docs, traceability, registry)
+        run: ./script/check-citations.sh
 
       - name: Run Forge tests
         run: forge test -vvv
@@ -64,7 +83,8 @@ jobs:
       - name: Install Foundry
         uses: foundry-rs/foundry-toolchain@v1
         with:
-          version: stable
+          # Pinned to match the test job (V3-CI-1): one toolchain across every gate.
+          version: "1.7.1"
 
       - uses: actions/setup-python@v5
         with:
@@ -100,7 +120,8 @@ jobs:
       - name: Install Foundry
         uses: foundry-rs/foundry-toolchain@v1
         with:
-          version: stable
+          # Pinned to match the test job (V3-CI-1): one toolchain across every gate.
+          version: "1.7.1"
 
       - name: Run deep invariant campaign
         env:

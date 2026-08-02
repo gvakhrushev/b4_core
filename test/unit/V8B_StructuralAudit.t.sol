@@ -46,7 +46,7 @@ contract V8B_StructuralAuditTest is Test {
         assertEq(
             StructuralLeverage.shortStructLev(usd(4000), usd(1000), 0), 2157378651666526464, "PM1 L"
         );
-        // PMs1/PMs2 — fixed maxStop, both entries.
+        // PMs1 — shallow entry: capped by the Pp-boosted maxStop.
         assertEq(
             StructuralLeverage.shortStructStop(usd(5000), usd(1000), usd(4000)),
             5854101966249684544000,
@@ -57,22 +57,19 @@ contract V8B_StructuralAuditTest is Test {
             5854101966249684548,
             "PMs1 L"
         );
+        // PMs2 — deep entry: pinned to C so the liquidation is never inside the printed peak.
         assertEq(
             StructuralLeverage.shortStructStop(usd(2000), usd(1000), usd(4000)),
-            5854101966249684544000,
+            usd(4000),
             "PMs2 stop"
         );
-        assertEq(
-            StructuralLeverage.shortStructLev(usd(2000), usd(1000), usd(4000)),
-            518927630227215371,
-            "PMs2 L"
-        );
+        assertEq(StructuralLeverage.shortStructLev(usd(2000), usd(1000), usd(4000)), 1e18, "PMs2 L");
         // PM2 — Pro Max long window: p - (p-Pb)/phi.
         assertEq(
             StructuralLeverage.longStop(usd(1000), usd(100), 0), 443769410125094636800, "PM2 stop"
         );
         assertEq(StructuralLeverage.longLev(usd(1000), usd(100), 0), 1797815543055438720, "PM2 L");
-        // PM3/PM4 — fixed MinStop, both entries.
+        // PM3 — entry near the printed bottom: lifted by the Pb-boosted MinStop.
         assertEq(
             StructuralLeverage.longStop(usd(800), usd(100), usd(850)),
             386474508437578864000,
@@ -81,13 +78,17 @@ contract V8B_StructuralAuditTest is Test {
         assertEq(
             StructuralLeverage.longLev(usd(800), usd(100), usd(850)), 1934584484688874467, "PM3 L"
         );
+        // PM4 — mid-band entry: neither bound binds, so the long runs at its base phi.
         assertEq(
             StructuralLeverage.longStop(usd(2000), usd(100), usd(850)),
-            386474508437578864000,
+            763932022500210304000,
             "PM4 stop"
         );
-        assertEq(
-            StructuralLeverage.longLev(usd(2000), usd(100), usd(850)), 1239521786583827047, "PM4 L"
+        assertApproxEqAbs(
+            StructuralLeverage.longLev(usd(2000), usd(100), usd(850)),
+            1618033988749894848,
+            2,
+            "PM4 L"
         );
         // PM5 — L-halving day-1 slice, the EXACT call the engine makes (longStop(p, cap_, 0)).
         // UNPINNED in StructuralAB.t.sol — pinned here: doc 1671, exact 1671.2269...
@@ -124,7 +125,7 @@ contract V8B_StructuralAuditTest is Test {
         uint256 s = usd(4000) + Phi.wmul(usd(3000), theta2);
         assertApproxEqRel(s, usd(5854), TOL, "PM1 stop passes with theta+0.4%");
         assertApproxEqRel(Phi.mulDiv(usd(4000), WAD, s - usd(4000)), 2.157e18, TOL, "PM1 L passes");
-        // PMs1 / PMs2 (fixed maxStop short)
+        // PMs1 / PMs2 (short: the Pp cap, then the C pin)
         assertApproxEqRel(Phi.mulDiv(usd(5000), WAD, s - usd(5000)), 5.855e18, TOL, "PMs1 L passes");
         uint256 sDeep = usd(4000) + Phi.wmul(usd(3000), theta2);
         assertApproxEqRel(
@@ -134,7 +135,7 @@ contract V8B_StructuralAuditTest is Test {
         uint256 l2 = usd(1000) - Phi.wmul(usd(900), theta2);
         assertApproxEqRel(l2, usd(444), TOL, "PM2 stop passes with theta+0.4%");
         assertApproxEqRel(Phi.mulDiv(usd(1000), WAD, usd(1000) - l2), 1.798e18, TOL, "PM2 L passes");
-        // PM3 / PM4 (fixed MinStop long) — PM3 carries the widest owner-rounding (0.136%)
+        // PM3 / PM4 (long: the Pb floor, then the base phi band) — PM3 carries the widest owner-rounding (0.136%)
         uint256 l3 = usd(850) - Phi.wmul(usd(750), theta2);
         assertApproxEqRel(l3, usd(387), TOL, "PM3 stop passes with theta+0.4%");
         assertApproxEqRel(Phi.mulDiv(usd(800), WAD, usd(800) - l3), 1.937e18, TOL, "PM3 L passes");
@@ -152,10 +153,17 @@ contract V8B_StructuralAuditTest is Test {
         uint256 sDist = StructuralLeverage.shortStructStop(p, anchor, 0) - p;
         uint256 lDist = p - StructuralLeverage.longStop(p, anchor, 0);
         assertEq(sDist, lDist, "mirror distances bit-identical");
-        // Post-pivot mirror: fixed stops at mirrored anchors.
-        uint256 sPost = StructuralLeverage.shortStructStop(p, anchor, p) - p;
-        uint256 lPost = p - StructuralLeverage.longStop(p, anchor, p);
-        assertEq(sPost, lPost, "post-pivot mirror bit-identical");
+        // Post-pivot mirror, INCLUDING the refusal. When the delta rounds to zero the bound
+        // collapses onto the entry, and a stop at the entry price is not a stop — both sides must
+        // refuse, and they must refuse TOGETHER or the mirror is broken in the one place it is
+        // least visible. (Found by this fuzzer: the short refused, the long did not, and the
+        // subtraction below underflowed.)
+        uint256 sRaw = StructuralLeverage.shortStructStop(p, anchor, p);
+        uint256 lRaw = StructuralLeverage.longStop(p, anchor, p);
+        assertEq(sRaw == 0, lRaw == 0, "refusal is mirrored");
+        if (sRaw != 0) {
+            assertEq(sRaw - p, p - lRaw, "post-pivot mirror bit-identical");
+        }
     }
 
     // ------------------------------------------------- (4) wmul: no phantom overflow
@@ -188,9 +196,32 @@ contract V8B_StructuralAuditTest is Test {
         // a <= anchor refuses on BOTH sides.
         assertEq(StructuralLeverage.longStop(usd(100), usd(100), 0), 0);
         assertEq(StructuralLeverage.shortStructStop(usd(100), usd(100), 0), 0);
-        assertEq(StructuralLeverage.longStop(usd(100), usd(50), usd(50)), 0, "B <= Pb post-pivot");
+        // A31. Post-pivot, `extreme <= prevExtreme` means the promoted delta anchor is wrong (a
+        // poisoned or stale prior cycle), not that there is nothing to size. Refusing there held
+        // the product flat for the WHOLE regime — hundreds of days — over one bad anchor. Both
+        // sides now DEGRADE to the one-anchor rule instead: the base g-stop, still bounded by the
+        // printed extreme, which is exactly Pro's short. Symmetric, and neither side refuses.
         assertEq(
-            StructuralLeverage.shortStructStop(usd(100), usd(50), usd(50)), 0, "C <= Pp post-pivot"
+            StructuralLeverage.shortStructStop(usd(100), usd(50), usd(50)),
+            161803398874989484800,
+            "short degrades to max(p*phi, C), not a refusal"
+        );
+        assertEq(
+            StructuralLeverage.longStop(usd(100), usd(50), usd(50)),
+            38196601125010515200,
+            "long degrades to p/phi^2 (the B cap does not bind at this entry)"
+        );
+        // The pin still holds through the degradation: the short's liquidation is not inside `C`,
+        // the long's is not above `B`. Losing the boost is the cost of losing the delta anchor;
+        // losing the guarantee would not be acceptable.
+        assertGe(
+            StructuralLeverage.shortStructStop(usd(60), usd(50), usd(50)), usd(50), "still pinned"
+        );
+        assertLe(
+            StructuralLeverage.longStop(usd(200), usd(50), usd(50)), usd(50), "still capped at B"
+        );
+        assertEq(
+            StructuralLeverage.shortStructStop(usd(50), usd(100), 0), 0, "window still refuses"
         );
         // longLev refuses p <= stop; shortStructLev refuses stop <= p — symmetric outcomes.
         assertEq(StructuralLeverage.longLev(usd(386), usd(100), usd(850)), 0, "entry below MinStop");

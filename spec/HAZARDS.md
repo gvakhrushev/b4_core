@@ -55,9 +55,19 @@ its effect must be proven by a later on-chain state read.
   timed owner escape for every intent that could hang. Distinguish two cases:
   - Abandoning a **surplus-recovery** intent is safe: the funds stay on Core and are
     re-recoverable, so it may be emergency-cleared.
-  - Discarding an **asset-transfer** intent is forbidden: funds could still land afterward and
-    be lost from accounting. With A2/A3 in place, transfer intents always progress after the
-    timeout and never need discarding.
+  - Discarding an **asset-transfer** intent is forbidden while the funds still exist: they could
+    land afterward and be lost from accounting.
+  - Where a transfer intent is **provably unrecoverable** — the source has decreased and a long
+    timeout has passed — the escape MUST write the books down to the real balance and clear the
+    intent (`abandonStuckReturn`). It records a loss that already happened; refusing to record it
+    adds the rest of the vault to the casualty list. **Do not state that A2/A3 make transfer
+    intents always progress.** They do not for one shape: a Core→EVM return whose source has
+    decreased can never resend (A7), so a permanently lost credit leaves a leg that can never
+    complete either — a permanent freeze of the whole vault, with no admin to unstick it. That
+    false assurance is what left the case unhandled.
+  - The escape MUST require the source to have decreased, so a merely slow leg — funds still on
+    Core, resend branch still live — can never be abandoned. Funds arriving after the write-down
+    are not lost from accounting: they land as unaccounted balance on the owner-recoverable path.
 
 - **A7 · Atomicity differs by action type — handle them differently.** Intra-Core transfers
   (spot↔perp) are assumed atomic (source-decrease ⇔ destination-increase, all-or-nothing);
@@ -147,7 +157,7 @@ its effect must be proven by a later on-chain state read.
   A deposit-side rule cannot repair this: the crank reaches the same window, is permissionless,
   and never touches the entry ledger, so the rotation path bypasses any deposit guard.
   *(Real Critical with a committed exploit — $676 of cost took $833,333 of the basket — found
-  in the ninth review round after surviving eight. See `docs/audits/AUDIT-2026-07-25-full-security.md` C-1.)*
+  in the ninth review round after surviving eight. See `docs/audits/REGISTRY.md` C-1.)*
 - **B5 · Floor toward the protocol.** All fixed-point division floors; fees, penalties, cuts,
   and pool claims never round up; residual dust stays with the protocol/pool.
 - **B6 · Bounded, callback-free surplus recovery for spot AND perp.** Surplus above recorded
@@ -218,9 +228,9 @@ its effect must be proven by a later on-chain state read.
     price never returned to `C`, and the +99–103% bear-market rallies of cycles 1–2 — which
     liquidate a flat-`φ` short — clear the structural stop. An unconfirmed peak falls back to the
     flat base, as on the long side.
-  - **The max ratchet does NOT have the same directional safety as the min** (corrected
-    2026-07-30; the earlier claim that it did was false and is what let both anchor findings
-    through). Within a cycle a higher recorded high pushes the stop further out and lowers
+  - **The max ratchet does NOT have the same directional safety as the min.** Asserting that it
+    does is what let both anchor findings through, so state the asymmetry, never the symmetry.
+    Within a cycle a higher recorded high pushes the stop further out and lowers
     leverage — safe. But `peakC` is promoted into `prevPeak`, the next cycle's delta anchor, and
     an inflated `Pp` shrinks `(C − Pp)`, pulling the stop toward `C` and **raising** leverage a
     cycle later. So the peak side is exposed in BOTH directions: an overstated high harms the

@@ -388,16 +388,33 @@ abstract contract B4VaultEngine is B4VaultStorage {
     ///      that window — settle's NAV, the fee it charges, the pool weight it mints, exit's
     ///      gross — was overstated by the in-flight amount.
     ///
-    ///      `deferredPayoutTotal` is deliberately NOT subtracted: it changes only inside
-    ///      settle / exit-finalize, both of which require an idle engine, so it is constant
-    ///      across a leg's lifetime and cancels in the delta.
+    ///      `deferredPayoutTotal` IS subtracted, on the same grounds as `opsRecoverEvm`:
+    ///      a deferred payout is value the vault physically holds but OWES its recorded
+    ///      recipient, so it is accounted, never "unaccounted". An earlier revision left it
+    ///      in, on the claim that it "changes only inside settle / exit-finalize, both of
+    ///      which require an idle engine". That was FALSE in one direction: `claimDeferred`
+    ///      is permissionless and carries no idle gate, so it lowered the EVM balance WITHOUT
+    ///      lowering the subtrahend, shrinking this measure under a live leg. A claim of `A`
+    ///      mid-flight left a `ReturnDir`/`ReturnUsdc` permanently short of `evmNeeded` while
+    ///      `decreased` kept the resend branch shut — an intent that can neither complete nor
+    ///      resend, which `emergencyClearRecovery` refuses (it takes `Recover*` kinds only),
+    ///      freezing every idle-gated entrypoint with no admin to unstick it. An honest keeper
+    ///      reaches `crankVault` then `retryDeferred` in ONE transaction, so this needed no
+    ///      attacker (AUDIT-2026-07-29 F3).
+    ///
+    ///      With it subtracted the measure is invariant to the whole deferred mechanism: a
+    ///      claim lowers `bal` and `deferredPayoutTotal` by the same `A` and cancels exactly (a
+    ///      failed transfer reverts, rolling both back together), and payouts are DEFERRED only
+    ///      inside settle / exit-finalize, which do require an idle engine — so the subtrahend
+    ///      cannot rise under a live leg either.
     ///
     ///      Liveness (A3/A7) is unchanged: the resend gate is still exactly `!decreased`,
     ///      and the only path that could drain this quantity out from under a live leg,
     ///      `opsRecoverEvm`, already requires an idle engine for both accounted tokens.
     function _unaccountedEvm(address token, bool isDir) internal view returns (uint256) {
         uint256 bal = IERC20(token).balanceOf(address(this));
-        uint256 booked = isDir ? dirEvm : usdcRotatedEvm + usdcMarginEvm;
+        uint256 booked =
+            deferredPayoutTotal[token] + (isDir ? dirEvm : usdcRotatedEvm + usdcMarginEvm);
         return bal > booked ? bal - booked : 0;
     }
 
@@ -450,11 +467,14 @@ abstract contract B4VaultEngine is B4VaultStorage {
 
     /// One IOC perp order. Reductions are reduce-only and never cross zero; a full close
     /// targets exact zero (A10). Non-reduce opens carry the $10 minimum (SPEC §7).
-    function _startPerpOrder(bool isBuy, uint64 szLots, bool reduceOnly) internal {
-        if (szLots == 0) return;
+    /// @return emitted true iff an IOC order was actually sent. A dead mark feed or a zero size
+    ///         emits nothing and returns false, so a planner never reports progress on a no-op
+    ///         (A13 / audit L-6): the caller holds and the keeper's bounded loop stops spinning.
+    function _startPerpOrder(bool isBuy, uint64 szLots, bool reduceOnly) internal returns (bool) {
+        if (szLots == 0) return false;
         CoreTypes.Position memory pos = _position();
         uint256 markWad = CoreReader.perpPxWad(_dir, true);
-        if (markWad == 0) return; // perp feed down: hold, never emit a px-0 order (V8-L-1)
+        if (markWad == 0) return false; // perp feed down: hold, never emit a px-0 order (V8-L-1)
         uint256 limitWad = isBuy
             ? Phi.mulDiv(markWad, 10_000 + PERP_ENVELOPE_BPS, 10_000)
             : Phi.mulDiv(markWad, 10_000 - PERP_ENVELOPE_BPS, 10_000);
@@ -475,6 +495,7 @@ abstract contract B4VaultEngine is B4VaultStorage {
             _perpLotsToSz8(szLots),
             reduceOnly
         );
+        return true;
     }
 
     function _positivePnl6(CoreTypes.Position memory pos, uint256 markWad)
@@ -838,8 +859,9 @@ abstract contract B4VaultEngine is B4VaultStorage {
 
         // 1. Wrong-sign (or should-be-zero) perp: reduce to exact zero first.
         if (pos.szi != 0 && (perpF == 0 || (pos.szi > 0) != (perpF > 0))) {
-            _startPerpOrder(pos.szi < 0, uint64(Phi.abs(pos.szi)), true);
-            return true;
+            // Hold (return false) if the mark feed is down: cannot flatten, and must NOT fall
+            // through to spot/perp sizing while a wrong-sign perp is still open.
+            return _startPerpOrder(pos.szi < 0, uint64(Phi.abs(pos.szi)), true);
         }
         // 2. Harvest claim: settle min(claim, available), clear.
         if (pendingHarvest6 > 0) {
@@ -1002,17 +1024,35 @@ abstract contract B4VaultEngine is B4VaultStorage {
         }
     }
 
-    /// @dev Structural target size (lots) placing the venue liquidation at `stop`. A held
-    ///      position's existing `absNow` lots already liquidate at `stop` given their frozen avg
-    ///      entry, so only the ADDED margin is sized — and at the live `mark`, the price a new
-    ///      slice actually fills at, so `szi_inc = Δm/|mark − stop|` keeps the increment's own
-    ///      liquidation on `stop` and the combined liquidation never drifts off it (critic:
-    ///      deposit/ramp add mis-priced at avg entry). A reduce/hold sizes at the (unchanged) avg
-    ///      entry. The whole position is finally capped at the venue max leverage (SPEC §7b): an
-    ///      unclamped structural size near an anchor implies L→∞ (rejected order / liquidation not
-    ///      at the stop); the clamp de-levers (liquidation FURTHER than the stop — the safe way).
+    /// @dev The stop a NEW slice is sized against: the structural stop at the LIVE price, not the
+    ///      one frozen when the position opened. No flat/held special case is needed — when flat,
+    ///      `_perpTargetMargin` has just frozen this same derivation at this same price, so the
+    ///      two coincide by construction. A refusal at this price falls back to the frozen stop,
+    ///      which sizes the add no larger than the held lots' own rule — never larger.
+    function _sliceStopWad(uint256 pxWad, uint256 frozen) internal view returns (uint256) {
+        uint256 s = perpStopLong ? _longStopWad(pxWad) : _shortStopWad(pxWad);
+        return s == 0 ? frozen : s;
+    }
+
+    /// @dev Structural target size (lots). TWO stops, and the split is the whole point:
+    ///      `heldStopWad` is the FROZEN stop the existing `absNow` lots were opened against — they
+    ///      are never re-priced, which is what stops a price move or an anchor flip re-trading a
+    ///      held position (C1/C4). `sliceStopWad` is the structural stop derived at the CURRENT
+    ///      price, and the ADD is sized against it at the live `mark`: `szi_inc = Δm/|mark −
+    ///      sliceStop|`, so every increment lands its OWN liquidation on the rule's stop for the
+    ///      price it actually fills at (STRUCTURAL-STATE-MACHINE §6). The combined liquidation is
+    ///      then the margin-weighted average of the two, which is correct and expected — a top-up
+    ///      at a better price SHOULD move the blended stop. Sizing the increment against the
+    ///      frozen stop instead is what produced the A29 over-lever: after an adverse move the
+    ///      frozen stop sits far closer than the rule allows at the new price (measured 9.0× where
+    ///      the rule gives φ), because since A26 the post-pivot stop DEPENDS on the entry price.
+    ///      A reduce/hold sizes at the (unchanged) avg entry against the frozen stop. The whole
+    ///      position is finally capped at the venue max leverage (SPEC §7b): an unclamped
+    ///      structural size near an anchor implies L→∞ (rejected order / liquidation not at the
+    ///      stop); the clamp de-levers (liquidation FURTHER than the stop — the safe way).
     function _szTargetStructural(
-        uint256 stopWad,
+        uint256 heldStopWad,
+        uint256 sliceStopWad,
         uint256 marginNeedWad,
         uint256 avgEntryWad,
         uint256 markWad,
@@ -1020,11 +1060,11 @@ abstract contract B4VaultEngine is B4VaultStorage {
     ) internal view returns (uint64) {
         bool long = perpStopLong;
         uint256 denomEntry = long
-            ? (avgEntryWad > stopWad ? avgEntryWad - stopWad : 0)
-            : (stopWad > avgEntryWad ? stopWad - avgEntryWad : 0);
+            ? (avgEntryWad > heldStopWad ? avgEntryWad - heldStopWad : 0)
+            : (heldStopWad > avgEntryWad ? heldStopWad - avgEntryWad : 0);
         uint256 denomMark = long
-            ? (markWad > stopWad ? markWad - stopWad : 0)
-            : (stopWad > markWad ? stopWad - markWad : 0);
+            ? (markWad > sliceStopWad ? markWad - sliceStopWad : 0)
+            : (sliceStopWad > markWad ? sliceStopWad - markWad : 0);
         if (denomMark == 0) return absNow; // mark at/through the stop: no stop-pinned slice to add
         uint256 dec = 10 ** _dir.perpSzDecimals;
         uint256 effMarginWad =
@@ -1138,7 +1178,12 @@ abstract contract B4VaultEngine is B4VaultStorage {
         // at the avg entry, and caps the whole position at the venue max leverage.
         uint64 szTarget = structural
             ? _szTargetStructural(
-                stopWad, marginNeedWad, pos.szi != 0 ? _avgEntryWad(pos) : markWad, markWad, absNow
+                stopWad,
+                _sliceStopWad(pxWad, stopWad),
+                marginNeedWad,
+                pos.szi != 0 ? _avgEntryWad(pos) : markWad,
+                markWad,
+                absNow
             )
             : _szTargetFlat(markWad, v, perpF);
 
@@ -1154,12 +1199,10 @@ abstract contract B4VaultEngine is B4VaultStorage {
         if (diffUsdWad <= bandUsd) return false;
         bool targetLong = perpF > 0;
         if (szTarget > absNow) {
-            _startPerpOrder(targetLong, szTarget - absNow, false);
-        } else {
-            // Shrink toward target: reduce-only, opposite side.
-            _startPerpOrder(!targetLong, absNow - szTarget, true);
+            return _startPerpOrder(targetLong, szTarget - absNow, false);
         }
-        return true;
+        // Shrink toward target: reduce-only, opposite side.
+        return _startPerpOrder(!targetLong, absNow - szTarget, true);
     }
 
     /// @dev The structural stop (WAD) for a leveraged LONG at price `pxWad`, selected by the
@@ -1171,7 +1214,7 @@ abstract contract B4VaultEngine is B4VaultStorage {
     ///      Density gate (V8-M-1): `B4Pool.anchors()` WITHHOLDS an under-sampled `cap` as 0,
     ///      which the `cap_ != 0` gates below then treat exactly like an absent anchor —
     ///      the L-halving/L-post regimes skip and the long degrades to the fail-safe flat-φ
-    ///      rise instead of pinning the fixed MinStop to a sparse low.
+    ///      rise instead of clamping against a sparse low.
     function _longStopWad(uint256 pxWad) internal view returns (uint256) {
         (uint256 floor_, uint256 cap_) = IB4PoolAnchors(pool).anchors(_dirAssetIndex);
         uint256 t = IHalvingOracle(oracle).timeSinceHalving();
@@ -1196,11 +1239,13 @@ abstract contract B4VaultEngine is B4VaultStorage {
             return StructuralLeverage.longStop(pxWad, floor_, 0);
         }
         if (zone == Calendar.Zone.TerminalGrowth && cap_ != 0) {
-            // L-post: this cycle's low `B = cap_` is confirmed ⇒ the FIXED MinStop
-            // `B − (B − Pb)/φ`, deeper than flat-φ, so the venue liquidation can never sit above a
-            // level the market already printed and held (the mirror of the short's fixed maxStop —
-            // without it a leveraged long over-levers all of terminal growth and a retest of the
-            // cycle low liquidates a position the structural stop was designed to survive).
+            // L-post: this cycle's low `B = cap_` is confirmed ⇒ `clamp(p/φ², MinStop, B)`
+            // with `MinStop = B − (B − Pb)/φ`. The CAP at `B` is the safety: the venue
+            // liquidation can never sit above a level the market already printed and held, so a
+            // retest of the cycle low cannot close a position the structural stop was designed to
+            // survive. The floor at `MinStop` is the second anchor's lift near the bottom, and
+            // between them the long runs at its base `φ`. (Entry-DEPENDENT since 2026-08-01 — it
+            // was a single fixed `MinStop` before, which made the `φ` band unreachable.)
             return StructuralLeverage.longStop(pxWad, floor_, cap_);
         }
         return StructuralLeverage.longStop(pxWad, 0, 0); // L-rise: flat φ (p/φ²) — documented interim
@@ -1221,8 +1266,8 @@ abstract contract B4VaultEngine is B4VaultStorage {
     ///      Density gate (V8-M-1/V8-M-2): `B4Pool.peaks()` WITHHOLDS an under-sampled `peakC`
     ///      as 0 — a sparse window or a single wick is treated exactly like "this cycle's peak
     ///      unknown", so the short degrades to the clamp-backed window extrapolation off the
-    ///      (promotion-gated, hence confirmed) `prevPeak` instead of pinning the fixed maxStop
-    ///      inside the price range the market already proved.
+    ///      (promotion-gated, hence confirmed) `prevPeak` instead of clamping against a peak the
+    ///      market has not actually proved.
     function _shortStopWad(uint256 pxWad) internal view returns (uint256) {
         (uint256 prevPeak, uint256 peakC, uint256 peakTag) =
             IB4PoolAnchors(pool).peaks(_dirAssetIndex);

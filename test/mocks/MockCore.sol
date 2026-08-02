@@ -244,6 +244,13 @@ contract MockCoreHub {
         spotBal[user][token] += amount;
     }
 
+    /// External Core spot DEBIT below our books — models a cross-margin liquidation reaching
+    /// spot, or a partial spotSend, i.e. the one way our own spot balance can drop without our
+    /// action (audit M-1). Used to exercise `_reconcileSpot`.
+    function coreDrawdown(address user, uint64 token, uint64 amount) external {
+        spotBal[user][token] = spotBal[user][token] > amount ? spotBal[user][token] - amount : 0;
+    }
+
     function setWithdrawable(address user, uint64 x) external {
         wd[user] = x;
     }

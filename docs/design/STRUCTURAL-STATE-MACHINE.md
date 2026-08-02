@@ -49,18 +49,40 @@ DCA-opening the new leg**:
 - Long: `Pb` = previous cycle's confirmed bottom (delta anchor); `B` = this cycle's 62-min.
 - Short: `Pp` = previous cycle's confirmed peak (delta anchor); `C` = this cycle's peak-max.
 
-**One risk budget = one fixed stop.** The stop is always `extreme ∓ 0.618·(extreme − prevExtreme)`
-— 61.8% of the delta beyond the confirmed extreme (`+` for a short's peak, `−` for a long's low).
-Two regimes:
+**`φ` is the base; the two anchors bend it either way.** The product's own `g`-leverage stop is
+the starting point — `p·(1 + 1/g)` for a short, `p·(1 − 1/g)` for a long (`p·φ` and `p/φ²` at
+`g = φ`) — and the anchors bound it on both sides. Two regimes:
+
 - **Window** (extreme not yet confirmed): each DCA slice uses ITS OWN price as the extreme
   estimate → `stop = p ∓ (p − prevExtreme)/φ` (per-slice).
-- **Post-pivot** (extreme confirmed): the delta is FIXED, so the stop is FIXED — the SAME for every
-  entry (`maxStop`/`MinStop`); only the **leverage** `L = p / |stop − p|` varies with the entry.
-  A shallow entry (near the extreme) → high `L`; a deep entry → low `L`, deliberately `sub-1×`.
+- **Post-pivot** (extreme confirmed): the stop is the base `g`-stop, **clamped between the two
+  anchors** — and the leverage follows from wherever it lands:
+  - **pinned at the confirmed extreme** (`C` for a short, `B` for a long) — the liquidation may
+    never sit INSIDE the extreme the market has already printed. This binds for a deep short
+    entry / a high long entry, and it is what forces leverage DOWN: through exactly `1×` at
+    `p = C/2` and deliberately sub-1× beyond;
+  - **capped at the delta bound** `maxStop = C + (C − Pp)/φ` (short) / floored at
+    `MinStop = B − (B − Pb)/φ` (long) — the SECOND anchor, which pulls the stop CLOSER for an
+    entry near the extreme and so LIFTS leverage well above `φ`;
+  - **between them, neither binds and the product runs at exactly its base `g`.**
 
-`φ` is the base/anchor, not the realized leverage. **Long and short are exact mirrors**
-(min↔max, −↔+, floor↔peak). *(An earlier draft interpolated the post-pivot stop with the entry
-price — wrong: the confirmed-extreme stop does not move with the entry.)*
+So a shallow entry (near the extreme) → high `L`; a mid entry → `L = φ`; a deep entry → low `L`,
+deliberately `sub-1×`. **Long and short are exact mirrors** (min↔max, −↔+, floor↔peak), including
+the refusal: when the delta collapses so the bound lands on the entry itself, both sides refuse
+and the caller falls back to the flat base.
+
+*(Two earlier drafts are superseded. One interpolated the post-pivot stop with the entry price
+(`stop = p + (maxStop − p)/φ`). The other fixed the post-pivot stop at `maxStop`/`MinStop` for
+every entry, which made the base-`φ` band unreachable at any price.*
+
+*Be precise about the direction, because an earlier version of this note got it backwards: that
+fixed stop sat strictly ABOVE `C`, so it never liquidated a deep short inside the printed peak.
+It was over-conservative, not unsafe, and moving to the clamp RAISES leverage at depth
+(PMs2: 0.52× → 1.00×). The hazard the `C`-pin addresses belongs to the FLAT-`φ` rule that the
+clamp adopts as its base: entering near `T` after a 60–70 % fall, a flat-`φ` short liquidates at
+`p·φ`, inside the printed peak, and the 30–60 % bounces that occur there would close it. The pin
+is what keeps the new base from doing that — it is a guard on the base, not a repair of the
+superseded rule.)*
 
 ---
 
@@ -83,14 +105,18 @@ structural math (spot cannot be liquidated).
 **Short leg = 2-anchor structural** (`Pp`, `C`):
 - **S-win** `[P−H, P]` (C unknown, DCA): `stop = p + (p − Pp)/φ` (per-slice).
   `L = φ·p/(p − Pp)`. *[p=4000, Pp=1000 → stop 5854, L 2.16×]*
-- **S-post** `[P, T]` (C known): `maxStop = C + (C − Pp)/φ` — **FIXED** for every entry;
-  `L = p/(maxStop − p)`. *[C=4000, Pp=1000 → maxStop 5854; entry 5000 → L 5.85×; entry 2000 → L 0.52×]*
+- **S-post** `[P, T]` (C known): `stop = clamp(p·φ, C, maxStop)` with
+  `maxStop = C + (C − Pp)/φ`; `L = p/(stop − p)`. Refused when `p ≥ maxStop`.
+  *[C=4000, Pp=1000 → maxStop 5854; entry 5000 → capped, L 5.85×; entry 3000 → mid-band, L = φ;
+  entry 2000 → pinned to C, L 1.00×; entry 1500 → pinned, L 0.60×]*
 
 **Long leg = structural + halving-add + growth-ratchet** (`Pb`, `B`):
 - **L-win** `[T+H, T+W]` (B unknown, DCA): `stop = p − (p − Pb)/φ` (per-slice). `L = φ·p/(p − Pb)`.
   *[p=1000, Pb=100 → stop 444, L 1.80× > φ]*
-- **L-post** `[T+W, halving]` (B known): `MinStop = B − (B − Pb)/φ` — **FIXED** for every entry;
-  `L = p/(p − MinStop)`. *[B=850, Pb=100 → MinStop 387; entry 800 → L 1.94×; entry 2000 → L 1.24×]*
+- **L-post** `[T+W, halving]` (B known): `stop = clamp(p/φ², MinStop, B)` with
+  `MinStop = B − (B − Pb)/φ`; `L = p/(p − stop)`. Refused when `p ≤ MinStop`.
+  *[B=850, Pb=100 → MinStop 387; entry 800 → floored at MinStop, L 1.94×; entry 2000 → mid-band,
+  L = φ; entry 9000 → capped at B, L 1.10×]*
 - **L-halving** `[0, W]` — **ADD VOLUME** over the 20-day free window (per-day DCA): each day's
   slice `stop_day = p_day − (p_day − B)/φ` (anchor `B` = the 62-min; `p_day` = that day's price,
   so the stop and the combined liquidation *float* as the price drifts — NOT a fixed target).
@@ -100,9 +126,12 @@ structural math (spot cannot be liquidated).
   growth leg a −61.8% pullback has never printed (supply-shock uptrend). *[p=4000 → max(1528,1664)=1664;
   p=7000 → 2674]*
 
-**Difference Pro ↔ Pro Max (short):** (1) the **max stop** — Pro's is `2p` (flat, far); Pro Max's is
-`maxStop` (Pp-boosted, closer ⇒ higher leverage); (2) the **speed of approaching the C-pin** — Pro
-Max compresses toward C faster (`θ = 1/φ`). Same reflected logic on the long side, plus Pro Max's
+**Difference Pro ↔ Pro Max (short) — same shape, two knobs.** Both are `clamp(base g-stop, C, cap)`:
+Pro is `max(2p, C)` (`g = 1`, one anchor, no cap); Pro Max is `clamp(p·φ, C, maxStop)`. So (1) the
+**base** — Pro's stop tracks `2p`, Pro Max's the closer `p·φ` ⇒ more leverage at the same price;
+(2) the **cap** — only Pro Max has one, `Pp`-boosted, which is where its leverage runs far above
+`φ` near the peak. Both converge on the SAME C-pin, at different speeds, and both cross `1×` at
+`p = C/2`. Same reflected logic on the long side, plus Pro Max's
 halving volume-add which Pro (spot long) has no analogue for.
 
 ---
@@ -119,10 +148,12 @@ is "done" for a row when the engine/library reproduces the number. Ran on `data/
 | P3 | Pro short | S-post | 2000 | C=4200 | 4200 | 0.91× | pinned to C |
 | PM1 | Pro Max short | S-win | 4000 | Pp=1000 | 5854 | 2.16× | p+(p−Pp)/φ |
 | PM2 | Pro Max long | L-win | 1000 | Pb=100 | 444 | 1.80× | p−(p−Pb)/φ |
-| PM3 | Pro Max long | L-post | 800 | B=850,Pb=100 | 387 | 1.94× | fixed MinStop |
-| PM4 | Pro Max long | L-post | 2000 | B=850,Pb=100 | 387 | 1.24× | SAME fixed MinStop, lower L |
-| PMs1 | Pro Max short | S-post | 5000 | C=4000,Pp=1000 | 5854 | 5.85× | fixed maxStop |
-| PMs2 | Pro Max short | S-post | 2000 | C=4000,Pp=1000 | 5854 | 0.52× | SAME fixed maxStop, sub-1× |
+| PM3 | Pro Max long | L-post | 800 | B=850,Pb=100 | 387 | 1.94× | entry near the bottom: the `MinStop` floor binds |
+| PM4 | Pro Max long | L-post | 2000 | B=850,Pb=100 | 764 | 1.618× | mid-band: neither anchor binds ⇒ base `φ` |
+| PM4b | Pro Max long | L-post | 9000 | B=850,Pb=100 | 850 | 1.10× | capped at the printed bottom |
+| PMs1 | Pro Max short | S-post | 5000 | C=4000,Pp=1000 | 5854 | 5.85× | shallow entry: the `maxStop` cap binds |
+| PMs2 | Pro Max short | S-post | 2000 | C=4000,Pp=1000 | 4000 | 1.00× | pinned to C; `p = C/2` is the 1× crossover |
+| PMs3 | Pro Max short | S-post | 3000 | C=4000,Pp=1000 | 4854 | 1.618× | mid-band: neither anchor binds ⇒ base `φ` |
 | PM5 | Pro Max long | L-halving d1 | 3000 | B=850 | 1671 | — | per-day add |
 | PM6 | Pro Max long | L-rise | 4000 | floor=1664 | 1664 | — | ratchet floor |
 | PM7 | Pro Max long | L-rise | 7000 | — | 2674 | — | flat φ (p/φ²) |
@@ -146,7 +177,7 @@ short `p_liq = (entryNtl + margin)/szi`. A slice at price `p` with target stop `
 
 Per-crank (leveraged leg; a Pro long is spot and never reaches here):
 1. `perpF = decompose(target).perp`; `stop` = §2/§3 for the current state (window: use the current
-   price `p`; post-pivot: the confirmed extreme, fixed).
+   price `p`; post-pivot: `clamp(base g-stop, confirmed extreme, delta bound)` — entry-DEPENDENT since 2026-08-01).
 2. `marginTarget = capital · |perpF|/g` — ramps `0→capital` over the opening window. A day-15
    entrant starts at the current 50% target; by day 20 the full target is deployed.
 3. `perpMargin < marginTarget` → **ADD** a slice (`Δm = marginTarget − perpMargin`, `szi_inc = Δm/|p−s|`).
@@ -172,7 +203,7 @@ the confirmed peak `C` to `shortStructStop` ONLY post-pivot (Fall) AND only when
 (this cycle's peak); everywhere else `C = 0`, so the S-win (OpeningFall, peak still forming) uses the
 live price `p` and a SKIPPED/stale peak window never anchors the short to a systematically-too-low
 prior peak (over-lever — the anti-conservative direction). The LONG mirrors this: L-post
-(TerminalGrowth, cycle low `B = cap` confirmed) uses the FIXED `MinStop = B − (B − Pb)/φ`; L-win uses
+(TerminalGrowth, cycle low `B = cap` confirmed) uses `clamp(p/φ², MinStop, B)` with `MinStop = B − (B − Pb)/φ`; L-win uses
 the live `p`. `B4Pool.peaks()` exposes `peakTag` for the freshness check.
 
 ## 5. Implementation status
@@ -189,7 +220,7 @@ the live `p`. `B4Pool.peaks()` exposes `peakTag` for the freshness check.
   re-traded (a price move or a permissionless anchor flip can't re-lever it — C1/C4). The single
   frozen `perpStopWad` (with its side) is **re-derived every idle crank while FLAT** and held only
   while live, so a full exit, a no-loss venue close, or an async funding gap re-opens FRESH. Adds
-  size at the live mark; every size is capped at the venue max leverage. Both post-pivot fixed stops
+  size at the live mark; every size is capped at the venue max leverage. Both post-pivot clamps
   (long L-post `MinStop`, short S-post `maxStop`) are zone-gated, and the short's confirmed peak is
   freshness-gated. Long AND short structural (Pro flat / Pro Max 2-anchor), whole deposit deployed,
   liquidation at the structural stop — `StructuralSizing.t.sol`. Current suite status belongs

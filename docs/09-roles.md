@@ -153,4 +153,4 @@ liveness, never loss of funds.**
 - [Fees, penalty and the pool](07-fee-routing.md) — the exact arithmetic, with a worked example
 - [Keeper operations](08-keeper.md) — what to run, and how often
 - [Integration](04-integration.md) — the signatures behind every flow above
-- [`../REPORT.md`](audits/REPORT.md) — status dossier and internal adversarial-review rounds
+- [`docs/audits/REGISTRY.md`](audits/REGISTRY.md) — status dossier and internal adversarial-review rounds

@@ -144,7 +144,17 @@ contract HalvingOracle is ILayerZeroReceiver {
     }
 
     /// @inheritdoc ILayerZeroReceiver
+    /// @dev Zero selects UNORDERED delivery, and that is load-bearing rather than a default.
+    ///      `HalvingProver.publish` is permissionless and accepts any height the Citrea light
+    ///      client can prove — including a REAL PAST halving. Such a fact arrives here, fails
+    ///      `factHash[height] != headerHash` (nothing was ever accepted at that height) and
+    ///      reverts `ConflictingFact`, which is the correct answer: an unknown old fact must not
+    ///      be admitted. Under ORDERED delivery that permanently-reverting message would sit at
+    ///      the head of the channel and block every later genuine halving — a permissionless
+    ///      liveness attack on the protocol's only external fact, and the calendar with it.
+    ///      Unordered delivery is what makes the revert local to that one message.
+    ///      Pinned by `test/unit/HalvingOracle.t.sol`.
     function nextNonce(uint32, bytes32) external pure returns (uint64) {
-        return 0; // unordered delivery
+        return 0;
     }
 }

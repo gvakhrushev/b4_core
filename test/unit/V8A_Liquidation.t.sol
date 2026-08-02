@@ -101,7 +101,13 @@ contract V8A_LiquidationTest is VaultTestBase {
 
     // ------------------------- ADD at a mark far BELOW the avg entry (weighted average)
 
-    function test_V8A_add_at_lower_mark_keeps_combined_liq_on_stop() public {
+    /// A29 changed what this asserts. The stop scales with price even in the genesis flat-`φ`
+    /// regime (`p/φ²`), so an add at a lower mark lands its own liquidation DEEPER than the
+    /// open-time stop and the blend moves. "Pinned to the frozen stop" was only ever true because
+    /// the add was mis-priced against that frozen stop. The property that survives is the blend's
+    /// BOUNDS. (This fixture cannot discriminate the A29 regression on its own — the effect here
+    /// is 0.5 % — `test_V8A_add_after_rally_...` is the one that does.)
+    function test_V8A_add_at_lower_mark_blends_between_the_two_stops() public {
         warpTo(300 days); // Growth plateau, deposits open
         B4Vault v = createVault(address(proMax));
         fundAndDeposit(v, 0, 120_000e6);
@@ -120,9 +126,48 @@ contract V8A_LiquidationTest is VaultTestBase {
         CoreTypes.Position memory p = readPos(address(v));
         assertGt(p.szi, szi0, "deposit added lots at the lower mark");
         uint256 liq = _liqWad(v);
-        assertApproxEqRel(liq, stop, 0.005e18, "combined liq pinned to the frozen stop");
-        assertLe(liq, stop + stop / 100, "add must not lift liq materially above the stop");
-        assertEq(v.perpStopWad(), stop, "stop still frozen at the open-time value");
+        uint256 sliceStop = StructuralLeverage.longStop(60_000e18, 0, 0); // the rule AT the mark
+        assertLt(sliceStop, stop, "the slice stop at the lower mark is deeper");
+        assertGt(liq, sliceStop, "blend cannot be deeper than the deepest slice's own stop");
+        assertLe(liq, stop, "blend cannot be shallower than the shallowest slice's own stop");
+        assertEq(v.perpStopWad(), stop, "the frozen stop itself is untouched (C1/C4)");
+    }
+
+    /// A29 — the regression the adversarial fan-out reproduced. Since the post-pivot stop became
+    /// entry-DEPENDENT (A26), sizing a top-up against the stop FROZEN at open is an over-lever:
+    /// open deep, where the stop is pinned to the confirmed peak `C`, then rally, and the frozen
+    /// stop sits far closer to the mark than the rule allows at the new price. Each add must be
+    /// sized against the stop the rule gives at the price it actually fills at.
+    function test_V8A_add_after_rally_sized_at_the_live_stop_not_the_frozen_one() public {
+        // Confirm this cycle's peak at 50k, then enter the Fall deep at 25k: p*phi = 40.4k < C,
+        // so the pin binds and the frozen stop is C itself.
+        _sampleDaily(GENESIS_TS + Calendar.P - Calendar.W + 1 days, 11, 50_000);
+        vm.warp(GENESIS_TS + Calendar.P + 30 days);
+        _setPx(25_000);
+        B4Vault v = createVault(address(proMax));
+        fundAndDeposit(v, 0, 120_000e6);
+        crankUntilIdle(v, 60);
+        int64 szi0 = readPos(address(v)).szi;
+        assertLt(szi0, int64(0), "short open in the Fall");
+        assertEq(v.perpStopWad(), 50_000e18, "frozen stop is the C-pin");
+
+        // Rally to 45k. The rule at 45k gives stop = 45k*phi = 72.8k (mid-band, base phi) - far
+        // from the mark. The frozen stop is 50k, only 11% away, so an add priced against it buys
+        // |45k-50k| = 5k per unit of margin instead of |45k-72.8k| = 27.8k: 5.6x too many lots.
+        _setPx(45_000);
+        uint256 fresh = StructuralLeverage.shortStructStop(45_000e18, 0, 50_000e18);
+        assertGt(fresh, 70_000e18, "the live stop is mid-band, far above the frozen pin");
+        fundAndDeposit(v, 0, 120_000e6);
+        crankUntilIdle(v, 60);
+
+        assertGt(Phi.abs(readPos(address(v)).szi), Phi.abs(szi0), "the deposit did add lots");
+        // THE discriminator, and the reason this test exists rather than a size bound: priced
+        // against the frozen stop every add lands its own liquidation on `C`, so the blend stays
+        // EXACTLY on the pin no matter how far the price has run (measured: 50,000.000). Priced
+        // against the live stop the increment's liquidation is further away, so the blend must
+        // move UP off the pin (measured: 50,044). Revert `_sliceStopWad` to the frozen stop and
+        // this fails on equality - checked, not assumed.
+        assertGt(_liqWad(v), 50_000e18, "blend moved off the C-pin toward the live stop");
     }
 
     // ------------------------------------------------ REDUCE mid-hold (calendar ramp-down)
@@ -210,7 +255,7 @@ contract V8A_LiquidationTest is VaultTestBase {
         crankUntilIdle(v, 60);
 
         uint256 stop = StructuralLeverage.shortStructStop(99_900e18, 99_400e18, 100_000e18);
-        assertEq(v.perpStopWad(), stop, "frozen fixed maxStop");
+        assertEq(v.perpStopWad(), stop, "frozen at the clamp value for this entry");
         assertFalse(v.perpStopLong(), "short side");
         CoreTypes.Position memory p = readPos(address(v));
         assertLt(p.szi, 0, "clamped short opened");

@@ -28,8 +28,9 @@ contract Eip170SizesTest is VaultTestBase {
         address vaultImpl = factory.vaultImplementation();
         address ops = B4Vault(vaultImpl).ops();
 
-        B4ProductFactory pf =
-            new B4ProductFactory(address(oracle), usdcDescriptor(), vaultImpl, address(poolDeployer));
+        B4ProductFactory pf = new B4ProductFactory(
+            address(oracle), usdcDescriptor(), vaultImpl, address(poolDeployer)
+        );
 
         _check("B4Vault", vaultImpl);
         _check("B4VaultOps", ops);

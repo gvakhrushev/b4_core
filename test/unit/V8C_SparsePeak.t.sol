@@ -142,7 +142,7 @@ contract V8C_SparsePeakTest is VaultTestBase {
             _levWad(v),
             StructuralLeverage.shortStructLev(90_000e18, 100_000e18, 130_000e18),
             0.03e18,
-            "dense leverage == honest structural leverage (~1.54x)"
+            "dense leverage == honest structural leverage"
         );
         assertGt(_liqShortWad(v), 130_000e18, "liquidation BEYOND the proven extreme");
     }

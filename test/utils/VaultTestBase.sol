@@ -49,7 +49,8 @@ abstract contract VaultTestBase is VenueTestBase {
             address(endpoint), SRC_EID, SRC_SENDER, GENESIS_HEIGHT, address(this)
         );
         acceptHalving(GENESIS_HEIGHT, uint32(GENESIS_TS));
-        address impl = address(new B4Vault(address(new B4VaultOps()), address(new B4VaultRecovery())));
+        address impl =
+            address(new B4Vault(address(new B4VaultOps()), address(new B4VaultRecovery())));
         factory = new B4Factory(address(oracle), usdcDescriptor(), impl, address(poolDeployer));
 
         CoreTypes.AssetDescriptor[] memory dirs = new CoreTypes.AssetDescriptor[](1);
@@ -110,8 +111,7 @@ abstract contract VaultTestBase is VenueTestBase {
     function createStrictPool(uint8 mask) internal returns (B4Pool p) {
         CoreTypes.AssetDescriptor[] memory dirs = new CoreTypes.AssetDescriptor[](1);
         dirs[0] = ubtcDescriptor();
-        address[4] memory strategies =
-            [address(mini), address(b4), address(pro), address(proMax)];
+        address[4] memory strategies = [address(mini), address(b4), address(pro), address(proMax)];
         p = B4Pool(strictFactory().createProductPool(dirs, strategies, mask));
     }
 
@@ -123,24 +123,22 @@ abstract contract VaultTestBase is VenueTestBase {
     ) internal returns (B4Vault v) {
         vm.prank(owner_);
         v = B4Vault(
-            strictFactory().createVault(
-                address(p),
-                CoreTypes.descriptorHash(ubtcDescriptor()),
-                strategy,
-                1e18,
-                100,
-                route_
-            )
+            strictFactory()
+                .createVault(
+                    address(p),
+                    CoreTypes.descriptorHash(ubtcDescriptor()),
+                    strategy,
+                    1e18,
+                    100,
+                    route_
+                )
         );
     }
 
     /// `fundAndDeposit` for a vault whose owner is not the shared `user`.
-    function fundAndDepositFor(
-        B4Vault v,
-        address owner_,
-        uint256 dirAmount,
-        uint256 usdcAmount
-    ) internal {
+    function fundAndDepositFor(B4Vault v, address owner_, uint256 dirAmount, uint256 usdcAmount)
+        internal
+    {
         if (dirAmount > 0) ubtc.mint(owner_, dirAmount);
         if (usdcAmount > 0) usdc.mint(owner_, usdcAmount);
         vm.startPrank(owner_);
@@ -166,6 +164,28 @@ abstract contract VaultTestBase is VenueTestBase {
         for (steps = 0; steps < maxSteps; steps++) {
             if (!v.crank()) break;
         }
+    }
+
+    /// @dev Mark-to-market equity: `navWad()` plus the perp's unrealized PnL.
+    ///
+    ///      USE THIS, not `navWad()`, whenever a figure is meant to be what the vault is WORTH.
+    ///      NAV is recorded value only — it excludes unrealized perp PnL by invariant B3, which is
+    ///      correct for settlement and blind for a pure-perp product, whose entire position is the
+    ///      leg NAV cannot see. That blindness has produced three separate wrong published
+    ///      results in this repository (a 0.00 % Pro Max drawdown, a "leveraged sleeve loses
+    ///      value" claim, and a Pro Max ranked below Pro on a worked cycle where it ends at 2.4x
+    ///      Pro). It lives here so it stops being re-derived, one caller at a time, by whoever
+    ///      forgets next.
+    function equityWad(B4Vault v) internal view returns (uint256) {
+        (int64 szi, uint64 entryNtl,) = hub.positions(address(v), PERP_MKT);
+        int256 eq = int256(v.navWad());
+        if (szi != 0) {
+            uint64 az = uint64(szi > 0 ? szi : -szi);
+            int256 mk = int256(uint256(az) * uint256(hub.markPxOf(PERP_MKT)));
+            int256 up = szi > 0 ? mk - int256(uint256(entryNtl)) : int256(uint256(entryNtl)) - mk;
+            eq += up * int256(10 ** 12);
+        }
+        return eq > 0 ? uint256(eq) : 0;
     }
 
     function warpTo(uint256 t) internal {

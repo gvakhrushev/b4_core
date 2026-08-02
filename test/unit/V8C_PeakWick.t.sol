@@ -16,10 +16,15 @@ import {CoreTypes} from "src/venue/CoreTypes.sol";
 ///         with no density/parity guard. Post-fix a 2-sample window never confirms, so
 ///         the wick is neither fed to the engine nor promoted. The three pre-fix harm
 ///         directions (quoted as the regression baseline):
-///         F) this cycle: maxStop pushed out ⇒ 0.30× vs 0.86× honest (fail-safe);
-///         G) next cycle, wick ≥ C′: `shortStructStop` refused ⇒ NO short for a full
-///            cycle (full-cycle short outage);
-///         H) next cycle, wick < C′: shrunk delta ⇒ 3.58× vs honest 1.96× over-leverage.
+///         F) this cycle: maxStop pushed out ⇒ de-levered (fail-safe);
+///         G) next cycle, wick ≥ C′: `shortStructStop` refused ⇒ NO short for a full cycle.
+///            SUPERSEDED by A31 — that refusal was itself the defect. The post-pivot short now
+///            DEGRADES to the one-anchor rule `max(p·φ, C)` instead, so a poisoned delta anchor
+///            costs the boost, not the position;
+///         H) next cycle, wick < C′: shrunk delta ⇒ over-leverage. The original 3.58× / 1.96×
+///            pair was computed under the superseded fixed-stop rule; against the clamped rule
+///            (A26) the same poisoning reads 1.96× vs a 1.62× honest baseline, and only where
+///            the cap binds — at a deep entry the C-pin dominates and it is invisible.
 ///         (A wick inside a genuinely DENSE window is out of the density gate's scope —
 ///         see AUDIT-V8's "median-of-samples / sanity band" follow-up recommendation.)
 contract V8C_PeakWickTest is VaultTestBase {
@@ -121,16 +126,23 @@ contract V8C_PeakWickTest is VaultTestBase {
         assertEq(c, 50_000e18, "honest C' confirmed dense");
         assertEq(tag, 2, "fresh");
 
+        // 25k, not 45k: at 45k the clamp is inert (45k·φ sits between C and maxStop) and the
+        // stop assertion below would hold with no peak fed at all.
         vm.warp(hts + Calendar.P + 30 days); // cycle-1 Fall
-        _setPx(45_000);
+        _setPx(25_000);
         B4Vault v = createVault(address(proMax));
         fundAndDeposit(v, 0, 120_000e6);
         crankUntilIdle(v, 60);
         assertLt(readPos(address(v)).szi, 0, "FIXED: short opens -- the outage is gone");
         assertEq(
             v.perpStopWad(),
-            StructuralLeverage.shortStructStop(45_000e18, 0, 50_000e18),
+            StructuralLeverage.shortStructStop(25_000e18, 0, 50_000e18),
             "prevPeak 0 (sparse window discarded whole, wick and all)"
+        );
+        assertGt(
+            v.perpStopWad(),
+            StructuralLeverage.shortStructStop(25_000e18, 0, 0),
+            "the honest dense C' CHANGED the stop -- it really did reach the engine"
         );
         assertLt(
             _levWad(v),
@@ -139,11 +151,11 @@ contract V8C_PeakWickTest is VaultTestBase {
         );
     }
 
-    /// H) NEXT cycle, wick < C′, pre-fix: prevPeak 70k (poisoned), honest C′ = 90k ⇒ the
-    ///    delta (C′ − Pp) shrank ⇒ maxStop 102.4k vs honest 120.9k ⇒ leverage 3.58× vs
-    ///    1.96× (1.83× over-levered) for every short on the pool for the whole cycle.
-    ///    Post-fix: prevPeak is NEVER poisoned — the engine sizes off the honest dense
-    ///    anchors only: (prevPeak 0, C 90k) ⇒ ~1.22×, de-levered vs the honest baseline.
+    /// H) NEXT cycle, wick < C′: a poisoned prevPeak shrinks the delta `(C′ − Pp)`, which pulls
+    ///    `maxStop` toward `C` and RAISES leverage for every short on the pool for the whole
+    ///    cycle. Post-fix prevPeak is never poisoned and the engine sizes off the honest dense
+    ///    anchors only. Figures recomputed against the clamped rule (A26), at the entry where the
+    ///    cap actually binds: honest (Pp 0, C 90k) 1.62× vs poisoned (Pp 40k) 1.96×.
     function test_wick_below_next_peak_never_promoted_honest_leverage() public {
         _sparseWickedEpochZeroPeak(70_000);
 
@@ -154,8 +166,11 @@ contract V8C_PeakWickTest is VaultTestBase {
         assertEq(pp, 0, "FIXED: wick NEVER promoted (pre-fix: 70k poisoned prevPeak)");
         assertEq(c, 90_000e18, "honest C' confirmed dense");
 
+        // 50k, not 80k: at 80k the base-phi stop lands mid-band, the clamp is inert, and the
+        // assertion below would pass identically with NO anchor fed. At 50k the pin binds, so it
+        // actually proves the honest C' reached the engine.
         vm.warp(hts + Calendar.P + 30 days);
-        _setPx(80_000);
+        _setPx(50_000);
         B4Vault v = createVault(address(proMax));
         fundAndDeposit(v, 0, 120_000e6);
         crankUntilIdle(v, 60);
@@ -163,17 +178,20 @@ contract V8C_PeakWickTest is VaultTestBase {
         assertLt(readPos(address(v)).szi, 0, "short opened on the honest anchors");
         assertEq(
             v.perpStopWad(),
-            StructuralLeverage.shortStructStop(80_000e18, 0, 90_000e18),
+            StructuralLeverage.shortStructStop(50_000e18, 0, 90_000e18),
             "prevPeak 0 (sparse window discarded whole)"
         );
-        uint256 lev = _levWad(v);
-        assertApproxEqRel(
-            lev, StructuralLeverage.shortStructLev(80_000e18, 0, 90_000e18), 0.03e18, "~1.22x"
+        assertEq(v.perpStopWad(), 90_000e18, "pinned to the honest C', not the wick");
+        assertGt(
+            v.perpStopWad(),
+            StructuralLeverage.shortStructStop(50_000e18, 0, 0),
+            "the honest anchor CHANGED the stop"
         );
+        // Read the poisoning where it bites — the cap, not the pin (see V9AnchorDensity).
         assertLt(
-            lev,
+            StructuralLeverage.shortStructLev(80_000e18, 0, 90_000e18),
             StructuralLeverage.shortStructLev(80_000e18, 40_000e18, 90_000e18),
-            "de-levered vs the honest 1.96x baseline -- never the poisoned 3.58x"
+            "a promoted 70k wick WOULD have over-levered -- it never got promoted"
         );
     }
 }

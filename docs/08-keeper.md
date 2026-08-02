@@ -159,4 +159,4 @@ Residual liveness risk lives at the venue: an ecosystem-wide HyperCore failure c
 - [`spec/HAZARDS.md`](../spec/HAZARDS.md) — hazard register (async execution, keeper liveness, deferred payouts)
 - [`spec/SECURITY_MODEL.md`](../spec/SECURITY_MODEL.md) — trust boundaries, deliberate exclusions (§4), funded release gates (§5)
 - [`INVARIANTS.md`](../INVARIANTS.md) — invariants a crank must never violate
-- [`REPORT.md`](audits/REPORT.md) — security dossier and internal adversarial audit rounds (an independent external audit and the funded venue gates are still outstanding)
+- [`docs/audits/REGISTRY.md`](audits/REGISTRY.md) — security dossier and internal adversarial audit rounds (an independent external audit and the funded venue gates are still outstanding)

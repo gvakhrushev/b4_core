@@ -279,4 +279,27 @@ contract HalvingOracleTest is Test {
         vm.expectRevert(HalvingProver.BadHeight.selector);
         prover.publish(GENESIS_HEIGHT + 1, header, "");
     }
+
+    /// The delivery mode is load-bearing, not a default. `HalvingProver.publish` is permissionless
+    /// and accepts any height the light client can prove — including a REAL PAST halving. Such a
+    /// fact reverts here (`ConflictingFact`: nothing was ever accepted at that height), which is
+    /// correct. Under ORDERED delivery that permanently-reverting message would sit at the head of
+    /// the channel and block every later genuine halving: a permissionless liveness attack on the
+    /// protocol's only external fact. `nextNonce` returning 0 selects unordered delivery, which
+    /// keeps the revert local to that one message — pinned here so it cannot be "tidied" into an
+    /// ordered channel by someone who reads it as boilerplate.
+    function test_old_height_fact_reverts_and_does_not_block_later_facts() public {
+        assertEq(oracle.nextNonce(0, bytes32(0)), 0, "unordered delivery: a revert stays local");
+
+        uint256 old = GENESIS_HEIGHT - 210_000; // a real earlier halving, never accepted here
+        vm.expectRevert(HalvingOracle.ConflictingFact.selector);
+        _deliver(old, _header(uint32(GENESIS_TS - 1 days)));
+
+        // The channel is unaffected: the next genuine halving still lands.
+        uint256 next = GENESIS_HEIGHT + 210_000;
+        vm.warp(GENESIS_TS + 200 days);
+        _deliver(next, _header(uint32(GENESIS_TS + 200 days)));
+        assertEq(oracle.halvingHeight(), next, "a later genuine fact is not blocked");
+        assertEq(oracle.epoch(), 1, "and it advanced the epoch");
+    }
 }

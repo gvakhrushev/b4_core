@@ -221,17 +221,25 @@ contract V8A_FreezeTest is VaultTestBase {
 
     function test_V8A_partial_exit_short_reopens_fresh() public {
         // Confirm C = 50k (dense sampling — the V9 density gate must confirm the peak
-        // before the Fall freshness gate feeds it), then open the deep short in Fall at
-        // 40k (sub-1x, pinned stop).
+        // before the Fall freshness gate feeds it), then open the deep short in Fall at 25k,
+        // where the C-pin binds (25k*phi = 40.5k < C). 40k was used here before and sits
+        // MID-BAND: the clamp is inert there, the stop equals the bare base-phi value, and the
+        // assertions below could not tell an anchored engine from an unanchored one.
         _sampleDaily(GENESIS_TS + Calendar.P - Calendar.W + 1 days, 11, 50_000);
         warpTo(Calendar.P + 30 days);
-        _setPx(40_000);
+        _setPx(25_000);
         B4Vault v = createVault(address(proMax));
         fundAndDeposit(v, 0, 120_000e6);
         crankUntilIdle(v, 60);
         assertLt(readPos(address(v)).szi, 0, "short open");
         uint256 stop0 = v.perpStopWad();
-        assertEq(stop0, StructuralLeverage.shortStructStop(40_000e18, 0, 50_000e18), "maxStop");
+        assertEq(stop0, StructuralLeverage.shortStructStop(25_000e18, 0, 50_000e18), "pinned to C");
+        assertEq(stop0, 50_000e18, "the deep entry is pinned to the confirmed peak");
+        assertGt(
+            stop0,
+            StructuralLeverage.shortStructStop(25_000e18, 0, 0),
+            "the anchor CHANGED the stop -- not the bare base-phi value"
+        );
 
         // Held through a price move; then a 50% exit (penalized in Fall — irrelevant here).
         int64 sziHeld = readPos(address(v)).szi;
@@ -245,8 +253,10 @@ contract V8A_FreezeTest is VaultTestBase {
         // (The finalize clears the stop transiently; the same idle crank loop immediately
         // re-derives it flat — the clear is not externally observable, the fresh re-open is.)
 
-        // Kept capital re-opens the short at the CURRENT price, stop re-derived (the
-        // S-post maxStop is entry-independent, but the FREEZE must be re-armed, not stale).
+        // Kept capital re-opens the short at the CURRENT price. Since A26 the post-pivot stop
+        // DEPENDS on the entry, so the re-derived stop is genuinely different from the frozen
+        // one (44k is mid-band: 71.2k, versus the 50k pin at the 25k open) — which is what makes
+        // "the freeze was re-armed, not left stale" observable at all.
         crankUntilIdle(v, 60);
         CoreTypes.Position memory p = readPos(address(v));
         assertLt(p.szi, 0, "kept capital re-shorted");
@@ -255,6 +265,7 @@ contract V8A_FreezeTest is VaultTestBase {
             StructuralLeverage.shortStructStop(44_000e18, 0, 50_000e18),
             "fresh freeze at re-open"
         );
+        assertTrue(v.perpStopWad() != stop0, "the re-open stop DIFFERS from the stale one");
         assertApproxEqRel(_liqShortWad(v), v.perpStopWad(), 0.01e18, "liq on the fresh stop");
         // Whole kept NAV redeployed as margin (no stranded USDC after the re-open).
         assertApproxEqRel(

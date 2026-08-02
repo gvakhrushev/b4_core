@@ -15,6 +15,12 @@ abstract contract B4VaultStorage {
     uint256 internal constant RESEND_TIMEOUT = 1 hours;
     /// Owner escape for stuck surplus-recovery intents (HAZARDS A6).
     uint256 internal constant EMERGENCY_TIMEOUT = 3 days;
+    /// Owner escape for a Core→EVM return whose credit never arrived (A7 residual). Far longer
+    /// than `EMERGENCY_TIMEOUT` because this one REALIZES A LOSS rather than releasing a claim on
+    /// funds that still exist: a legitimate return completes within `RESEND_TIMEOUT`, so 30 days
+    /// is ~720x any honest delay, while still fitting inside the ~0.94–1.5 year checkpoint
+    /// cadence — it can free a vault long before its next settlement.
+    uint256 internal constant RETURN_ABANDON_TIMEOUT = 30 days;
     /// Rebalance dead-band: skip trades below 1% of strategy value…
     uint256 internal constant TOLERANCE_BPS = 100;
     /// …or below the venue's $10 minimum order notional.
@@ -168,6 +174,17 @@ abstract contract B4VaultStorage {
     );
     event FeePaid(address operator, uint256 operatorValueWad, address referrer);
     event SettleNavSnapshotted(uint256 indexed intervalId, uint256 navWad, uint256 pxWad);
+    /// The exit paid its penalty to the pool, but the pool-side attribution call reverted and was
+    /// swallowed so the exit could not be frozen by it (H3/V3-POOL-1). `onCapture` distinguishes
+    /// which half failed: `beginPenalty` (false) or `capturePenalty` (true).
+    ///
+    /// Custody is unaffected — the tokens are in the pool and a later permissionless `capture()`
+    /// accounts them. What IS affected is ROUTING: in a strict Product Pool the penalty was owed
+    /// to its matching sleeve (D6/D7) and instead falls through to generic claim inventory, where
+    /// it is distributed by weight to whoever is claiming. That is a value movement with no other
+    /// on-chain trace, which HAZARDS G1 requires be observable rather than inferred by diffing
+    /// storage — and it is the ONLY signal that a pool-side guard silently downgraded the routing.
+    event PenaltyRoutingDegraded(bool onCapture);
     event ExitInitiated(uint256 shareWad);
     event ExitCancelled(uint256 shareWad);
     event ExitFinalized(
@@ -196,6 +213,7 @@ abstract contract B4VaultStorage {
     error AlreadySettled();
     error NotSettleable();
     error NavNotSnapshotted(); // settle ran past the snapshot window with no captured NAV
+    error ReturnNotStuck(); // the source still holds it: the leg is slow, not wedged
     error OutsideSnapshotWindow(); // the valuation instant is confined to the settlement day
     error BadShare();
     error NotRecoveryIntent();

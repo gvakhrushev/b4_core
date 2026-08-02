@@ -69,9 +69,7 @@ contract AsyncReturnReceiptTest is VaultTestBase {
         // still covered afterwards.
         hub.deliverEvm();
         v.crank();
-        assertTrue(
-            intentKindOf(v) == B4VaultStorage.IntentKind.None, "the delivered leg completes"
-        );
+        assertTrue(intentKindOf(v) == B4VaultStorage.IntentKind.None, "the delivered leg completes");
         assertGe(
             usdc.balanceOf(address(v)),
             v.usdcRotatedEvm() + v.usdcMarginEvm(),
@@ -98,9 +96,7 @@ contract AsyncReturnReceiptTest is VaultTestBase {
 
         usdc.mint(address(v), 10_000e6); // anyone, at any time
         v.crank();
-        assertTrue(
-            intentKindOf(v) == B4VaultStorage.IntentKind.None, "documented A11 residual"
-        );
+        assertTrue(intentKindOf(v) == B4VaultStorage.IntentKind.None, "documented A11 residual");
         assertGe(
             usdc.balanceOf(address(v)),
             v.usdcRotatedEvm() + v.usdcMarginEvm(),
@@ -111,8 +107,6 @@ contract AsyncReturnReceiptTest is VaultTestBase {
         uint256 bookedBefore = v.usdcRotatedEvm() + v.usdcMarginEvm();
         hub.deliverEvm();
         assertEq(v.usdcRotatedEvm() + v.usdcMarginEvm(), bookedBefore, "no double credit");
-        assertGt(
-            usdc.balanceOf(address(v)), bookedBefore, "the delivery is recoverable surplus"
-        );
+        assertGt(usdc.balanceOf(address(v)), bookedBefore, "the delivery is recoverable surplus");
     }
 }

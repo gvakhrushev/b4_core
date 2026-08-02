@@ -101,9 +101,16 @@ subject to `HAZARDS.md`. Economic rationale is non-normative (`WHITEPAPER.md`).
   directional leg MUST reject it; settlement MUST reject it; exit finalization MUST defer on
   it rather than revert, and MUST remain cancellable so a permanently dead feed cannot strand
   a vault (the settlement leg is price-independent when no directional asset is held).
-- State categories: directional capital; rotated capital (settlement from Close sales); owner
-  margin reserve; verified Core principal. Unrealized PnL / unverified surplus MUST NOT enter
-  the realized ledger; owner margin MUST NOT increase strategy notional.
+- State categories: directional capital; rotated capital (settlement from Close sales **and
+  direct settlement-token deposits**); owner margin reserve; verified Core principal. Unrealized
+  PnL / unverified surplus MUST NOT enter the realized ledger; owner margin MUST NOT increase
+  strategy notional.
+  A deposited settlement token is strategy capital, not margin. It has to be: a pure-perp
+  product returns settlement at exit, so if a re-deposit landed in the margin reserve it would
+  be inert — the reserve is excluded from `_strategyValueWad`, so notional would size off zero
+  directional capital and the position would never reopen. The margin rule above is unaffected
+  and still holds literally: the reserve itself never enters notional; what changed is only
+  which bucket a deposit lands in.
 - When flat, if withdrawable Core settlement is below recorded principal, principal MUST be
   written down **before any NAV valuation** — settle, exit, AND sync (see `HAZARDS.md` B2).
   Every valuation path MUST run only at an idle execution engine (no action in flight), so
@@ -165,10 +172,10 @@ rule covers both sides:
 |---|---|---|
 | Anchors | `floor` = previous confirmed bottom; `cap` = most recent confirmed bottom | `prevPeak` = previous confirmed peak; `C` = this cycle's confirmed peak |
 | Confirmation window | 62-window `[T, T+W]` and post-halving `[halving, halving+W]` (min close) | the `W` days ending at the 38.2% pivot (max close, corroborated — see below) |
-| Sizing | `stop = min(p − (p − floor)/g, cap)` | window: `stop = p + (p − prevPeak)·(g−1)` (DCA slices); after the pivot: `MaxStop = C + (C − prevPeak)·(g−1)`, `stop = max(p + (MaxStop − p)·(g−1), C)` |
+| Sizing | window: `stop = p − (p − floor)/g` (DCA slices); after the pivot: `MinStop = B − (B − floor)/g`, `stop = clamp(p·(1 − 1/g), MinStop, B)` | window: `stop = p + (p − prevPeak)/g` (DCA slices); after the pivot: `MaxStop = C + (C − prevPeak)/g`, `stop = clamp(p·(1 + 1/g), C, MaxStop)` |
 | Leverage | `L = p/(p − stop)`, clamped by the venue max | `L = p/(stop − p)`, clamped by the venue max, **no 1× floor** |
-| Depth behaviour | grows toward the confirmed low, decays for a late entry | decreases monotonically with depth; pins to `C` deep; exceeds the base `g` for any entry above `maxStop/2` (which lies **below** `C`, since `g·(g−1) = 1`), reaching ≈ 4.8× at the cycle-4 pivot |
-| Refusal | `p ≤ floor` → un-leveraged spot leg | `p ≥ MaxStop` → flat base |
+| Depth behaviour | three bands: capped at the confirmed bottom `B` for a high entry (`L → 1×`), the base `g` in the middle, lifted by `MinStop` near the bottom | three bands: pinned to `C` for a deep entry — `L` crosses `1×` at `p = C/2` and is deliberately sub-1× below — the base `g` in the middle, and lifted by the `prevPeak`-boosted `MaxStop` near the peak. The near-peak maximum is `φ·C/(C − Pp)`, reached at `p = C` (**3.93×** on cycle-4 anchors `C = 115,265`, `Pp = 67,774`). The 4.83× quoted here previously belonged to the superseded interpolating rule, which the engine no longer calls. |
+| Refusal | `p ≤ MinStop` → no leveraged position (hold settlement, re-evaluated each crank) | `p ≥ MaxStop` → no leveraged position (hold settlement, re-evaluated each crank) |
 | Genesis | `floor = 0` → flat base `g` | no `prevPeak` → flat base `g` |
 
 `W ≈ 20 days` is structural, not tuned: `W = q²·cycle` with `q = φ⁻³/2 = 0.118` — the same
@@ -236,7 +243,7 @@ liquidation sits at the structural stop; a single frozen stop, captured once at 
 at flip / exit / liquidation, means a held position is never re-adjusted (no re-lever on a price
 move or a permissionless anchor flip). The exact state machine, the worked acceptance numbers, and
 the remaining interims (the halving volume-add, the growth-rise ratchet floor, per-slice DCA) are
-`docs/design/STRUCTURAL-STATE-MACHINE.md`; the derivation is `docs/design/PROPOSAL-structural-leverage.md`.
+`docs/design/STRUCTURAL-STATE-MACHINE.md`, which is normative for sizing and carries the derivation.
 
 ## 8. Checkpoints, fees, reward weight
 

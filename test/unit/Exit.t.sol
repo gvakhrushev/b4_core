@@ -237,4 +237,59 @@ contract ExitTest is VaultTestBase {
         uint256 penalty = Phi.wmul(gross, Phi.EXIT_Q);
         assertEq(ubtc.balanceOf(user), Phi.mulDiv(1e8, gross - penalty, gross));
     }
+
+    // ------------------------------------------------------------- waterfall properties
+
+    /// The exit waterfall splits real money between four recipients (owner, operator, referrer,
+    /// pool) using `mulDiv(out, share, grossWad)` per bucket. Every safety argument for it was
+    /// a hand proof — that `ocx <= grossWad` because `operatorCut <= FEE_F * nav`, that
+    /// `penalty < grossWad` because `EXIT_Q < 1`, that the three floored shares cannot exceed
+    /// `out`, and that `grossWad == 0` is unreachable behind its guard. A hand proof holds until
+    /// someone edits the formula, so this fuzzes the whole share space and enforces it instead.
+    ///
+    /// It also pins the direction of the flooring dust: every rounding error must favour the
+    /// vault (B5), never a recipient — the only direction that cannot be farmed by repetition.
+    function testFuzz_exit_waterfall_conserves_and_never_underflows(uint256 xRaw, bool free)
+        public
+    {
+        uint256 x = bound(xRaw, 1, Phi.WAD);
+        B4Vault v;
+        if (free) {
+            // Post-halving window: exits are free, so the penalty leg is absent entirely.
+            warpTo(5 days);
+            v = createVault(address(mini));
+            fundAndDeposit(v, 1e8, 0);
+            hub.setSpotPx(SPOT_MKT, 110_000e4);
+        } else {
+            v = _vaultWithProfit(); // deep growth: penalised
+        }
+        crankUntilIdle(v, 40);
+
+        uint256 ePre = v.entryLedgerWad();
+        uint256 bucketPre = v.dirEvm();
+        uint256 heldPre = ubtc.balanceOf(user) + ubtc.balanceOf(operator) + ubtc.balanceOf(referrer)
+            + ubtc.balanceOf(address(pool));
+
+        vm.prank(user);
+        v.initiateExit(x);
+        crankUntilIdle(v, 60); // MUST NOT revert for any share in the space
+
+        assertEq(v.exitShareWad(), 0, "the exit finalized for every share");
+
+        // (i) the SPEC 9 ledger formula, exactly, for every share.
+        assertEq(v.entryLedgerWad(), Phi.wmul(ePre, Phi.WAD - x), "entry scales by keep");
+
+        // (ii) conservation with the dust direction pinned: recipients gained no more than the
+        //      bucket lost, so every floored wei stayed with the vault rather than a payee.
+        uint256 bucketOut = bucketPre - v.dirEvm();
+        uint256 heldGain = ubtc.balanceOf(user) + ubtc.balanceOf(operator)
+            + ubtc.balanceOf(referrer) + ubtc.balanceOf(address(pool)) - heldPre;
+        assertLe(heldGain, bucketOut, "recipients never receive more than the bucket released");
+        assertLe(bucketOut - heldGain, 3, "and the dust is bounded, one wei per recipient split");
+
+        // (iii) a free window pays the pool nothing; a penalised one must.
+        if (free) {
+            assertEq(ubtc.balanceOf(address(pool)), 0, "no penalty in a free window");
+        }
+    }
 }

@@ -1,8 +1,7 @@
 # B4 — implementation architecture & design decisions
 
-Clean-room implementation of the specification package now in [`spec/`](spec/) — see
-[`docs/design/CLEANROOM-HANDOFF.md`](docs/design/CLEANROOM-HANDOFF.md) for the terms the build
-was handed over on. This document is
+Clean-room implementation of the specification package in [`spec/`](spec/) — built without sight
+of any earlier contract source, so no latent bug could ride along. This document is
 normative for the implementation (HAZARDS G3): every place the package left freedom — or
 contradicted itself — the resolution is recorded here, in the same change as the code.
 
@@ -75,7 +74,7 @@ the code now state the same behavior (HAZARDS G3).
    endpoint use the piecewise split at zero exactly at the settlement points.
    (`Calendar.targetAt`; `testFuzz_sameSign_direct_interpolation`.)
 
-2. **Exit reward-base C (SPEC §9).** *(Formula corrected 2026-07-25 — see below.)*
+2. **Exit reward-base C (SPEC §9).**
    `nextRewardBase = (R+C)·(1−x)` with C read as the
    *full-vault* client share lets repeated dust exits mint unbounded weight
    (x→0 ⇒ R += C each time), contradicting §9's own "repeated partial exits MUST NOT
@@ -85,8 +84,7 @@ the code now state the same behavior (HAZARDS G3).
    share's profit earns client-share exactly once.
    (`B4VaultOps._finalizeExit`; `test_repeated_partial_exits_no_weight_duplication`.)
 
-   **Correction (AUDIT-2026-07-25 "half B") — and the correction to that correction.** The
-   defect was real: `settle`-then-`exit` kept the pool-side claim (the pool is never notified of
+   **The order-dependence, and the trigger that replaced it.** The defect was real: `settle`-then-`exit` kept the pool-side claim (the pool is never notified of
    an exit) while `exit`-then-`settle` never reported one — the same economic event with
    opposite outcomes by call order, and the loser was whoever did not know the order. The first
    attempted fix lifted the realised share out from under `keep`
@@ -104,8 +102,8 @@ the code now state the same behavior (HAZARDS G3).
    (D2/D3); and every non-applicable case is a silent `return`, never a revert, because it sits
    on the permissionless crank path and there is no admin to unstick a freeze (H3, F1).
 
-   **And the correction to that (AUDIT-2026-07-29 F1).** The pool side originally fired only when
-   `keep == 0`. That is an exact-equality test on a number the vault owner supplies, so
+   **The trigger must not be a boundary (AUDIT-2026-07-29 F1).** An exact-equality test on
+   `keep == 0` reads a number the vault owner supplies, so
    `initiateExit(WAD − 1)` paid out every unit of the position but flooring dust and kept **100%**
    of the reported claim — a departed vault collecting a full pro-rata share of a basket funded by
    other participants' penalties, with every stayer diluted by exactly that amount. It now scales
@@ -144,9 +142,9 @@ structural bottom. Regression asserts the realized LIQUIDATION PRICE, not the or
 
 **M-3 / F2 — the PEAK anchor is the max over daily CLOSES, corroborated; the LOW is deliberately
 not mirrored.** The density gate counted days but the peak's value ratchet ran on every call, so a
-caller could wait for a wick and move a confirmed peak for free. The harm lands a full cycle
-later: `peakC` is promoted to `prevPeak`, the short's delta anchor, and an inflated `Pp` shrinks
-`(C − Pp)`, pulling the stop toward `C` and RAISING leverage.
+caller could wait for a wick and move a confirmed peak for free. The harm lands a full cycle later,
+by the promotion mechanism `spec/HAZARDS.md` C5 states — kept in one place on purpose, because an
+earlier restatement of it here is what went stale and let both anchor findings through.
 
 The first remedy tied the peak's VALUE to the density counter's daily slot — and that created the
 opposite finding. The slot is claimed by whoever calls first after `last + 1 day`, so a squatter
@@ -414,7 +412,7 @@ step never blocks the others.
   special-case correction, and the later Core credit is still capped at the sent amount
   (A11) so it can never double-count. Regression: `test_settle_requires_idle_then_no_phantom_profit`.
 
-## Discovery-report hardening (2026-07-18, see docs/audits/REPORT.md adjudication)
+## Discovery-report hardening (2026-07-18, see `docs/audits/REGISTRY.md` adjudication)
 
 - **Settle requires an idle engine; reconcile only ever runs at idle.** `opsSettle`
   irreversibly pays the operator fee in kind and reports pool weight, so it must value a

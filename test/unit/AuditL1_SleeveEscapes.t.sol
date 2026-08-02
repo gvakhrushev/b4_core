@@ -24,10 +24,7 @@ contract AuditL1SleeveEscapesTest is VaultTestBase {
     function setUp() public {
         setUpProtocol();
         productFactory = new B4ProductFactory(
-            address(oracle),
-            usdcDescriptor(),
-            factory.vaultImplementation(),
-            address(poolDeployer)
+            address(oracle), usdcDescriptor(), factory.vaultImplementation(), address(poolDeployer)
         );
         strategies = [address(mini), address(b4), address(pro), address(proMax)];
     }
@@ -171,9 +168,7 @@ contract AuditL1SleeveEscapesTest is VaultTestBase {
     /// Exact complement of `_finalizeExit`'s deferral test: a zero price alone is not
     /// enough — a sleeve holding no directional value finalizes at px 0, so cancelling is
     /// refused there too.
-    function test_L1_dead_feed_cancel_refused_when_the_sleeve_holds_no_directional()
-        public
-    {
+    function test_L1_dead_feed_cancel_refused_when_the_sleeve_holds_no_directional() public {
         B4Pool p = _productPool(15);
         B4Vault sleeve = B4Vault(p.sleeveOf(2, DIR)); // never funded
 
@@ -304,5 +299,18 @@ contract AuditL1SleeveEscapesTest is VaultTestBase {
         p.recoverSleeveEvm(1, DIR, 0);
         vm.expectRevert(B4VaultStorage.NotRecoveryIntent.selector);
         p.clearSleeveRecovery(1, DIR);
+
+        // The A6 escape relay, on the same terms. A sleeve's owner IS the pool, so an escape
+        // that lives only on the vault's `onlyOwner` surface does not exist for a sleeve until
+        // the pool relays it — the L-1 gap, repeated by A6 until this forwarder was added.
+        // It grants the pool nothing the vault does not already gate: the sleeve refuses every
+        // kind but ReturnDir/ReturnUsdc, and reaching THAT revert is what proves the call lands
+        // in the sleeve's own logic rather than being unreachable.
+        vm.expectRevert(B4Pool.NotASleeve.selector);
+        p.abandonSleeveStuckReturn(4, DIR); // mask 1: no Pro sleeve exists
+        vm.expectRevert(B4Pool.NotASleeve.selector);
+        p.abandonSleeveStuckReturn(1, 7); // no such directional index
+        vm.expectRevert(B4VaultStorage.NotRecoveryIntent.selector);
+        p.abandonSleeveStuckReturn(1, DIR); // exists, reached, and correctly refuses
     }
 }

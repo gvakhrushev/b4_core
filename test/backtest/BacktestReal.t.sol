@@ -21,15 +21,19 @@ import {
     StrategyProMax
 } from "src/periphery/ReferenceStrategies.sol";
 
-/// @title Historical benchmark on the REAL contracts. Every figure is `B4Vault.navWad()` read
+/// @title Historical benchmark on the REAL contracts. Returns are `B4Vault.navWad()` and drawdowns
+///        are mark-to-market equity (NAV + unrealized perp PnL — see `_equityWad`; NAV alone is
+///        blind to a pure-perp product's only leg), read
 ///        off the actual B4Vault/B4VaultOps/B4Pool/HalvingOracle + reference strategies, cranked
 ///        and settled day-by-day across the real halving epochs exactly as the on-chain keeper
 ///        would — NOT a hand-rolled parallel equity model. Every vault starts from the same BTC
 ///        deposit and posts NO separate margin: a short product funds its fall short by selling
 ///        that BTC into USDC (V6-M-2). Income is realized per cycle — a full exit in the 20-day
 ///        post-halving free window pays the fee and realizes the perp PnL that navWad excludes
-///        (B3), then re-deposits. Sizing is the shipped flat-`φ` (StructuralLeverage is designed
-///        but not wired). Run: `forge test --match-path 'test/backtest/BacktestReal.t.sol' -vv`
+///        (B3), then re-deposits. StructuralLeverage IS wired in the engine, but this run
+///        samples the anchor windows daily as the keeper does, so the confirmed-anchor
+///        structural path is what these figures measure.
+///        Run: `forge test --match-path 'test/backtest/BacktestReal.t.sol' -vv`
 contract BacktestRealTest is VenueTestBase {
     uint32 constant SRC_EID = 30_101;
     bytes32 constant SRC_SENDER = bytes32(uint256(1));
@@ -65,7 +69,8 @@ contract BacktestRealTest is VenueTestBase {
             address(endpoint), SRC_EID, SRC_SENDER, HALVING_HEIGHT[0], address(this)
         );
         _acceptHalving(HALVING_HEIGHT[0], HALVING_TS[0]);
-        address impl = address(new B4Vault(address(new B4VaultOps()), address(new B4VaultRecovery())));
+        address impl =
+            address(new B4Vault(address(new B4VaultOps()), address(new B4VaultRecovery())));
         factory = new B4Factory(address(oracle), usdcDescriptor(), impl, address(poolDeployer));
         CoreTypes.AssetDescriptor[] memory dirs = new CoreTypes.AssetDescriptor[](1);
         dirs[0] = ubtcDescriptor();
@@ -248,7 +253,16 @@ contract BacktestRealTest is VenueTestBase {
                 string.concat("  ", names[i], " px=$", vm.toString(uint256(_pxAt(pts[i])) / 1e18))
             );
             console.log("    perp szi:");
-            console.logInt(int256(_readPos(address(v)).szi));
+            int64 szi = _readPos(address(v)).szi;
+            console.logInt(int256(szi));
+            // Not just a printf. `names` is [growth-mid, fall-entry, fall-mid, recovery-mid],
+            // and the sign of the perp at each is the whole claim the product makes: Pro Max is
+            // long through growth and short through the fall. A diagnostic nobody asserts is a
+            // diagnostic that silently stops reporting what it was written to show — this file
+            // already carried one for a question that had been answered, and it survived because
+            // it always passed.
+            if (i == 0) assertGt(szi, 0, "growth-mid: Pro Max must be LONG");
+            if (i == 1 || i == 2) assertLt(szi, 0, "fall: Pro Max must be SHORT");
         }
     }
 
@@ -260,6 +274,7 @@ contract BacktestRealTest is VenueTestBase {
         int256 low; // worst nav seen this cycle
         int256 peak; // running peak this cycle (for maxDD)
         int256 maxDDWad; // worst peak-to-trough this cycle, WAD fraction
+        uint256 ddDay; // day-of-cycle on which that worst drawdown was set
     }
 
     function _deployAndFund(address strategy, address operator, uint256 usdcMargin6)
@@ -327,6 +342,11 @@ contract BacktestRealTest is VenueTestBase {
             if (ts[i] < cycleStart || ts[i] > readPoint) continue;
             vm.warp(ts[i]);
             _setPx(ts[i]);
+            // Sample the anchor windows exactly as the permissionless keeper does. Without this
+            // the pool's getters withhold every anchor and the engine correctly degrades to the
+            // flat-phi genesis fallback — which is what this benchmark used to measure. Sampling
+            // makes it measure the SHIPPED structural product instead.
+            try pool.sampleAnchor(1) {} catch {} // index 0 is settlement; reverts outside a window
             if (!done[0]) {
                 _crankUntilIdle(v, 40); // open the growth position for this epoch
                 done[0] = true;
@@ -349,8 +369,32 @@ contract BacktestRealTest is VenueTestBase {
                 _crankUntilIdle(v, 40); // reopen the recovery long for the bull run to next halving
                 done[4] = true;
             }
-            _trackDD(r, int256(v.navWad()));
+            _trackDD(r, _equityWad(v), (ts[i] - cycleStart) / 86400);
         }
+    }
+
+    /// Mark-to-market equity = `navWad()` + unrealized perp PnL.
+    ///
+    /// Drawdown MUST NOT be measured on `navWad` alone. NAV is recorded value only — it books the
+    /// perp at `perpMargin6`, its margin principal, and excludes unrealized PnL by invariant B3.
+    /// That is correct for settlement (it is what stops unearned value entering the ledger), and
+    /// it makes NAV useless as a risk gauge for a LEVERAGED product: since the pure-perp change,
+    /// Pro Max holds `spot = 0`, so its entire position is the one leg NAV cannot see. Measured on
+    /// NAV its drawdown is ~0 no matter what the position does — the published table read
+    /// "0.00 %", which is the blindness of the instrument, not the safety of the product.
+    ///
+    /// The mock maintains `entryNtl` as `Σ fillSz·px`, so the position's current notional at the
+    /// mark is `|szi|·markPx` in those same 1e6 units and the difference is the unrealized PnL.
+    function _equityWad(B4Vault v) internal view returns (int256) {
+        CoreTypes.Position memory p = _readPos(address(v));
+        int256 nav = int256(v.navWad());
+        if (p.szi == 0) return nav;
+        uint64 absSz = uint64(p.szi > 0 ? p.szi : -p.szi);
+        int256 markNtl = int256(uint256(absSz) * uint256(hub.markPxOf(PERP_MKT)));
+        int256 uPnL6 = p.szi > 0
+            ? markNtl - int256(uint256(p.entryNtl))
+            : int256(uint256(p.entryNtl)) - markNtl;
+        return nav + uPnL6 * int256(10 ** (18 - uint256(CoreTypes.PERP_USD_DECIMALS)));
     }
 
     /// The 3rd zone: in the post-halving free-exit window, fully exit (realizing the perp PnL
@@ -380,11 +424,14 @@ contract BacktestRealTest is VenueTestBase {
         vm.stopPrank();
     }
 
-    function _trackDD(CycleRow memory r, int256 nav) internal pure {
+    function _trackDD(CycleRow memory r, int256 nav, uint256 dayOfCycle) internal pure {
         if (nav > r.peak) r.peak = nav;
         if (nav < r.low) r.low = nav;
         int256 dd = r.peak <= 0 ? int256(1e18) : (r.peak - nav) * 1e18 / r.peak;
-        if (dd > r.maxDDWad) r.maxDDWad = dd;
+        if (dd > r.maxDDWad) {
+            r.maxDDWad = dd;
+            r.ddDay = dayOfCycle;
+        }
     }
 
     /// `retBase` = the denominator for the return multiple. For cycle 1 it is the $100k BTC
@@ -405,6 +452,7 @@ contract BacktestRealTest is VenueTestBase {
     struct ProductResult {
         uint256 compoundedX1000; // final NAV / $100k BTC base, x1000
         uint256 c1MaxDDbps; // cycle-1 worst drawdown, bps
+        bool anyDDInFall; // did ANY cycle set its worst drawdown inside the fall zone?
     }
 
     function _runProduct(
@@ -448,6 +496,10 @@ contract BacktestRealTest is VenueTestBase {
             _logCycle(c, r, c == 0 ? btcBase : prevEnd);
             prevEnd = r.endNav;
             if (c == 0) res.c1MaxDDbps = uint256(r.maxDDWad * 10000 / 1e18);
+            // Which ZONE set the worst drawdown is the product claim itself — see the assertions.
+            uint256 fallOpen = (Calendar.P - Calendar.H) / 1 days;
+            uint256 fallClose = (Calendar.T + Calendar.H) / 1 days;
+            if (r.ddDay >= fallOpen && r.ddDay <= fallClose) res.anyDDInFall = true;
 
             if (readPoint != cycleEndFull) {
                 console.log("    (cycle in progress, stopped at last available price date)");
@@ -496,6 +548,25 @@ contract BacktestRealTest is VenueTestBase {
         // step out of the market during the bear and draw down materially less.
         assertGt(mn.c1MaxDDbps, b.c1MaxDDbps + 500, "Mini draws down >5pp more than B4 in cycle 1");
         assertGt(mn.c1MaxDDbps, pm.c1MaxDDbps + 500, "Mini draws down >5pp more than Pro Max");
+        // A leveraged product CANNOT have a near-zero drawdown, and for a long time this table
+        // published one: measured on `navWad` alone, Pro Max read 0.00 %, because NAV excludes
+        // unrealized perp PnL (B3) and pure-perp Pro Max holds nothing else. This floor is what
+        // makes that unmeasurable-again: revert `_equityWad` to plain NAV and it fails at ~0.
+        assertGt(
+            pm.c1MaxDDbps, 5000, "Pro Max must show a real drawdown (>50pp); NAV alone reads ~0"
+        );
+        // THE product claim, and the only drawdown statement worth pinning: a rotating product
+        // never takes its worst drawdown in the fall. Mini holds spot through the bear and sets
+        // its worst drawdown INSIDE the fall zone in every cycle; B4/Pro/Pro Max are in USDC or
+        // short there, so their worst drawdown always lands in growth or recovery — ordinary
+        // intra-bull volatility that gives back accumulated profit, not the bear that takes
+        // principal. Asserting the ZONE, not a basis-point ordering: the products are all ~1x
+        // long in growth, so which of them is a point or two deeper on a given crash is
+        // composition noise and pinning it would only encode that noise as a claim.
+        assertTrue(mn.anyDDInFall, "Mini must take its worst drawdown IN the fall (it holds)");
+        assertFalse(b.anyDDInFall, "B4 must never take its worst drawdown in the fall");
+        assertFalse(pr.anyDDInFall, "Pro must never take its worst drawdown in the fall");
+        assertFalse(pm.anyDDInFall, "Pro Max must never take its worst drawdown in the fall");
         // Sanity: Mini is a small haircut under raw HODL (operator fee only), not a multiple.
         assertGt(mn.compoundedX1000, 4_000_000, "Mini compounds ~HODL (>4000x over 3 cycles)");
         assertLt(mn.compoundedX1000, 5_500_000, "Mini below raw HODL (fee drag), not above");

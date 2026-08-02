@@ -31,6 +31,7 @@ interface IB4PoolSleeve {
     function recoverCoreSpot(bool dirToken) external;
     function recoverPerpSurplus() external;
     function emergencyClearRecovery() external;
+    function abandonStuckReturn() external;
     // Read-side of the exit-deferral predicate mirrored by `cancelSleeveExit`.
     function dirEvm() external view returns (uint256);
     function coreDirWei() external view returns (uint64);
@@ -64,6 +65,26 @@ contract B4Pool is IB4PoolPolicy {
     ///         legacy shared-basket mode; a non-zero mask is a strict configured pool.
     ///         1=Mini, 2=B4, 4=Pro, 8=Pro Max. The four single bits are isolated
     ///         pools and 15 is the explicit aggregate-pool choice.
+    ///
+    ///         **These are MASK BITS, not policy ids, and for the same product they are
+    ///         different numbers.** A policy id `p` occupies mask bit `1 << (p − 1)`:
+    ///
+    ///           product | policy id | mask bit
+    ///           Mini    |     1     |     1
+    ///           B4      |     2     |     2
+    ///           Pro     |   **3**   |   **4**
+    ///           Pro Max |   **4**   |   **8**
+    ///
+    ///         Every public entrypoint and mapping keyed by `policy` — `sleeveOf`,
+    ///         `penaltyEscrow`, `strategyOf`, `foldPenalty`, `crankSleeve` and all five sleeve
+    ///         escapes — takes the **policy id**. Only this mask uses the bits. The two agree
+    ///         for Mini and B4 and diverge for Pro and Pro Max, which is what makes the mistake
+    ///         easy to make and hard to see: passing a mask bit where an id belongs reads
+    ///         `penaltyEscrow(4, …)` as Pro Max's escrow and returns a **silent zero** rather
+    ///         than reverting, so a monitor concludes there is nothing to fold. In an aggregate
+    ///         pool the sleeve forwarders would likewise act on the wrong product's sleeve
+    ///         instead of failing. (Isolated pools do revert `NotASleeve`, which is why the
+    ///         mistake tends to survive testing and surface in production.)
     uint8 public policyMask;
     bool private _policiesConfigured;
     mapping(address => uint8) public policyIdForStrategy;
@@ -257,11 +278,7 @@ contract B4Pool is IB4PoolPolicy {
     ///        `msg.sender` was under the previous inline `new B4Pool(...)`, and the trust
     ///        model is unchanged: a self-declared factory grants nothing, because authority
     ///        flows from a factory's own `isPool` registry, never from this field.
-    constructor(
-        address oracle_,
-        CoreTypes.AssetDescriptor[] memory descriptors,
-        address factory_
-    ) {
+    constructor(address oracle_, CoreTypes.AssetDescriptor[] memory descriptors, address factory_) {
         factory = factory_;
         oracle = IHalvingOracle(oracle_);
         uint256 n = descriptors.length;
@@ -524,11 +541,12 @@ contract B4Pool is IB4PoolPolicy {
             //     window narrows when a wick must occur, but only corroboration makes a single
             //     one worthless.
             //
-            // The cost, stated rather than hidden: the served level is the second-highest close,
-            // so a top that prints on exactly one close is understated until a second close
-            // reaches it. Understating `peakC` pushes the short's stop further out and LOWERS
-            // leverage — the conservative direction — and the error is bounded by the gap
-            // between the two highest closes, where an admitted wick would be unbounded.
+            // `peakC` is the corroborated second-highest close and is what gets promoted into
+            // the NEXT cycle's `prevPeak`, where a LOW value is the safe one (a lower `Pp` widens
+            // `C − Pp`, pushes `maxStop` further out and lowers leverage). It is deliberately NOT
+            // what `peaks()` serves as this cycle's `C` — there the safe direction is the
+            // opposite, so the getter serves the raw `peakTop`. An earlier note here claimed
+            // understatement was "the conservative direction" for the short; that was inverted.
             if (atClose) {
                 if (pxp > a.peakTop) {
                     // A new candidate. The level it displaces is now attested by its own day, so
@@ -587,8 +605,10 @@ contract B4Pool is IB4PoolPolicy {
             a.lowDensity = Density(1, now112, now112);
         } else {
             // NOT mirrored from the peak side: the two anchors fail in OPPOSITE directions.
-            // A too-high `peakC` shrinks the short's `(C − Pp)` and RAISES leverage, so the
-            // peak value is tied to the daily cadence (M-3). A too-low `cap` moves the long's
+            // A too-high `prevPeak` shrinks the short's `(C − Pp)`, pulls `maxStop` toward `C` and
+            // RAISES leverage, so the value promoted across cycles is tied to the daily cadence
+            // and to corroboration (M-3). (A too-high CURRENT peak does the reverse — it widens
+            // the delta and lowers leverage — which is why `peaks()` serves the raw max there.) A too-low `cap` moves the long's
             // stop FURTHER from price and LOWERS leverage — the conservative direction — so
             // the low ratchets on EVERY observation, as the sampling doc requires ("sampling
             // MORE lowers the recorded low and therefore lowers leverage; the pool benefits
@@ -633,6 +653,22 @@ contract B4Pool is IB4PoolPolicy {
         returns (uint256 prevPeak, uint256 peakC, uint256 peakTag)
     {
         Anchor storage a = _anchor[i];
+        // DIRECTION, corrected 2026-08-01 — an earlier note here had it backwards. `maxStop =
+        // C + (C − Pp)/φ` and the pin `stop ≥ C` are BOTH increasing in `C`, so a too-LOW `C`
+        // pulls the short's stop CLOSER and RAISES leverage. Understating the peak is the
+        // ANTI-conservative direction, and since the stop is now pinned exactly at `C` (A26)
+        // there is no `maxStop` headroom left to absorb the error.
+        //
+        // The served value stays the CORROBORATED `peakC` even so, because the two failures are
+        // not equally cheap. Inflating costs one sandwich: `sampleAnchor` is permissionless, the
+        // close window is an hour wide, and a same-day wick already moves the raw `peakTop`
+        // (`AuditH4M3_Anchors`), so an attacker can push the price for one instant, sample it
+        // themselves, and unwind — paying slippage, not a sustained market move. Serving
+        // `peakTop` would hand that attacker the pin and let one print hold the short at a
+        // fraction of its size for the whole Fall. Understating instead requires every keeper to
+        // miss the top, which is a liveness assumption on a permissionless call, not an attacker
+        // capability. The residual — the pin sitting at the second-highest close rather than the
+        // printed top — is real, bounded by the gap between them, and recorded (REGISTRY A30).
         return (a.prevPeak, _confirmed(a.peakDensity) ? a.peakC : 0, a.peakTag);
     }
 
@@ -640,13 +676,25 @@ contract B4Pool is IB4PoolPolicy {
     ///         (≥ MIN_ANCHOR_SAMPLES daily observations spanning ≥ W/2). The getters withhold an
     ///         unconfirmed cap/peakC; `floor`/`prevPeak` are only ever promoted from
     ///         confirmed windows.
+    /// @dev The peak leg reports "confirmed AND serving a value", which since the close-window /
+    ///      corroboration split are two different things. Density counts observations; the value
+    ///      binds only at a daily close and only once two distinct closes reach it. A keeper that
+    ///      samples daily but always MID-DAY therefore confirms the density while never
+    ///      corroborating a close: the window ends with `peakC == 0`.
+    ///
+    ///      That state is fail-safe for the engine — a zero peak is read as "absent" and a
+    ///      leveraged short falls back to the flat base, exactly as an under-sampled window does —
+    ///      but reporting it as `peakConfirmed = true` would be a false green light for whoever is
+    ///      operating the sampler: the dashboard would show a confirmed anchor while the product
+    ///      is quietly running unanchored for the rest of the cycle. Ties the flag to what is
+    ///      actually served, so "confirmed" means the same thing on both legs.
     function anchorConfirmed(uint256 i)
         external
         view
         returns (bool lowConfirmed, bool peakConfirmed)
     {
         Anchor storage a = _anchor[i];
-        return (_confirmed(a.lowDensity), _confirmed(a.peakDensity));
+        return (_confirmed(a.lowDensity), _confirmed(a.peakDensity) && a.peakC != 0);
     }
 
     /// @dev The density gate (V8-M-1/V8-M-2): a window's anchor confirms only at ≥
@@ -1157,10 +1205,7 @@ contract B4Pool is IB4PoolPolicy {
     /// @notice Recover a sleeve's perp withdrawable above margin principal + the pending
     ///         harvest claim — the untaxed funding surplus of decision C1, which for a
     ///         pool-owned sleeve belongs to pool claimants. Async, as above.
-    function recoverSleevePerpSurplus(uint8 policy, uint256 dirAssetIndex)
-        external
-        nonReentrant
-    {
+    function recoverSleevePerpSurplus(uint8 policy, uint256 dirAssetIndex) external nonReentrant {
         IB4PoolSleeve(_sleeve(policy, dirAssetIndex)).recoverPerpSurplus();
     }
 
@@ -1174,6 +1219,25 @@ contract B4Pool is IB4PoolPolicy {
     ///      stay on Core and re-recoverable, so relaying it grants nothing.
     function clearSleeveRecovery(uint8 policy, uint256 dirAssetIndex) external nonReentrant {
         IB4PoolSleeve(_sleeve(policy, dirAssetIndex)).emergencyClearRecovery();
+    }
+
+    /// @notice Abandon a sleeve's unrecoverable Core→EVM return after `RETURN_ABANDON_TIMEOUT`.
+    /// @dev Mandatory for the same reason as `clearSleeveRecovery` above, and for a sharper one:
+    ///      a sleeve's owner IS this pool, so an escape that exists only on the vault's
+    ///      `onlyOwner` surface does not exist for a sleeve at all unless the pool relays it —
+    ///      the exact gap audit L-1 was filed for. Without this, the wedge `abandonStuckReturn`
+    ///      closes for a user vault stayed permanently open for every sleeve, which is the worse
+    ///      half: a sleeve holds POOLED penalty capital, and a frozen one strands it for every
+    ///      participant rather than for one owner.
+    ///
+    ///      Relaying grants this contract nothing. The vault side fixes the recipient (the write
+    ///      -down moves no tokens at all), refuses every kind but `ReturnDir`/`ReturnUsdc`,
+    ///      enforces the 30-day timeout, and refuses unless the Core source has actually
+    ///      decreased — so this cannot be used to discard a leg whose funds still exist. A credit
+    ///      arriving afterwards lands as unaccounted balance and is swept back into claim
+    ///      inventory through the ordinary `recoverSleeveEvm` path.
+    function abandonSleeveStuckReturn(uint8 policy, uint256 dirAssetIndex) external nonReentrant {
+        IB4PoolSleeve(_sleeve(policy, dirAssetIndex)).abandonStuckReturn();
     }
 
     /// Gas cap on untrusted token reads: a hostile token that burns the forwarded gas

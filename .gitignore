@@ -35,3 +35,6 @@ slither-failhigh.txt
 # security-scan output: a dated report directory, regenerated on demand and carrying its own
 # `.gitignore`. Named here too so deleting that inner file cannot sweep a report into a commit.
 CLAUDE-SECURITY-*/
+
+# transient scratch staged for deletion (2026-07-30 reorg) — safe to remove the folder
+_to_delete/

@@ -385,4 +385,4 @@ In practice steps 4–6 are what `Keeper.crank(pool, vaults, maxVaultSteps)` doe
 ## Further reading
 
 - Normative package: [`spec/WHITEPAPER.md`](../spec/WHITEPAPER.md), [`spec/SPECIFICATION.md`](../spec/SPECIFICATION.md), [`spec/HAZARDS.md`](../spec/HAZARDS.md), [`spec/SECURITY_MODEL.md`](../spec/SECURITY_MODEL.md), [`spec/REQUIREMENTS.md`](../spec/REQUIREMENTS.md), [`spec/TEST_PLAN.md`](../spec/TEST_PLAN.md)
-- Repository root: [`ARCHITECTURE.md`](../ARCHITECTURE.md), [`INVARIANTS.md`](../INVARIANTS.md), [`REPORT.md`](audits/REPORT.md), [`SLITHER.md`](audits/SLITHER.md)
+- Repository root: [`ARCHITECTURE.md`](../ARCHITECTURE.md), [`INVARIANTS.md`](../INVARIANTS.md), [`docs/audits/REGISTRY.md`](audits/REGISTRY.md), [`SLITHER.md`](audits/SLITHER.md)
