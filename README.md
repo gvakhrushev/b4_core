@@ -291,7 +291,32 @@ product; it becomes common claim inventory only after the sleeve's free-window e
 Max cannot silently dilute Mini while either position is live. The precise lifecycle and stop
 boundaries are in [Fees, penalty and the pool](docs/07-fee-routing.md#strict-product-pools-carry-the-strategy-with-the-penalty).
 
-**Why no multiplier is given.** Weight is *your own* accumulated performance-fee share — it scales
+**What it is worth, measured.** The closed-population runner drives the real contracts across the
+whole history with ten equal daily depositors, two of whom exit the same day (`r = 20 %` churn).
+One participant simply stays. Its cumulative deposits, its final vault NAV and the claims it
+actually received are all read off the contracts:
+
+| Product | Pool claims, valued at the END | as a multiple of deposits | share of that participant's final total |
+|---|---:|---:|---:|
+| Mini | 188,607 | **3.79×** | **2.6 %** |
+| B4 | 167,771 | 3.37× | 0.04 % |
+| Pro | 167,989 | 3.37× | 0.010 % |
+| Pro Max | 6,058 | 0.12× | 0.00003 % |
+
+**The valuation is the whole point, and it used to be wrong.** The penalty is paid **in kind** and
+sits in the pool until a distribution point, so it keeps moving with the asset — both while it
+waits and after it is claimed. Summing each claim at the price of the day it landed prices a 2013
+BTC claim at $130 for ever; valued at the end, the same claims are **16–18× larger** (Mini
+10,391 → 188,607). That correction is the difference between the pool looking like rounding and
+being Mini's entire edge.
+
+**Pro Max is the exception and it is the documented one.** Its claims appreciate only 1.11×,
+because a fall-zone exit from a shorting product holds settlement token on both legs, so its
+penalty basket arrives as USDC rather than as the asset — the same limitation recorded in
+[Fees, penalty and the pool](docs/07-fee-routing.md). The pool is where Mini earns; for the
+leveraged products it is a rounding error against their own strategy return.
+
+**Why no universal multiplier is given.** Weight is *your own* accumulated performance-fee share — it scales
 with your vault's dollar profit (Pro Max's absolute profit dwarfs Mini's, so it earns
 disproportionately more weight, not the same cut). Both the numerator (penalty volume) and the
 denominator (every *other* participating vault's weight) depend on who else uses the protocol at
@@ -309,8 +334,8 @@ multiple. The code-grounded numbers are the worked settlement/exit examples in
 > trading fees; perps were not liquid before ~2016, so early-cycle Pro/Pro Max are
 > hypotheticals; the population simulation's pool income uses explicit 10% / 20% behavioural
 > assumptions. The `StructuralLeverage` math, both anchor ratchets and the vault-engine margin
-> control are shipped and tested; this benchmark's lack of anchor samples is why it uses its
-> documented flat-`φ` fallback.
+> control are shipped and tested, and this benchmark samples the anchor windows, so the figures
+> are the structural path rather than the flat fallback.
 
 Method and every omitted cost: [Backtest](docs/11-backtest.md).
 

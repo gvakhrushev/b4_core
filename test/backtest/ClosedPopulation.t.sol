@@ -33,6 +33,14 @@ contract ClosedPopulationTest is SimTest {
     address[4] internal productStrategies; // Mini, B4, Pro, Pro Max
     uint8 internal productPolicy;
 
+    // The penalty share is paid IN KIND and is held until a distribution point, so its value
+    // moves with the asset between the exit that funded it and the claim that pays it out — and
+    // then keeps moving for as long as the claimer holds it. Summing each claim at the price of
+    // the day it landed (which this simulator used to do) prices a 2013 BTC claim at $130 forever.
+    // Track the kind, value once at the end.
+    uint256 internal targetClaimBtc; // raw ubtc units
+    uint256 internal targetClaimUsdc; // raw usdc units
+
     uint256 internal stayCount;
     uint256 internal exitCount;
     uint256 internal targetHodlBtcWad;
@@ -174,13 +182,21 @@ contract ClosedPopulationTest is SimTest {
         assertGt(target.cumDepWad, 0, "target funded");
         assertGt(target.cumClaimsWad, 0, "closed population receives a real pool claim");
         uint256 finalNavWad = target.v.navWad();
-        uint256 finalWithClaimsWad = finalNavWad + target.cumClaimsWad;
+        // Value the kind at the END, not at each receipt: this is what the claimer is actually
+        // holding after the run, and the gap between the two is the appreciation the in-kind
+        // payout carries.
+        uint256 claimsAtEndWad = targetClaimBtc * 1e10 * pxEnd / 1e18 + targetClaimUsdc * 1e12;
+        uint256 finalWithClaimsWad = finalNavWad + claimsAtEndWad;
         uint256 hodlWad = targetHodlBtcWad * pxEnd / 1e18;
 
         emit log_named_string("closed population", label);
         emit log_named_uint("target deposits WAD", target.cumDepWad);
         emit log_named_uint("target vault NAV WAD", finalNavWad);
-        emit log_named_uint("target received claims WAD", target.cumClaimsWad);
+        emit log_named_uint("claims at receipt-day prices WAD", target.cumClaimsWad);
+        emit log_named_uint("claims marked to the final price WAD", claimsAtEndWad);
+        emit log_named_uint(
+            "pool add-on over deposits x1e6", claimsAtEndWad * 1e6 / target.cumDepWad
+        );
         emit log_named_uint(
             "target total multiple x1e6", finalWithClaimsWad * 1e6 / target.cumDepWad
         );
@@ -323,9 +339,13 @@ contract ClosedPopulationTest is SimTest {
             uint256 btcBefore = ubtc.balanceOf(owner_);
             uint256 usdcBefore = usdc.balanceOf(owner_);
             pool.claimFor(id, address(cohorts[j].v));
-            uint256 claimWad = (ubtc.balanceOf(owner_) - btcBefore) * 1e10 * pxWad / 1e18
-                + (usdc.balanceOf(owner_) - usdcBefore) * 1e12;
-            cohorts[j].cumClaimsWad += claimWad;
+            uint256 btcGot = ubtc.balanceOf(owner_) - btcBefore;
+            uint256 usdcGot = usdc.balanceOf(owner_) - usdcBefore;
+            cohorts[j].cumClaimsWad += btcGot * 1e10 * pxWad / 1e18 + usdcGot * 1e12;
+            if (j == 0) {
+                targetClaimBtc += btcGot;
+                targetClaimUsdc += usdcGot;
+            }
         }
     }
 }
