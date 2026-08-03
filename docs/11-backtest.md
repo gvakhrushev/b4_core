@@ -216,16 +216,20 @@ Per $100 deposited during the cycle (strategy DCA multiple of the same run in pa
 
 | Product | Cycle 1 | Cycle 2 | Cycle 3 | Cycle 4* |
 |---|---:|---:|---:|---:|
+| HODL (same flow) | — (×5.29) | — (×3.60) | — (×2.61) | — (×0.81) |
 | Mini | $11.57 (×5.22) | $8.63 (×3.55) | $4.88 (×2.60) | $1.45 (×0.81) |
 | B4 | $32.86 (×12.21) | $30.79 (×13.01) | $13.76 (×6.40) | $2.84 (×1.21) |
 | Pro | $55.35 (×19.57) | $46.52 (×19.41) | $22.84 (×9.34) | $3.58 (×1.64) |
 | Pro Max | $87.09 (×44.07) | $97.42 (×64.97) | $58.39 (×31.89) | $4.99 (×2.32) |
 
-The add-on is strictly increasing in strategy strength in every cycle. Note the basis: these are
-DCA-through-the-cycle multiples of this population, not the README's enter-at-the-pivot lump
-multiples; and each `assertGt(mtmRedep, mtmPlain)` pins that the pool adds value in every
-cycle. The README's benchmark charts are generated from these tables by
-`docs/assets/gen_charts.py`.
+The add-on is strictly increasing in strategy strength in every cycle. **With the pool included,
+Mini clears same-flow HODL in every cycle taken alone** — ×5.34 / ×3.64 / ×2.65 / ×0.82 against
+HODL's ×5.29 / ×3.60 / ×2.61 / ×0.81 — while over the continuous full history it stays at 0.967×
+same-flow HODL at this churn: later cycles' pool income is small against the accumulated stack,
+and the fee charges all of it. Note the basis: these are DCA-through-the-cycle multiples of this
+population, not the README's enter-at-the-pivot lump multiples; and each
+`assertGt(mtmRedep, mtmPlain)` pins that the pool adds value in every cycle. The README's
+benchmark charts are generated from these tables by `docs/assets/gen_charts.py`.
 
 The absolute add-on rises with the strategy. The *production* side is pinned separately by
 [`PoolYieldDiag.t.sol`](../test/backtest/PoolYieldDiag.t.sol), a value-conservation audit of
