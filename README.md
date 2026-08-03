@@ -179,13 +179,18 @@ return is the real, compounded, post-fee value a holder would have taken.
 
 ### Three complete cycles + cycle 4 in progress (2012-11-28 → 2026-07-20)
 
-| Product | Total return | vs HODL | Worst cycle drawdown |
-|---|---:|---:|---:|
-| HODL (raw BTC, no vault, no fee) | 5,261.092x | 1.0× | ~84 % |
-| Mini (spot hold — tracks HODL) | 4,813.714x | 0.915× | 84.45 % |
-| **B4** | **345,257.166x** | **65.625×** | **73.85 %** |
-| **Pro** | **1,814,284.221x** | **344.847×** | **73.85 %** |
-| **Pro Max** | **188,693,627.296x** | **35,865.3×** | **75.40 %** |
+| Product | Total return | vs HODL | + pool (r = 20 %) | vs HODL, with pool | Worst cycle drawdown |
+|---|---:|---:|---:|---:|---:|
+| HODL (raw BTC, no vault, no fee) | 5,261.092x | 1.0× | — | — | ~84 % |
+| Mini (spot hold — tracks HODL) | 4,813.714x | 0.915× | ≈4,937x | 0.938× | 84.45 % |
+| **B4** | **345,257.166x** | **65.625×** | ≈354,547x | 67.39× | **73.85 %** |
+| **Pro** | **1,814,284.221x** | **344.847×** | ≈1,866,592x | 354.8× | **73.85 %** |
+| **Pro Max** | **188,693,627.296x** | **35,865.3×** | ≈192,450,461x | 36,580× | **75.40 %** |
+
+<sub>"+ pool" applies the pool's measured share of final value in the isolated `r = 20 %`
+population (Mini 2.49 % · B4 2.62 % · Pro 2.80 % · Pro Max 1.95 %) to the lump benchmark; HODL
+takes no pool income. Per cycle, measured directly, **Mini + pool clears same-flow HODL in every
+cycle** — the table in [Pool weight](#pool-weight--population-dependent-now-simulated-separately).</sub>
 
 ### Per cycle — realized return and drawdown side by side
 
@@ -293,15 +298,17 @@ claims, read off the contracts. Full method, valuation conventions and the audit
 | Pro | 72,014,090 | 1,445× | 2.80 % |
 | **Pro Max** | **687,425,124** | **13,799×** | 1.95 % |
 
-Per cycle, **for every $100 deposited during that cycle** (in parentheses: what the strategy
-itself made of the same $100 in that cycle, DCA):
+Per cycle, **for every $100 deposited during that cycle**: the pool's dollar add-on, and in
+parentheses what the $100 becomes **with the pool included** (DCA through the cycle; the HODL
+row is the same flow held raw):
 
-| Pool add-on per $100 deposited | Cycle 1 | Cycle 2 | Cycle 3 | Cycle 4* |
+| Per $100 deposited | Cycle 1 | Cycle 2 | Cycle 3 | Cycle 4* |
 |---|---:|---:|---:|---:|
-| Mini | $11.57 (×5.2) | $8.63 (×3.6) | $4.88 (×2.6) | $1.45 (×0.8) |
-| B4 | $32.86 (×12.2) | $30.79 (×13.0) | $13.76 (×6.4) | $2.84 (×1.2) |
-| Pro | $55.35 (×19.6) | $46.52 (×19.4) | $22.84 (×9.3) | $3.58 (×1.6) |
-| **Pro Max** | **$87.09** (×44.1) | **$97.42** (×65.0) | **$58.39** (×31.9) | **$4.99** (×2.3) |
+| HODL (same flow, no pool) | (×5.29) | (×3.60) | (×2.61) | (×0.81) |
+| Mini | $11.57 (×5.34) | $8.63 (×3.64) | $4.88 (×2.65) | $1.45 (×0.82) |
+| B4 | $32.86 (×12.54) | $30.79 (×13.32) | $13.76 (×6.54) | $2.84 (×1.24) |
+| Pro | $55.35 (×20.13) | $46.52 (×19.87) | $22.84 (×9.57) | $3.58 (×1.68) |
+| **Pro Max** | **$87.09** (×44.94) | **$97.42** (×65.94) | **$58.39** (×32.47) | **$4.99** (×2.36) |
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/assets/benchmark-pool-dark.svg">
@@ -314,8 +321,12 @@ Three comments, and that is the whole story:
   weight (weight scales with your dollar profit) and its sleeve realizes more into the basket
   ([production is pinned monotone](test/backtest/PoolYieldDiag.t.sol): Mini 33,626 < B4 34,442 <
   Pro 34,956 < Pro Max 44,500 on identical penalty inflows).
-- A worked $100, DCA'd through cycle 1: in Pro Max the strategy makes it **$4,407** and the pool
-  adds **$87**; the same $100 in Mini becomes $522 + $11.57.
+- A worked $100, DCA'd through cycle 1: HODL makes it **$529**; Mini makes $522 and the pool
+  adds $11.57 — **$534, past buy-and-hold, and the pool is what puts it there, in every one of
+  the four cycles**. In Pro Max the same $100 becomes $4,494 ($4,407 strategy + $87 pool). Held
+  continuously since 2012, Mini still lands just under HODL at this churn (0.97× on the same
+  flow): the later cycles' pool income is small next to the by-then large stack, while the fee
+  keeps charging all of it.
 - No universal multiplier exists: both the penalty volume and every other participant's weight
   depend on who else uses that product's pool at the time — the churn rate is an input, not a
   market fact.
