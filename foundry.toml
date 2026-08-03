@@ -8,9 +8,11 @@ evm_version = "cancun"
 optimizer = true
 optimizer_runs = 200
 # The real-contract historical backtest (test/backtest/BacktestReal.t.sol) drives the whole
-# protocol through ~5,500 daily marks x 4 products and needs a large per-test gas budget; this
-# ceiling is far above any real transaction and only bounds that manual benchmark.
-gas_limit = "40000000000"
+# protocol through ~5,500 daily marks x 4 products and needs a large per-test gas budget; the
+# A42 pool-production diagnostic (PoolYieldDiag.t.sol) runs two full populations in ONE test to
+# compare them, which is what sizes this ceiling. It is far above any real transaction and only
+# bounds those manual benchmarks.
+gas_limit = "80000000000"
 fuzz = { runs = 512 }
 invariant = { runs = 64, depth = 64, fail_on_revert = false }
 
