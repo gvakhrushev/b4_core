@@ -2,9 +2,10 @@
 """Deterministic SVG benchmark charts for the README (light + dark variants).
 
 Data sources (do not hand-edit numbers here without re-running the tests):
-  - returns / drawdowns: test/backtest/BacktestReal.t.sol (the README per-cycle table);
-  - pool add-on per cycle: test/backtest/ClosedPopulation.t.sol `*_percycle` tests
-    (A45 paired runs: add-on = MTM(redeposit) - MTM(plain), per $100 deposited).
+  - returns with pool / pool add-on per cycle: test/backtest/ClosedPopulation.t.sol
+    `*_percycle` tests (A45 paired runs: add-on = MTM(redeposit) - MTM(plain); the
+    with-pool multiple is MTM(redeposit)/deposits, HODL is the same-flow raw hold);
+  - drawdowns: test/backtest/BacktestReal.t.sol (the README per-cycle table).
 
 Regenerate:  python3 docs/assets/gen_charts.py
 """
@@ -35,13 +36,14 @@ DARK = {
 
 CYCLES = ["Cycle 1\n2012–16", "Cycle 2\n2016–20", "Cycle 3\n2020–24", "Cycle 4*\n2024–now"]
 
-# Realized per-cycle return multiples (README benchmark table, BacktestReal.t.sol).
-HODL = [52.3, 13.6, 7.3, 1.01]
-RETURNS = {
-    "Mini": [50.8, 13.2, 7.1, 1.00],
-    "B4": [137.2, 51.9, 28.6, 1.70],
-    "Pro": [230.3, 73.1, 45.8, 2.35],
-    "Pro Max": [660.0, 277.7, 253.0, 4.07],
+# Per-cycle DCA multiples WITH pool claims redeposited (ClosedPopulation `*_percycle`:
+# MTM(redeposit)/deposits), and the same daily flow held raw as the baseline.
+HODL_DCA = [5.287887, 3.595140, 2.611561, 0.807915]
+WITH_POOL = {
+    "Mini": [5.33920, 3.63734, 2.64587, 0.82013],
+    "B4": [12.5387, 13.3221, 6.5399, 1.24131],
+    "Pro": [20.1282, 19.8715, 9.5709, 1.67817],
+    "Pro Max": [44.9372, 65.9424, 32.4724, 2.36500],
 }
 
 # Worst mark-to-market drawdown per cycle, % (README benchmark table).
@@ -180,16 +182,16 @@ def write(name, **kw):
 
 def main():
     vs_hodl = {
-        name: [RETURNS[name][c] / HODL[c] for c in range(4)] for name in SERIES
+        name: [WITH_POOL[name][c] / HODL_DCA[c] for c in range(4)] for name in SERIES
     }
     write(
         "benchmark-returns",
-        title="Per-cycle realized return, relative to buy-and-hold",
-        subtitle="BacktestReal.t.sol — real contracts, cranked daily; cycle 4 in progress (unrealized)",
+        title="Per-cycle result vs buy-and-hold, pool included",
+        subtitle="ClosedPopulation *_percycle — $100 DCA'd through each cycle, pool claims redeposited, vs the same flow held raw",
         data=vs_hodl,
-        ymax=38,
-        yticks=[0, 10, 20, 30],
-        fmt=lambda v: f"{v:.1f}×" if v >= 2.95 else f"{v:.2g}×",
+        ymax=20.5,
+        yticks=[0, 5, 10, 15, 20],
+        fmt=lambda v: f"{v:.1f}×" if v >= 2.95 else f"{v:.2f}×",
         tick_fmt=lambda v: f"{v:.0f}×",
         refline=1.0,
         ref_label="HODL 1×",
