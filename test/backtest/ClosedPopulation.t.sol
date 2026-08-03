@@ -41,7 +41,7 @@ contract ClosedPopulationTest is SimTest {
     uint256 internal targetClaimBtc; // raw ubtc units
     uint256 internal targetClaimUsdc; // raw usdc units
 
-    // A42: valuing every claim "held in the kind it was paid, untouched to run end" is not a
+    // A45: valuing every claim "held in the kind it was paid, untouched to run end" is not a
     // cross-product comparison — it freezes a settlement-token claim for up to 13 years while a
     // directional-kind claim rides the asset, so the ranking measured the payout form, not the
     // pool. The benchmark's own convention is realize-and-redeposit; the `_redeposit` variants
@@ -92,7 +92,7 @@ contract ClosedPopulationTest is SimTest {
         _runClosed(20e16, 3, "closed_r20_mini_full", HALVING_TS[0]);
     }
 
-    /// A42 pair runs: identical population, but every stayer redeposits each pool claim into
+    /// A45 pair runs: identical population, but every stayer redeposits each pool claim into
     /// its own vault on the receipt day. `finalNav(redeposit) − finalNav(full)` is the pool
     /// add-on compounded at the product's own return — the benchmark-consistent valuation.
     function test_closed_population_r20_b4_redeposit() public {
@@ -116,7 +116,7 @@ contract ClosedPopulationTest is SimTest {
     }
 
     /// Per-cycle matrix: the same population, entered at each halving and measured at the
-    /// next (cycle 4 runs to the end of the data, in progress). Each cycle runs the A42
+    /// next (cycle 4 runs to the end of the data, in progress). Each cycle runs the A45
     /// pair (plain, then redeposit) so the pool add-on is a per-cycle ΔMTM, valued
     /// mark-to-market because a cycle boundary can hold an open perp leg that `navWad`
     /// excludes by B3. One test per product: the pair must share one EVM state to subtract.
@@ -227,7 +227,11 @@ contract ClosedPopulationTest is SimTest {
             // every historical point from h0, while withholding this population's deposits
             // until its chosen entry date.
             if (ts[i] < HALVING_TS[0]) continue;
-            if (ts[i] > endTs) break;
+            // End-EXCLUSIVE: a day at `endTs` itself would accept the next halving and run
+            // its post-halving free window, contaminating the closing cycle's measurement.
+            // No CSV midnight coincides with a halving timestamp today, so this is a
+            // boundary-semantics guard, not a numbers change.
+            if (ts[i] >= endTs) break;
             last = i;
             vm.warp(ts[i]);
             uint256 pxWad = _pxLive(ts[i]);
@@ -299,12 +303,13 @@ contract ClosedPopulationTest is SimTest {
         Cohort storage target = cohorts[0];
         assertGt(target.cumDepWad, 0, "target funded");
         assertGt(target.cumClaimsWad, 0, "closed population receives a real pool claim");
-        uint256 finalNavWad = target.v.navWad();
+        // Mark to market: the target vault may still hold a perp, and NAV cannot see it (A41).
+        uint256 finalNavWad = equityWad(target.v);
         // Value the kind at the END, not at each receipt: this is what the claimer is actually
         // holding after the run, and the gap between the two is the appreciation the in-kind
         // payout carries. In the redeposit variant the claims were returned to the vault on
         // receipt, so they already live inside `finalNavWad` — adding the kind again would
-        // double-count (A42).
+        // double-count (A45).
         uint256 claimsAtEndWad =
             redepositClaims ? 0 : targetClaimBtc * 1e10 * pxEnd / 1e18 + targetClaimUsdc * 1e12;
         uint256 finalWithClaimsWad = finalNavWad + claimsAtEndWad;
@@ -331,26 +336,12 @@ contract ClosedPopulationTest is SimTest {
 
         depWad = target.cumDepWad;
         claimsReceiptWad = target.cumClaimsWad;
-        // Vault value only. In the plain run the claims sit with the owner, outside the
-        // vault, so this is the pure strategy MTM; in the redeposit run they live inside.
-        // The paired difference is therefore the FULL pool contribution, compounded.
-        mtmWad = _mtmWad(target.v);
-    }
-
-    /// Mark-to-market target value: navWad + unrealized perp PnL, the same read as
-    /// `VaultTestBase.equityWad` (out of this fixture's inheritance chain). A windowed run
-    /// can end with an open perp leg that NAV excludes by B3; subtracting NAVs there would
-    /// re-create the A41 blindness inside the per-cycle add-on.
-    function _mtmWad(B4Vault v) internal view returns (uint256) {
-        (int64 szi, uint64 entryNtl,) = hub.positions(address(v), PERP_MKT);
-        int256 eq = int256(v.navWad());
-        if (szi != 0) {
-            uint64 az = uint64(szi > 0 ? szi : -szi);
-            int256 mk = int256(uint256(az) * uint256(hub.markPxOf(PERP_MKT)));
-            int256 up = szi > 0 ? mk - int256(uint256(entryNtl)) : int256(uint256(entryNtl)) - mk;
-            eq += up * int256(10 ** 12);
-        }
-        return eq > 0 ? uint256(eq) : 0;
+        // Vault value only, mark-to-market via the one shared `equityWad` (A42 moved it to
+        // VenueTestBase precisely so no fixture re-derives it). In the plain run the claims
+        // sit with the owner, outside the vault, so this is the pure strategy MTM; in the
+        // redeposit run they live inside. The paired difference is therefore the FULL pool
+        // contribution, compounded.
+        mtmWad = finalNavWad;
     }
 
     /// @dev Scenario indices retain the old B4/Pro/ProMax CLI order and add Mini as 3.

@@ -52,8 +52,8 @@ peak-to-trough of mark-to-market equity (`navWad()` + unrealized perp PnL).
 | HODL (raw BTC, no vault, no fee) | 5,261.092x | 1.0× | ~84 % |
 | Mini (spot hold — tracks HODL) | 4,813.714x | 0.915× | 84.45 % |
 | **B4** | **345,257.166x** | **65.625×** | **73.85 %** |
-| **Pro** | **1,311,593.877x** | **249.302×** | **73.85 %** |
-| **Pro Max** | **117,002,290.565x** | **22,239.2×** | **75.40 %** |
+| **Pro** | **1,814,284.221x** | **344.847×** | **73.85 %** |
+| **Pro Max** | **188,693,627.296x** | **35,865.3×** | **75.40 %** |
 
 > **Audit status.** The V6-M-2 fix passed its adversarial fan-out audit
 > ([AUDIT-V7](audits/REGISTRY.md)) — no Critical/High, every finding low and NAV-preserving. The
@@ -62,7 +62,7 @@ peak-to-trough of mark-to-market equity (`navWad()` + unrealized perp PnL).
 >
 > **This benchmark now measures the confirmed-anchor deployment.** The run samples the anchor
 > windows daily, so the pool confirms them and the engine sizes by margin control against the
-> structural stop. The figures moved when it started doing so — Pro Max 31.7M× → 117.0M×, and its
+> structural stop. The figures moved when it started doing so — Pro Max 31.7M× → 188.7M×, and its
 > cycle-4 drawdown 38.17 % → 48.86 % — because what was published before was the genesis-flat
 > fallback, not the product.
 >
@@ -98,7 +98,7 @@ takes its worst drawdown in the fall.
 | | max DD | — | 83.44 % | **64.04 %** | **64.04 %** | 71.86 % |
 | **2020→2024** | return | 7.3x | 7.1x | 28.6x | 45.8x | **253.0x** |
 | | max DD | — | 76.81 % | **53.02 %** | **53.02 %** | 58.11 % |
-| **2024→now**\* | return | 1.01x | 1.00x | 1.70x | 1.70x | **2.52x** |
+| **2024→now**\* | return | 1.01x | 1.00x | 1.70x | 2.35x | **4.07x** |
 | | max DD | — | 53.33 % | **28.15 %** | **28.15 %** | 48.86 % |
 
 <sub>\* cycle in progress: not yet exited, so read as an unrealized mark.</sub>
@@ -116,7 +116,7 @@ takes its worst drawdown in the fall.
   levered product, and it is deliberately NOT asserted: pinning a basis-point ordering would
   encode noise as a claim.
 - **Selling the whole spot position to stand up the short makes Pro a full-size short.** That is
-  why Pro clears B4 by a wide margin (1.317M× vs 345k×) rather than tracking it — the fix lets the
+  why Pro clears B4 by a wide margin (1.814M× vs 345k×) rather than tracking it — the fix lets the
   fall pay the position, not a small side-margin. Pro Max adds the `φ` leg on top (31.753M×).
 - **The short's edge is largest in the deepest completed fall (cycle 1) and compresses later**
   as the cycle falls get shallower. In the still-open fourth epoch Pro equals B4 because its
@@ -189,20 +189,21 @@ HODL receives the same accepted daily BTC cash flows. The run records the eight 
 boundaries per epoch and run end; claims are made on the first eligible daily close. A live
 sleeve or an unmaterialized tail at the end is not silently counted as a participant payout.
 
-**Valuation (A42) — the paired runs.** Claims are paid in kind, and the two kinds do opposite
+**Valuation (A45) — the paired runs.** Claims are paid in kind, and the two kinds do opposite
 things if simply held: a BTC claim keeps riding the asset, a USDC claim stays at par. Valuing
 every claim "held untouched to run end" (the previous convention) therefore measured the payout
 form, not the pool, and inverted the real ranking. Each `r = 20 %` scenario now runs **twice** —
 once with claims left where they land, once with every stayer redepositing each claim into its
 own vault on the receipt day, the benchmark's own realize-and-redeposit convention. The pool
-add-on is the difference of the paired final NAVs, read off the contracts:
+add-on is the difference of the paired final **mark-to-market** values (A42: the final read may
+hold an open perp leg that NAV excludes), read off the contracts:
 
-| Product | final NAV, claims redeposited | final NAV, no redeposit | pool add-on | share of final |
+| Product | final MTM, claims redeposited | final MTM, no redeposit | pool add-on | share of final |
 |---|---:|---:|---:|---:|
 | Mini | 7,247,184 | 7,066,832 | 180,352 | 2.49 % |
 | B4 | 458,489,292 | 446,475,400 | 12,013,891 | 2.62 % |
-| Pro | 1,782,015,046 | 1,732,077,066 | 49,937,979 | 2.80 % |
-| Pro Max | 20,401,549,278 | 20,003,289,543 | 398,259,736 | 1.95 % |
+| Pro | 2,569,790,258 | 2,497,776,169 | 72,014,090 | 2.80 % |
+| Pro Max | 35,214,548,448 | 34,527,123,324 | 687,425,124 | 1.95 % |
 
 **Per-cycle matrix.** The `*_percycle` tests run the same pair per cycle: the population enters
 at each halving, is measured at the next (cycle 4 to the end of data), and the add-on is the

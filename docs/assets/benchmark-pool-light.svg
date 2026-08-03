@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="920" height="440" viewBox="0 0 920 440" font-family="-apple-system,'Segoe UI',Helvetica,Arial,sans-serif">
 <text x="64" y="26" font-size="16" font-weight="600" fill="#0b0b0b">Penalty-pool add-on per $100 deposited, per cycle</text>
-<text x="64" y="45" font-size="12" fill="#52514e">ClosedPopulation.t.sol per-cycle pairs — claims redeposited (A42), r = 20% churn</text>
+<text x="64" y="45" font-size="12" fill="#52514e">ClosedPopulation.t.sol per-cycle pairs — claims redeposited (A45), r = 20% churn</text>
 <rect x="64" y="56" width="11" height="11" rx="3" fill="#2a78d6"/>
 <text x="79" y="65.5" font-size="12" fill="#0b0b0b">Mini</text>
 <rect x="133" y="56" width="11" height="11" rx="3" fill="#eb6834"/>

@@ -4,7 +4,7 @@
 Data sources (do not hand-edit numbers here without re-running the tests):
   - returns / drawdowns: test/backtest/BacktestReal.t.sol (the README per-cycle table);
   - pool add-on per cycle: test/backtest/ClosedPopulation.t.sol `*_percycle` tests
-    (A42 paired runs: add-on = MTM(redeposit) - MTM(plain), per $100 deposited).
+    (A45 paired runs: add-on = MTM(redeposit) - MTM(plain), per $100 deposited).
 
 Regenerate:  python3 docs/assets/gen_charts.py
 """
@@ -40,8 +40,8 @@ HODL = [52.3, 13.6, 7.3, 1.01]
 RETURNS = {
     "Mini": [50.8, 13.2, 7.1, 1.00],
     "B4": [137.2, 51.9, 28.6, 1.70],
-    "Pro": [230.3, 73.1, 45.8, 1.70],
-    "Pro Max": [660.0, 277.7, 253.0, 2.52],
+    "Pro": [230.3, 73.1, 45.8, 2.35],
+    "Pro Max": [660.0, 277.7, 253.0, 4.07],
 }
 
 # Worst mark-to-market drawdown per cycle, % (README benchmark table).
@@ -172,8 +172,9 @@ def chart(theme, title, subtitle, data, ymax, yticks, fmt, tick_fmt, refline=Non
 def write(name, **kw):
     for suffix, theme in (("light", LIGHT), ("dark", DARK)):
         path = os.path.join(OUT, f"{name}-{suffix}.svg")
-        with open(path, "w") as f:
-            f.write(chart(theme, **kw))
+        # UTF-8 + LF + trailing newline, so regeneration is byte-stable across platforms.
+        with open(path, "w", encoding="utf-8", newline="\n") as f:
+            f.write(chart(theme, **kw) + "\n")
         print("wrote", path)
 
 
@@ -206,7 +207,7 @@ def main():
     write(
         "benchmark-pool",
         title="Penalty-pool add-on per $100 deposited, per cycle",
-        subtitle="ClosedPopulation.t.sol per-cycle pairs — claims redeposited (A42), r = 20% churn",
+        subtitle="ClosedPopulation.t.sol per-cycle pairs — claims redeposited (A45), r = 20% churn",
         data=POOL,
         ymax=112,
         yticks=[0, 25, 50, 75, 100],

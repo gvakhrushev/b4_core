@@ -436,8 +436,8 @@ the unlevered sleeves. Leverage compounds the penalty exactly as it compounds a 
 value each sleeve realizes into the claim basket, priced on its realization days, is strictly
 increasing in strategy strength: Mini 33,626 < B4 34,442 < Pro 34,956 < Pro Max 44,500. Under
 the benchmark's realize-and-redeposit convention the pool add-on rises the same way — Mini
-180,352 < B4 12.0M < Pro 49.9M < Pro Max 398.3M, roughly 2–3 % of every product's final value
-(A42).
+180,352 < B4 12.0M < Pro 72.0M < Pro Max 687.4M, roughly 2–3 % of every product's final value
+(A45).
 
 The payout form still matters, twice, and both effects are bounded. A leveraged position is a
 settlement-margined perp, so realizing it at the free-window exit returns settlement token — Pro

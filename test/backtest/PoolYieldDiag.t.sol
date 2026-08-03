@@ -8,7 +8,7 @@ import {Calendar} from "src/libraries/Calendar.sol";
 import {Phi} from "src/libraries/Phi.sol";
 import {CoreTypes} from "src/venue/CoreTypes.sol";
 
-/// @notice A42 — value-conservation audit of the strict-pool penalty pipeline, and the pin for
+/// @notice A45 — value-conservation audit of the strict-pool penalty pipeline, and the pin for
 /// the claim the docs make about it. For each product it tracks, in kind and in USD-at-the-day:
 ///   folds in → sleeve equity (MTM incl. unrealized perp PnL) → captured to accruing
 ///   → claims out → residuals (accruing / liability / escrow / sleeve) at run end.

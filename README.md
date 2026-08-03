@@ -184,8 +184,8 @@ return is the real, compounded, post-fee value a holder would have taken.
 | HODL (raw BTC, no vault, no fee) | 5,261.092x | 1.0× | ~84 % |
 | Mini (spot hold — tracks HODL) | 4,813.714x | 0.915× | 84.45 % |
 | **B4** | **345,257.166x** | **65.625×** | **73.85 %** |
-| **Pro** | **1,311,593.877x** | **249.302×** | **73.85 %** |
-| **Pro Max** | **117,002,290.565x** | **22,239.2×** | **75.40 %** |
+| **Pro** | **1,814,284.221x** | **344.847×** | **73.85 %** |
+| **Pro Max** | **188,693,627.296x** | **35,865.3×** | **75.40 %** |
 
 ### Per cycle — realized return and drawdown side by side
 
@@ -197,7 +197,7 @@ return is the real, compounded, post-fee value a holder would have taken.
 | | max DD | — | 83.44 % | **64.04 %** | **64.04 %** | 71.86 % |
 | **2020→2024** | return | 7.3x | 7.1x | 28.6x | 45.8x | **253.0x** |
 | | max DD | — | 76.81 % | **53.02 %** | **53.02 %** | 58.11 % |
-| **2024→now**\* | return | 1.01x | 1.00x | 1.70x | 1.70x | **2.52x** |
+| **2024→now**\* | return | 1.01x | 1.00x | 1.70x | 2.35x | **4.07x** |
 | | max DD | — | 53.33 % | **28.15 %** | **28.15 %** | 48.86 % |
 
 <sub>\* cycle in progress: not yet exited, so read as an unrealized mark.</sub>
@@ -231,7 +231,7 @@ worst hits on the *same days* as each other (the April-2013 crash sets all three
 because in the growth zone they are all ~1× long; the point-or-two spread between them there is
 composition, not a risk property of the levered product. Selling the whole spot
 position to stand up the short makes Pro a full-size short of
-the fall, so it clears B4 by a wide margin (1.317M× vs 345k×); Pro Max adds the `φ` leg on top. The
+the fall, so it clears B4 by a wide margin (1.814M× vs 345k×); Pro Max adds the `φ` leg on top. The
 short's edge is largest in cycle 1 (the deepest fall) and compresses in the shallower later
 cycles. Mini holds spot in both regimes and pays only the operator's real cut (≈ 1.72 % of
 profit), so it lands just under raw buy-and-hold (~5,200x) — see
@@ -310,23 +310,27 @@ whole history with ten equal daily depositors, two of whom exit the same day (`r
 One participant simply stays. Each scenario runs **twice**: once with every claim left where it
 lands, and once where every stayer deposits each claim back into its own vault on the receipt
 day — the same realize-and-redeposit convention the benchmark above uses for its cycle exits. The
-pool add-on is the difference of the two final NAVs, all read off the contracts:
+pool add-on is the difference of the two final **mark-to-market** values (A42: a final read can
+hold an open perp leg that NAV excludes), all read off the contracts:
 
 | Product | Pool add-on (claims redeposited) | as a multiple of deposits | share of that participant's final total |
 |---|---:|---:|---:|
 | Mini | 180,352 | 3.62× | 2.49 % |
 | B4 | 12,013,891 | 241× | 2.62 % |
-| Pro | 49,937,979 | 1,002× | 2.80 % |
-| **Pro Max** | **398,259,736** | **7,994×** | 1.95 % |
+| Pro | 72,014,090 | 1,445× | 2.80 % |
+| **Pro Max** | **687,425,124** | **13,799×** | 1.95 % |
 
 **The pool's absolute income rises with the strategy — and the published ranking used to say the
-opposite ([A42](docs/audits/REGISTRY.md)).** An earlier version of this table valued every claim
+opposite ([A45](docs/audits/REGISTRY.md)).** An earlier version of this table valued every claim
 "held in the kind it was paid, untouched to the end of the run": a 2013 BTC claim rode thirteen
 years of appreciation while a USDC claim sat frozen at par for the same thirteen years. Under
 that convention Pro Max read **0.12× — a measurement of the payout form, not of the pool.** The
 two conventions agree where the freeze does no work — Mini's BTC claims redeposited into a
 spot-holding vault just keep holding BTC, 188,607 held vs 180,352 redeposited net of fees — and
-diverge exactly where it does.
+diverge exactly where it does. The delivery-day ladder ([A43](docs/audits/REGISTRY.md)) already
+showed the true ordering for the unlevered three — Mini 0.2086× < B4 0.2110× < Pro 0.2123× of
+deposits, on identical folded penalties — and Pro Max's broken rung was recorded as open
+([A44](docs/audits/REGISTRY.md)); the audit below resolves it.
 
 **Per cycle, and per $100.** The same pairing, run cycle by cycle: the population enters at each
 halving and is measured at the next (`*_percycle` tests; cycle 4 in progress). Each cell is what
@@ -379,8 +383,8 @@ it flat in USDC. That parking — real protocol behaviour, not a modelling choic
 Pro Max's claims at receipt-day prices (5,581) run at about half of Mini's (10,391) even though
 its sleeve produced a third more. Redepositing the claim stops the freeze from compounding
 further, but cannot recover the in-pool wait — which is why Pro Max's *share* of its final total
-(1.95 %) still lands under Mini's (2.49 %) while its absolute add-on is two thousand times
-larger.
+(1.95 %) still lands under Mini's (2.49 %) while its absolute add-on is nearly four thousand
+times larger.
 
 As a share of the participant's final value the pool contributes **~2–3 % for every product**.
 For Mini that add-on is what pays back roughly half of its fee-and-execution drag against raw
