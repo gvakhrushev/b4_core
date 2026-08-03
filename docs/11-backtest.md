@@ -237,7 +237,14 @@ effects remain and are visible in the receipt-day claims (Pro Max ≈ 5,581 vs M
 realizing a settlement-margined perp returns settlement token, and realized inventory waits in
 `accruing` until the next settlement point (~1.5 years for a halving-window capture) — in BTC
 for Mini, flat in USDC for Pro Max. The parking is real protocol behaviour; the 13-year freeze
-was not.
+was not. One participant's claims, in kind:
+
+| Product | claimed in the asset | claimed in settlement token |
+|---|---:|---:|
+| Mini | 2.895 BTC | — |
+| B4 | 2.570 BTC | $303 |
+| Pro | 2.570 BTC | $367 |
+| Pro Max | 0.0036 BTC | $5,556 |
 
 [`PoolClaimFlow.t.sol`](../test/backtest/PoolClaimFlow.t.sol) fixes the simple 20% case: two
 penalized $1,000 exits at BTC $1,000 create exact `q`-sized BTC inventory; at $5,000 an
