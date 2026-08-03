@@ -52,8 +52,8 @@ peak-to-trough of mark-to-market equity (`navWad()` + unrealized perp PnL).
 | HODL (raw BTC, no vault, no fee) | 5,261.092x | 1.0× | ~84 % |
 | Mini (spot hold — tracks HODL) | 4,813.714x | 0.915× | 84.45 % |
 | **B4** | **345,257.166x** | **65.625×** | **73.85 %** |
-| **Pro** | **1,311,593.877x** | **249.302×** | **73.85 %** |
-| **Pro Max** | **117,002,290.565x** | **22,239.2×** | **75.40 %** |
+| **Pro** | **1,814,284.221x** | **344.847×** | **73.85 %** |
+| **Pro Max** | **188,693,627.296x** | **35,865.3×** | **75.40 %** |
 
 > **Audit status.** The V6-M-2 fix passed its adversarial fan-out audit
 > ([AUDIT-V7](audits/REGISTRY.md)) — no Critical/High, every finding low and NAV-preserving. The
@@ -62,7 +62,7 @@ peak-to-trough of mark-to-market equity (`navWad()` + unrealized perp PnL).
 >
 > **This benchmark now measures the confirmed-anchor deployment.** The run samples the anchor
 > windows daily, so the pool confirms them and the engine sizes by margin control against the
-> structural stop. The figures moved when it started doing so — Pro Max 31.7M× → 117.0M×, and its
+> structural stop. The figures moved when it started doing so — Pro Max 31.7M× → 188.7M×, and its
 > cycle-4 drawdown 38.17 % → 48.86 % — because what was published before was the genesis-flat
 > fallback, not the product.
 >
@@ -98,7 +98,7 @@ takes its worst drawdown in the fall.
 | | max DD | — | 83.44 % | **64.04 %** | **64.04 %** | 71.86 % |
 | **2020→2024** | return | 7.3x | 7.1x | 28.6x | 45.8x | **253.0x** |
 | | max DD | — | 76.81 % | **53.02 %** | **53.02 %** | 58.11 % |
-| **2024→now**\* | return | 1.01x | 1.00x | 1.70x | 1.70x | **2.52x** |
+| **2024→now**\* | return | 1.01x | 1.00x | 1.70x | 2.35x | **4.07x** |
 | | max DD | — | 53.33 % | **28.15 %** | **28.15 %** | 48.86 % |
 
 <sub>\* cycle in progress: not yet exited, so read as an unrealized mark.</sub>
@@ -116,7 +116,7 @@ takes its worst drawdown in the fall.
   levered product, and it is deliberately NOT asserted: pinning a basis-point ordering would
   encode noise as a claim.
 - **Selling the whole spot position to stand up the short makes Pro a full-size short.** That is
-  why Pro clears B4 by a wide margin (1.317M× vs 345k×) rather than tracking it — the fix lets the
+  why Pro clears B4 by a wide margin (1.814M× vs 345k×) rather than tracking it — the fix lets the
   fall pay the position, not a small side-margin. Pro Max adds the `φ` leg on top (31.753M×).
 - **The short's edge is largest in the deepest completed fall (cycle 1) and compresses later**
   as the cycle falls get shallower. In the still-open fourth epoch Pro equals B4 because its

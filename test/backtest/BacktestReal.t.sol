@@ -21,8 +21,8 @@ import {
     StrategyProMax
 } from "src/periphery/ReferenceStrategies.sol";
 
-/// @title Historical benchmark on the REAL contracts. Returns are `B4Vault.navWad()` and drawdowns
-///        are mark-to-market equity (NAV + unrealized perp PnL — see `_equityWad`; NAV alone is
+/// @title Historical benchmark on the REAL contracts. Every value figure — returns, drawdowns,
+///        the in-progress mark — is mark-to-market equity (NAV + unrealized perp PnL — see `_equityWad`; NAV alone is
 ///        blind to a pure-perp product's only leg), read
 ///        off the actual B4Vault/B4VaultOps/B4Pool/HalvingOracle + reference strategies, cranked
 ///        and settled day-by-day across the real halving epochs exactly as the on-chain keeper
@@ -333,7 +333,7 @@ contract BacktestRealTest is VenueTestBase {
         uint256 s2 = cycleStart + Calendar.T + Calendar.H;
         uint256 recovOpen = cycleStart + Calendar.T + Calendar.W;
 
-        r.startNav = int256(v.navWad());
+        r.startNav = _equityWad(v);
         r.peak = r.startNav;
         r.low = r.startNav;
 
@@ -448,7 +448,7 @@ contract BacktestRealTest is VenueTestBase {
 
     /// Run one product across all 4 real halving epochs (3 complete + cycle 4 in progress,
     /// bounded by the last available price date). Logs per-cycle return/maxDD/vs-dep and the
-    /// compounded final multiple, sourced entirely from `v.navWad()` — no parallel model.
+    /// compounded final multiple, sourced entirely from the real vault — no parallel model.
     struct ProductResult {
         uint256 compoundedX1000; // final NAV / $100k BTC base, x1000
         uint256 c1MaxDDbps; // cycle-1 worst drawdown, bps
@@ -491,7 +491,10 @@ contract BacktestRealTest is VenueTestBase {
                 // cycle": the return is the realized, compounded, post-fee value.
                 r.endNav = _exitRealizeRedeposit(v);
             } else {
-                r.endNav = int256(v.navWad()); // cycle in progress: unrealized mark-to-market
+                // Cycle in progress: an unrealized mark, so it MUST be mark-to-market.
+                // Read on navWad it excludes the perp leg entirely (B3) and understates every
+                // product still holding one — which is Pro Max always (A41).
+                r.endNav = _equityWad(v);
             }
             _logCycle(c, r, c == 0 ? btcBase : prevEnd);
             prevEnd = r.endNav;
@@ -507,7 +510,7 @@ contract BacktestRealTest is VenueTestBase {
             }
         }
 
-        int256 finalNav = int256(v.navWad());
+        int256 finalNav = _equityWad(v);
         res.compoundedX1000 = uint256(finalNav * 1000 / btcBase);
         console.log("  COMPOUNDED return x1000 (BTC base):", res.compoundedX1000);
     }
@@ -539,7 +542,7 @@ contract BacktestRealTest is VenueTestBase {
         ProductResult memory pm =
             _runProduct("=== Pro Max ===", address(new StrategyProMax()), op, 0);
 
-        // The benchmark is a pinned claim, sourced entirely from navWad() on the real engine.
+        // The benchmark is a pinned claim, sourced entirely from the real engine.
         // Ordering by compounded BTC-base multiple: Pro Max > Pro > B4 > Mini.
         assertGt(b.compoundedX1000, mn.compoundedX1000, "B4 > Mini (steps aside in the fall)");
         assertGt(pr.compoundedX1000, b.compoundedX1000, "Pro > B4 (short adds fall alpha)");

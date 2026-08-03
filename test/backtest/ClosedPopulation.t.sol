@@ -181,7 +181,8 @@ contract ClosedPopulationTest is SimTest {
         Cohort storage target = cohorts[0];
         assertGt(target.cumDepWad, 0, "target funded");
         assertGt(target.cumClaimsWad, 0, "closed population receives a real pool claim");
-        uint256 finalNavWad = target.v.navWad();
+        // Mark to market: the target vault may still hold a perp, and NAV cannot see it (A41).
+        uint256 finalNavWad = equityWad(target.v);
         // Value the kind at the END, not at each receipt: this is what the claimer is actually
         // holding after the run, and the gap between the two is the appreciation the in-kind
         // payout carries.

@@ -166,28 +166,6 @@ abstract contract VaultTestBase is VenueTestBase {
         }
     }
 
-    /// @dev Mark-to-market equity: `navWad()` plus the perp's unrealized PnL.
-    ///
-    ///      USE THIS, not `navWad()`, whenever a figure is meant to be what the vault is WORTH.
-    ///      NAV is recorded value only — it excludes unrealized perp PnL by invariant B3, which is
-    ///      correct for settlement and blind for a pure-perp product, whose entire position is the
-    ///      leg NAV cannot see. That blindness has produced three separate wrong published
-    ///      results in this repository (a 0.00 % Pro Max drawdown, a "leveraged sleeve loses
-    ///      value" claim, and a Pro Max ranked below Pro on a worked cycle where it ends at 2.4x
-    ///      Pro). It lives here so it stops being re-derived, one caller at a time, by whoever
-    ///      forgets next.
-    function equityWad(B4Vault v) internal view returns (uint256) {
-        (int64 szi, uint64 entryNtl,) = hub.positions(address(v), PERP_MKT);
-        int256 eq = int256(v.navWad());
-        if (szi != 0) {
-            uint64 az = uint64(szi > 0 ? szi : -szi);
-            int256 mk = int256(uint256(az) * uint256(hub.markPxOf(PERP_MKT)));
-            int256 up = szi > 0 ? mk - int256(uint256(entryNtl)) : int256(uint256(entryNtl)) - mk;
-            eq += up * int256(10 ** 12);
-        }
-        return eq > 0 ? uint256(eq) : 0;
-    }
-
     function warpTo(uint256 t) internal {
         vm.warp(GENESIS_TS + t);
     }
