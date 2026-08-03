@@ -202,6 +202,20 @@ return is the real, compounded, post-fee value a holder would have taken.
 
 <sub>\* cycle in progress: not yet exited, so read as an unrealized mark.</sub>
 
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/assets/benchmark-returns-dark.svg">
+  <img alt="Per-cycle realized return relative to buy-and-hold: B4, Pro and Pro Max clear HODL in every completed cycle; Pro Max reaches 34.7x HODL in cycle 3" src="docs/assets/benchmark-returns-light.svg" width="920">
+</picture>
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/assets/benchmark-drawdown-dark.svg">
+  <img alt="Worst drawdown per cycle: the rotating products draw less than Mini/HODL in every cycle — up to 25 pp in the completed cycles, smallest for Pro Max in the in-progress cycle 4" src="docs/assets/benchmark-drawdown-light.svg" width="920">
+</picture>
+
+<sub>Charts are generated from the tables on this page by
+[`docs/assets/gen_charts.py`](docs/assets/gen_charts.py); regenerate with
+`python3 docs/assets/gen_charts.py`.</sub>
+
 Drawdown is measured on **mark-to-market equity** — `navWad()` plus the perp's unrealized PnL —
 not on NAV alone. NAV excludes unrealized PnL by design (B3), which is right for settlement and
 useless as a risk gauge for a leveraged product: Pro Max holds `spot = 0`, so its entire position
@@ -293,76 +307,89 @@ boundaries are in [Fees, penalty and the pool](docs/07-fee-routing.md#strict-pro
 
 **What it is worth, measured.** The closed-population runner drives the real contracts across the
 whole history with ten equal daily depositors, two of whom exit the same day (`r = 20 %` churn).
-One participant simply stays. Its cumulative deposits, its final vault NAV and the claims it
-actually received are all read off the contracts:
+One participant simply stays. Each scenario runs **twice**: once with every claim left where it
+lands, and once where every stayer deposits each claim back into its own vault on the receipt
+day — the same realize-and-redeposit convention the benchmark above uses for its cycle exits. The
+pool add-on is the difference of the two final **mark-to-market** values (A42: a final read can
+hold an open perp leg that NAV excludes), all read off the contracts:
 
-Every product folds the **same** penalty into its sleeve over the run — 11,240 measured, identical
-to the digit for all four — so any difference in what comes back is the sleeve's strategy working
-on it. Per unit of the participant's own deposits:
-
-| Product | delivered, at receipt | per deposit | held to the end | per deposit |
-|---|---:|---:|---:|---:|
-| Mini | 10,391 | 0.2086× | 188,607 | **3.79×** |
-| B4 | 10,511 | 0.2110× | 167,730 | 3.37× |
-| Pro | 10,576 | **0.2123×** | 167,794 | 3.37× |
-| Pro Max | 5,581 | 0.1120× | 5,790 | 0.12× |
-
-At delivery the ladder is the expected one — **Mini < B4 < Pro**, each product's sleeve compounding
-the same penalty a little harder, and B4 and Pro do differ (+0.6 % to Pro, its fall-zone short).
-The margin is thin because the sleeve is realized into the basket at every free window, four times
-a cycle, so no leg accumulates across a cycle.
-
-**Pro Max breaks the ladder and it is not yet explained.** It delivers half, while its sleeve peaks
-*highest* of the four in mark-to-market equity (24,763 against 18,366). Peak equity that does not
-reach the basket points at the realization, not the strategy — the leveraged sleeve is closed four
-times a cycle and its gain is unrealized at the peak. Recorded as open rather than explained: this
-page has already carried three confident explanations of Pro Max that measurement then overturned.
-
-**Both columns are given because both are true and they answer different questions.** "At receipt"
-is what the pool delivered; "held to the end" is what the claimer is holding now, and the gap is
-the appreciation an in-kind payout carries.
-
-**The end valuation used to be wrong.** The penalty is paid **in kind** and
-sits in the pool until a distribution point, so it keeps moving with the asset — both while it
-waits and after it is claimed. Summing each claim at the price of the day it landed prices a 2013
-BTC claim at $130 for ever; valued at the end, the same claims are **16–18× larger** (Mini 10,391 → 188,607). That correction is the difference between the pool looking like rounding and
-being Mini's entire edge.
-
-**Pro Max is the exception, and the reason is the payout form, not idle capital.** The penalty is
-not held passively for any product: `foldPenalty` deposits it into that product's sleeve — an
-ordinary vault running the same strategy, engine and structural stop — and cranks it. Measured
-over the run, the Pro Max sleeve holds a perp on **4,717 of 4,982 days**. It is working.
-
-What differs is what the sleeve is holding when a free window realizes it, and therefore what the
-claim is paid in. One participant's claims, in kind:
-
-| Product | claimed in the asset | claimed in settlement | appreciation to the end |
+| Product | Pool add-on (claims redeposited) | as a multiple of deposits | share of that participant's final total |
 |---|---:|---:|---:|
-| Mini | 2.895 BTC | — | 18.2× |
-| B4 | 2.570 BTC | $303 | 16.0× |
-| Pro | 2.570 BTC | $367 | 15.9× |
-| Pro Max | 0.0036 BTC | $5,556 | 1.11× |
+| Mini | 180,352 | 3.62× | 2.49 % |
+| B4 | 12,013,891 | 241× | 2.62 % |
+| Pro | 72,014,090 | 1,445× | 2.80 % |
+| **Pro Max** | **687,425,124** | **13,799×** | 1.95 % |
 
-A leveraged position is a **settlement-margined perp**, so realizing it returns settlement token.
-Pro Max's claim is 99.9 % USDC and cannot appreciate in the claimer's hands afterwards, while
-Mini's is 100 % the asset and rides the next thirteen years of it.
+**The pool's absolute income rises with the strategy — and the published ranking used to say the
+opposite ([A45](docs/audits/REGISTRY.md)).** An earlier version of this table valued every claim
+"held in the kind it was paid, untouched to the end of the run": a 2013 BTC claim rode thirteen
+years of appreciation while a USDC claim sat frozen at par for the same thirteen years. Under
+that convention Pro Max read **0.12× — a measurement of the payout form, not of the pool.** The
+two conventions agree where the freeze does no work — Mini's BTC claims redeposited into a
+spot-holding vault just keep holding BTC, 188,607 held vs 180,352 redeposited net of fees — and
+diverge exactly where it does. The delivery-day ladder ([A43](docs/audits/REGISTRY.md)) already
+showed the true ordering for the unlevered three — Mini 0.2086× < B4 0.2110× < Pro 0.2123× of
+deposits, on identical folded penalties — and Pro Max's broken rung was recorded as open
+([A44](docs/audits/REGISTRY.md)); the audit below resolves it.
 
-The sleeve itself is the most valuable of the four: on identical inflows (9,524 folds for every
-product) the Pro Max sleeve peaks at **24,763** in mark-to-market equity against **18,366** for
-the unlevered ones. The leverage works on the penalty exactly as it works on a deposit. What the
-stayer ends up holding is the settlement token it was realized into, and that is where the gap
-comes from — the payout form, not the strategy.
+**Per cycle, and per $100.** The same pairing, run cycle by cycle: the population enters at each
+halving and is measured at the next (`*_percycle` tests; cycle 4 in progress). Each cell is what
+the pool adds, by cycle end, **for every $100 deposited during that cycle** — on top of what the
+strategy itself made of the same $100 (in parentheses, the DCA multiple of this population; the
+lump-sum table above is entry-at-the-pivot and reads higher):
 
-**B4 and Pro claim almost the same, and that is composition, not a wash.** Their BTC legs are
-identical to the digit (2.570 BTC each) because in the growth regime they ARE the same product —
-both target `1`. Pro's short shows up only in the settlement leg, $367 against B4's $303, a real
-+21 %. At the end price the BTC leg is worth $167,440 and that $64 edge is 0.04 % of the total, so
-it disappears in the rounding. The reason it stays small is structural: the sleeve is realized
-into the basket at **every** free window, four times a cycle, so a fall-zone short never
-accumulates across a cycle the way the growth-zone asset does.
+| Pool add-on per $100 deposited | Cycle 1 | Cycle 2 | Cycle 3 | Cycle 4* |
+|---|---:|---:|---:|---:|
+| Mini | $11.57 (×5.2) | $8.63 (×3.6) | $4.88 (×2.6) | $1.45 (×0.8) |
+| B4 | $32.86 (×12.2) | $30.79 (×13.0) | $13.76 (×6.4) | $2.84 (×1.2) |
+| Pro | $55.35 (×19.6) | $46.52 (×19.4) | $22.84 (×9.3) | $3.58 (×1.6) |
+| **Pro Max** | **$87.09** (×44.1) | **$97.42** (×65.0) | **$58.39** (×31.9) | **$4.99** (×2.3) |
 
-The pool is where Mini earns. For the leveraged products it is a rounding error against their own
-strategy return.
+So a worked $100, DCA'd through cycle 1 in Pro Max: the strategy makes it **$4,407** and the
+pool adds **$87** more; the same $100 in Mini becomes $522 + $11.57. The add-on is strictly
+increasing in strategy strength in **every** cycle — the levered products earn more weight
+(weight scales with dollar profit) and their sleeves realize more into the basket.
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/assets/benchmark-pool-dark.svg">
+  <img alt="Penalty-pool add-on per 100 dollars deposited, per cycle: rises with strategy strength in every cycle, Pro Max up to 97 dollars in cycle 2" src="docs/assets/benchmark-pool-light.svg" width="920">
+</picture>
+
+**The sleeve production itself is monotone**, pinned by
+[`PoolYieldDiag.t.sol`](test/backtest/PoolYieldDiag.t.sol): on identical penalty inflows
+(23.167 BTC folded, to the digit, for every product), the value each sleeve realizes into the
+claim basket, priced on its realization days, is Mini 33,626 < B4 34,442 < Pro 34,956 <
+**Pro Max 44,500**. The penalty is not held passively for any product: `foldPenalty` deposits it
+into that product's sleeve — an ordinary vault running the same strategy, engine and structural
+stop — and cranks it. The Pro Max sleeve holds a perp on **4,717 of 4,982 days** and peaks
+highest of the four in mark-to-market equity (**24,763** against **18,366** for the unlevered
+ones). The leverage works on the penalty exactly as it works on a deposit.
+
+**What the payout form still does — two real, bounded effects.** A leveraged position is a
+**settlement-margined perp**, so realizing it returns settlement token. One participant's
+claims, in kind:
+
+| Product | claimed in the asset | claimed in settlement |
+|---|---:|---:|
+| Mini | 2.895 BTC | — |
+| B4 | 2.570 BTC | $303 |
+| Pro | 2.570 BTC | $367 |
+| Pro Max | 0.0036 BTC | $5,556 |
+
+And realized inventory must wait for the next settlement point before it can enter a claimable
+interval — a capture at the halving-boundary free window waits **~1.5 years in the pool, in
+kind** (until the next `P−H` settlement materializes an interval). Mini spends that wait in BTC, riding the strongest stretch of the cycle; Pro Max spends
+it flat in USDC. That parking — real protocol behaviour, not a modelling choice — is why
+Pro Max's claims at receipt-day prices (5,581) run at about half of Mini's (10,391) even though
+its sleeve produced a third more. Redepositing the claim stops the freeze from compounding
+further, but cannot recover the in-pool wait — which is why Pro Max's *share* of its final total
+(1.95 %) still lands under Mini's (2.49 %) while its absolute add-on is nearly four thousand
+times larger.
+
+As a share of the participant's final value the pool contributes **1.95–2.80 % across the four
+products, Pro Max the lowest** (the in-pool wait above). For Mini that add-on is what pays back
+roughly half of its fee-and-execution drag against raw `HODL`; for the leveraged products it is
+the same few percent on top of a much larger strategy base.
 
 **Why no universal multiplier is given.** Weight is *your own* accumulated performance-fee share — it scales
 with your vault's dollar profit (Pro Max's absolute profit dwarfs Mini's, so it earns
@@ -425,7 +452,7 @@ test/         unit · integration · invariant campaigns · adversarial HyperCor
 script/       deployment wiring
 data/         BTC daily closes used by the historical demo
 spec/         the normative specification package — the SINGLE source of MUST/MUST NOT
-docs/         guides, plus the audit (docs/audits/) and design (docs/design/) record
+docs/         guides, plus the audit (docs/audits/), design (docs/design/) and benchmark-chart (docs/assets/) record
 ```
 
 `spec/` is normative and `ARCHITECTURE.md` is normative for the implementation (`HAZARDS` G3);

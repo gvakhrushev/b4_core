@@ -426,18 +426,25 @@ There is no path by which claiming DIR converts into USDC or vice versa: the poo
 - The keeper (`src/periphery/Keeper.sol`) is permissionless and calls nothing but permissionless entry points — `advance`, `lockPrices`, `sweep`, `capture`, `claimFor` and the `currentReportable` view on the pool, plus (for strict pools) `foldPenalty`, `crankSleeve`, and free-window `initiateSleeveExit`; and `crank`, `settle`, `claimDeferred` on each vault. It cannot change a route, choose a target, market or price, or redirect a payout: every recipient is fixed vault state.
 - `FEE_F`, `EXIT_Q`, `MAX_OPERATOR_BPS`, `MIN_REFERRER_BPS` are `internal constant` — changing them requires deploying different bytecode, i.e. a different protocol.
 
-## Measured: the sleeve works, the payout form decides what it is worth
+## Measured: the sleeve works, and the pool's income rises with the strategy
 
 Every product's penalty is put to work — `foldPenalty` deposits it into that product's sleeve, an
 ordinary vault running the same strategy, engine and structural stop, and cranks it. Over the full
 history the Pro Max sleeve holds a perp on 4,717 of 4,982 days, and on identical inflows (9,524
 folds for every product) it peaks at **24,763** in mark-to-market equity against **18,366** for
-the unlevered sleeves. Leverage compounds the penalty exactly as it compounds a deposit.
+the unlevered sleeves. Leverage compounds the penalty exactly as it compounds a deposit, and the
+value each sleeve realizes into the claim basket, priced on its realization days, is strictly
+increasing in strategy strength: Mini 33,626 < B4 34,442 < Pro 34,956 < Pro Max 44,500. Under
+the benchmark's realize-and-redeposit convention the pool add-on rises the same way — Mini
+180,352 < B4 12.0M < Pro 72.0M < Pro Max 687.4M, roughly 2–3 % of every product's final value
+(A45).
 
-The claim the stayer receives is a different question. A leveraged position is a
-settlement-margined perp, so realizing it at the free-window exit returns settlement token: Pro
-Max's claim arrives 99.9 % USDC and cannot appreciate afterwards, while Mini's sleeve holds spot
-and pays 100 % in the asset, whose claims are worth 18.2× more by the end of the run.
+The payout form still matters, twice, and both effects are bounded. A leveraged position is a
+settlement-margined perp, so realizing it at the free-window exit returns settlement token — Pro
+Max's claim arrives 99.9 % USDC, Mini's 100 % in the asset. And realized inventory waits in
+`accruing` until the next settlement point before it can enter a claimable interval — a wait Mini
+spends in the asset and Pro Max spends flat. That is why Pro Max's claims at receipt-day prices
+run at about half of Mini's despite its sleeve producing a third more.
 
 Numbers and method in [the backtest](11-backtest.md).
 

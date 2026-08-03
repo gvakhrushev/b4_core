@@ -189,6 +189,56 @@ HODL receives the same accepted daily BTC cash flows. The run records the eight 
 boundaries per epoch and run end; claims are made on the first eligible daily close. A live
 sleeve or an unmaterialized tail at the end is not silently counted as a participant payout.
 
+**Valuation (A45) — the paired runs.** Claims are paid in kind, and the two kinds do opposite
+things if simply held: a BTC claim keeps riding the asset, a USDC claim stays at par. Valuing
+every claim "held untouched to run end" (the previous convention) therefore measured the payout
+form, not the pool, and inverted the real ranking. Each `r = 20 %` scenario now runs **twice** —
+once with claims left where they land, once with every stayer redepositing each claim into its
+own vault on the receipt day, the benchmark's own realize-and-redeposit convention. The pool
+add-on is the difference of the paired final **mark-to-market** values (A42: the final read may
+hold an open perp leg that NAV excludes), read off the contracts:
+
+| Product | final MTM, claims redeposited | final MTM, no redeposit | pool add-on | share of final |
+|---|---:|---:|---:|---:|
+| Mini | 7,247,183 | 7,066,831 | 180,352 | 2.49 % |
+| B4 | 458,489,291 | 446,475,400 | 12,013,891 | 2.62 % |
+| Pro | 2,569,790,258 | 2,497,776,168 | 72,014,090 | 2.80 % |
+| Pro Max | 35,214,548,447 | 34,527,123,323 | 687,425,124 | 1.95 % |
+
+<sub>MTM columns are floored to whole dollars and the add-on is the rounded WAD difference, so
+every row adds up exactly as printed; the raw WAD values are in the test logs.</sub>
+
+**Per-cycle matrix.** The `*_percycle` tests run the same pair per cycle: the population enters
+at each halving, is measured at the next (cycle 4 to the end of data), and the add-on is the
+paired difference of **mark-to-market** target value — a cycle boundary can hold an open perp
+leg that `navWad` excludes by B3, so subtracting NAVs there would re-create the A41 blindness.
+Per $100 deposited during the cycle (strategy DCA multiple of the same run in parentheses):
+
+| Product | Cycle 1 | Cycle 2 | Cycle 3 | Cycle 4* |
+|---|---:|---:|---:|---:|
+| Mini | $11.57 (×5.22) | $8.63 (×3.55) | $4.88 (×2.60) | $1.45 (×0.81) |
+| B4 | $32.86 (×12.21) | $30.79 (×13.01) | $13.76 (×6.40) | $2.84 (×1.21) |
+| Pro | $55.35 (×19.57) | $46.52 (×19.41) | $22.84 (×9.34) | $3.58 (×1.64) |
+| Pro Max | $87.09 (×44.07) | $97.42 (×64.97) | $58.39 (×31.89) | $4.99 (×2.32) |
+
+The add-on is strictly increasing in strategy strength in every cycle. Note the basis: these are
+DCA-through-the-cycle multiples of this population, not the README's enter-at-the-pivot lump
+multiples; and each `assertGt(mtmRedep, mtmPlain)` pins that the pool adds value in every
+cycle. The README's benchmark charts are generated from these tables by
+`docs/assets/gen_charts.py`.
+
+The absolute add-on rises with the strategy. The *production* side is pinned separately by
+[`PoolYieldDiag.t.sol`](../test/backtest/PoolYieldDiag.t.sol), a value-conservation audit of
+the whole pipeline (folds → sleeve equity → capture → claims → residuals): on identical inflows
+(23.167 BTC folded for every product) the value each sleeve realizes into the basket, priced on
+its realization days, is Mini 33,626 < B4 34,442 < Pro 34,956 < Pro Max 44,500, and the
+unlevered sleeve conserves the penalty in kind to within its live tail. Two bounded payout-form
+effects remain and are visible in the receipt-day claims (Pro Max ≈ 5,581 vs Mini ≈ 10,391):
+realizing a settlement-margined perp returns settlement token, and realized inventory waits in
+`accruing` until the next settlement point (~1.5 years for a halving-window capture) — in BTC
+for Mini, flat in USDC for Pro Max. The parking is real protocol behaviour; the 13-year freeze
+was not.
+
 [`PoolClaimFlow.t.sol`](../test/backtest/PoolClaimFlow.t.sol) fixes the simple 20% case: two
 penalized $1,000 exits at BTC $1,000 create exact `q`-sized BTC inventory; at $5,000 an
 equal-weight stayer receives one eighth, $147.54245, or +14.754245% of its original $1,000.
