@@ -209,7 +209,7 @@ return is the real, compounded, post-fee value a holder would have taken.
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/assets/benchmark-drawdown-dark.svg">
-  <img alt="Worst drawdown per cycle: the rotating products draw 9-25 pp less than Mini/HODL in every cycle" src="docs/assets/benchmark-drawdown-light.svg" width="920">
+  <img alt="Worst drawdown per cycle: the rotating products draw less than Mini/HODL in every cycle — up to 25 pp in the completed cycles, smallest for Pro Max in the in-progress cycle 4" src="docs/assets/benchmark-drawdown-light.svg" width="920">
 </picture>
 
 <sub>Charts are generated from the tables on this page by
@@ -386,10 +386,10 @@ further, but cannot recover the in-pool wait — which is why Pro Max's *share* 
 (1.95 %) still lands under Mini's (2.49 %) while its absolute add-on is nearly four thousand
 times larger.
 
-As a share of the participant's final value the pool contributes **~2–3 % for every product**.
-For Mini that add-on is what pays back roughly half of its fee-and-execution drag against raw
-`HODL`; for the leveraged products it is the same few percent on top of a much larger
-strategy base.
+As a share of the participant's final value the pool contributes **1.95–2.80 % across the four
+products, Pro Max the lowest** (the in-pool wait above). For Mini that add-on is what pays back
+roughly half of its fee-and-execution drag against raw `HODL`; for the leveraged products it is
+the same few percent on top of a much larger strategy base.
 
 **Why no universal multiplier is given.** Weight is *your own* accumulated performance-fee share — it scales
 with your vault's dollar profit (Pro Max's absolute profit dwarfs Mini's, so it earns

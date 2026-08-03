@@ -200,10 +200,13 @@ hold an open perp leg that NAV excludes), read off the contracts:
 
 | Product | final MTM, claims redeposited | final MTM, no redeposit | pool add-on | share of final |
 |---|---:|---:|---:|---:|
-| Mini | 7,247,184 | 7,066,832 | 180,352 | 2.49 % |
-| B4 | 458,489,292 | 446,475,400 | 12,013,891 | 2.62 % |
-| Pro | 2,569,790,258 | 2,497,776,169 | 72,014,090 | 2.80 % |
-| Pro Max | 35,214,548,448 | 34,527,123,324 | 687,425,124 | 1.95 % |
+| Mini | 7,247,183 | 7,066,831 | 180,352 | 2.49 % |
+| B4 | 458,489,291 | 446,475,400 | 12,013,891 | 2.62 % |
+| Pro | 2,569,790,258 | 2,497,776,168 | 72,014,090 | 2.80 % |
+| Pro Max | 35,214,548,447 | 34,527,123,323 | 687,425,124 | 1.95 % |
+
+<sub>MTM columns are floored to whole dollars and the add-on is the rounded WAD difference, so
+every row adds up exactly as printed; the raw WAD values are in the test logs.</sub>
 
 **Per-cycle matrix.** The `*_percycle` tests run the same pair per cycle: the population enters
 at each halving, is measured at the next (cycle 4 to the end of data), and the add-on is the
